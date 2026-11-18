@@ -91,7 +91,6 @@ import AppDetail from "./screens/AppDetail";
 import UnlockGate from "./screens/components/UnlockGate";
 const NasPage = lazy(() => import("./personal/Nas").then(m => ({ default: m.NasPage })));
 const DrivePreview = lazy(() => import("./personal/Drives").then(m => ({ default: m.DrivesPage })));
-const PluginsPage = lazy(() => import("./screens/CraftPlugins"));
 
 // Shell-wide background reads. Each runs one request at a time (see domain/polling.ts).
 const DISCOVERY_POLL_MS = 5000;
@@ -427,7 +426,7 @@ export function AppRoutes() {
           <Route path="settings" element={<PersonalSettings />} />
           <Route path="nas" element={<Suspense fallback={<LoadingPanel />}><NasPage /></Suspense>} />
           <Route path="drives" element={<Suspense fallback={<LoadingPanel />}><DrivePreview /></Suspense>} />
-          <Route path="settings/plugins" element={<Suspense fallback={<LoadingPanel />}><PluginsPage /></Suspense>} />
+          <Route path="settings/plugins" element={<Navigate replace to="/apps?tab=discover" />} />
           <Route path="apps/public-plugins/:pluginId" element={<PublicPluginPage />} />
           <Route path="apps/app/public/:id" element={<AppDetail />} />
           <Route path="settings/extensions" element={<AgentExtensions />} />
