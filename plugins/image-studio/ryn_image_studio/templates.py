@@ -39,6 +39,8 @@ SCENES = {
         "size": sizes.PURPOSES["story"]["size"],
     },
 }
+for _scene, _preset in SCENES.items():
+    _preset["sizes"] = [{"width": width, "height": height} for width, height in sizes.SCENE_SIZES[_scene]]
 
 STYLES = {
     "minimal": {"label": "简约", "description": "减少装饰，用克制的配色、清晰的排版和充分留白。"},

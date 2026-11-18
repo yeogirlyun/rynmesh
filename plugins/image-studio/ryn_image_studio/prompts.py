@@ -41,4 +41,7 @@ def compose(row: dict[str, Any]) -> str:
         parts.append("；".join(copy_lines) + "。这些文字要一字不差，画面里不要出现其它文字。")
     for index, role in enumerate(reference_roles(row), 1):
         parts.append(f"第 {index} 张图是{REFERENCE_INSTRUCTIONS[role]}")
+    crop = sizes.crop_safe_area(row["width"], row["height"])
+    if crop:
+        parts.append(crop)
     return "\n".join(p for p in parts if p)
