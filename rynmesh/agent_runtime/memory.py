@@ -3444,7 +3444,8 @@ def select_memories_for_task(
         if remaining_context_bytes < 2400:
             max_bytes = 0
         else:
-            max_bytes = min(max_bytes, max(0, remaining_context_bytes // 12))
+            share = 4 if is_automatic_mode else 12
+            max_bytes = min(max_bytes, max(0, remaining_context_bytes // share))
 
     selected: list[dict[str, Any]] = []
     used_bytes = 0

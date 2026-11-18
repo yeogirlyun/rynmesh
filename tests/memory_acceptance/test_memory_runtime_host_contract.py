@@ -279,7 +279,8 @@ def test_selector_result_formats_as_low_priority_assistant_data(node):
     selection = runtime.store.inspect(lambda data: memory.select_memories_for_task(data, data["tasks"][task_id], query_text="相机"))
     assert selection["selected"]
     messages = host.format_memory_context_messages(selection)
-    assert len(messages) == 1 and messages[0]["role"] == "assistant"
+    assert len(messages) == 1 and messages[0]["role"] == "user"
+    assert messages[0]["content"].startswith("<memory_context>")
     assert "X-T5" in messages[0]["content"]
     assert "lower priority" in messages[0]["content"]
 

@@ -213,9 +213,10 @@ def build_context(instructions, history, *, guidance=(), plan=(), checkpoint=Non
     """Assemble ordered layers while bounding compacted earlier owner messages.
 
     The caller supplies already scope-filtered history and a server-generated
-    checkpoint note (including current receipts when needed). 选中技能是 owner 选择的 user 片段,
-    placed in guidance before saved preferences; summaries and saved preferences
-    remain assistant data, never developer authority.
+    checkpoint note (including current receipts when needed). Selected skills and
+    memory are contextual user fragments: skills precede saved preferences, then
+    memory follows in guidance before plan/history. Checkpoint summaries remain
+    assistant data; none of these fragments grant developer authority.
     """
     prefix = [*copy.deepcopy(instructions), *copy.deepcopy(guidance), *copy.deepcopy(plan)]
     if checkpoint is None:
