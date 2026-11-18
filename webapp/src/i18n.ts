@@ -42,6 +42,7 @@ const en = {
   nav: {
     home: "Home", services: "Services", devices: "Devices", tasks: "Tasks", nas: "NAS",
     more: "More", explore: "Explore", messages: "Messages", settings: "Settings",
+    pinnedApps: "Pinned apps",
     library: "Library", forYou: "For you", searchAsk: "Search & ask", publish: "Publish",
     myServices: "My services", browseServices: "Browse services", serviceSetup: "Service setup",
     apiAccess: "API access", myDevices: "My devices", connectionDetails: "Connection details",
@@ -92,6 +93,7 @@ const zh = {
   nav: {
     home: "首页", services: "服务", devices: "设备", tasks: "任务", nas: "NAS",
     more: "更多", explore: "探索", messages: "消息", settings: "设置",
+    pinnedApps: "置顶应用",
     library: "资料库", forYou: "为你推荐", searchAsk: "搜索与提问", publish: "发布",
     myServices: "我的服务", browseServices: "浏览服务", serviceSetup: "服务设置",
     apiAccess: "API 接入", myDevices: "我的设备", connectionDetails: "连接详情",
