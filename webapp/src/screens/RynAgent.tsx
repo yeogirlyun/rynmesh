@@ -1307,7 +1307,7 @@ export default function RynAgent() {
           {!models.some(canUseAgentModel) && <p className="ra-model-help">{t("noModel")} <Link to="/services/sources">{t("models")}</Link></p>}
 
           {!selected && selectedModel && !canUseAgentModel(selectedModel) && <p className="ra-model-help" role="status">{selectedModel.name} · {t(!selectedModel.available ? "selectedModelUnavailable" : selectedModel.source === "peer" && selectedModel.destination_binding_supported === false ? "modelDestinationUnavailable" : "notSupported")}</p>}
-          {task && !task.local_execution?.workspace_root && ["failed", "paused", "waiting_input"].includes(task.status) && <WorkspaceSetup initial={settings?.workspace_root || ""} busy={busy || controlUncertain} onBind={async workspace_root => {
+          {task?.local_execution && !task.local_execution.workspace_root && ["failed", "paused", "waiting_input"].includes(task.status) && <WorkspaceSetup initial={settings?.workspace_root || ""} busy={busy || controlUncertain} onBind={async workspace_root => {
             if (mutationRef.current) return;
             mutationRef.current = true; setBusy(true); setError("");
             try { acceptTask(await submitControl({task_id: task.id, route: "workspace", body: {workspace_root, expected_control_revision: task.control_revision, client_request_id: crypto.randomUUID()}})); await refresh(); }
