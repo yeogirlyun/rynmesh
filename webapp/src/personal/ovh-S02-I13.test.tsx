@@ -65,7 +65,7 @@ describe("S02-I13 Desktop keep-awake toggle availability", () => {
     renderDesktop();
 
     const startupToggle = await screen.findByRole("switch", { name: "Launch at sign-in" });
-    const keepAwakeToggle = screen.getByRole("switch", { name: "Keep awake while tasks run or sharing" });
+    const keepAwakeToggle = screen.getByRole("switch", { name: "Prevent idle sleep while sharing AI or running Agent tasks" });
 
     await waitFor(() => expect(keepAwakeToggle).toBeEnabled());
     expect(startupToggle).toBeDisabled();
@@ -93,7 +93,7 @@ describe("S02-I13 Desktop keep-awake toggle availability", () => {
     renderDesktop();
 
     const startupToggle = await screen.findByRole("switch", { name: "Launch at sign-in" });
-    const keepAwakeToggle = screen.getByRole("switch", { name: "Keep awake while tasks run or sharing" });
+    const keepAwakeToggle = screen.getByRole("switch", { name: "Prevent idle sleep while sharing AI or running Agent tasks" });
 
     await waitFor(() => expect(startupToggle).toBeEnabled());
     expect(keepAwakeToggle).toBeDisabled();
