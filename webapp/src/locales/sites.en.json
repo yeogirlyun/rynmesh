@@ -27,6 +27,11 @@
   "offlineBody": "This page runs on {{name}}. It comes back here on its own when that computer is on and Ryn is open.",
   "lastSeen": "Last online: {{time}}",
   "reconnect": "Reconnect",
+  "pin": "Pin",
+  "pinned": "Pinned",
+  "switchDevice": "Switch computer",
+  "pinFailed": "Couldn’t update the pin. Try again.",
+  "switchFailed": "Couldn’t open that computer. Try another one.",
   "back": "Back",
   "errors": {
     "site_denied": "You can't open this page, or it is no longer open to you.",
