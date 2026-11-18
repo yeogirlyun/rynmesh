@@ -2,12 +2,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useAppContext } from "../../appContext";
 import { Button } from "../../components/ui";
 import { CleanupError, conversationCleanup, type CleanupJob, type CleanupReview, type CleanupStep } from "../../domain/conversationCleanup";
+import { tr, useUILanguage } from "../../uiI18n";
 import styles from "./ConversationCleanup.module.css";
 
 const labels: Record<CleanupStep, string> = { source: "Conversation history", replica: "Local sync copies", backups: "Reviewed backups", search: "Search index", orders: "Saved AI results" };
 const scope = "Includes conversation drafts, conflict recovery, separately restored conversations, reviewed migration backups and interrupted-write copies, search entries and saved AI results. Backup copies can also contain other sync or search metadata; current reading data remains. Task identity and settlement records remain to prevent duplicate requests. Browser copies and remote devices need separate confirmation.";
 
 export default function ConversationCleanupPanel() {
+  useUILanguage();
   const { confirm } = useAppContext();
   const [jobs, setJobs] = useState<CleanupJob[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -92,7 +94,7 @@ export default function ConversationCleanupPanel() {
     {jobs.length ? <ol className={styles.jobs}>{jobs.map((job, index) => <li key={job.id}>
       <h4>Cleanup {job.sequence ?? jobs.length - index}</h4>
       <p>{job.cancelled ? "Cancelled before erasure" : job.local_copies_complete ? "Reviewed node copies cleared" : "Unfinished"}</p>
-      {job.skipped_active?.length ? <p role="status">有 {job.skipped_active.length} 个进行中的问答稍后再清</p> : null}
+      {job.skipped_active?.length ? <p role="status">{tr("有 {{count}} 个进行中的问答稍后再清", { count: job.skipped_active.length })}</p> : null}
       {job.done.length ? <p>Completed: {job.done.map((step) => labels[step]).join(", ")}</p> : null}
       {job.pending.length ? <p>Remaining: {job.pending.map((step) => labels[step]).join(", ")}</p> : null}
       {!job.cancelled ? <p>Browser cleanup is tracked separately below. {job.remote_confirmed ? "Remote devices confirmed." : "Remote devices remain unconfirmed."}</p> : null}
