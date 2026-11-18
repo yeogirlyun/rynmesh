@@ -24,5 +24,34 @@
   "noMatches": "没有匹配的应用。",
   "loadPinsError": "无法加载置顶应用。",
   "pinError": "无法更新置顶应用。",
-  "openError": "无法打开同事共享的应用。"
+  "openError": "无法打开同事共享的应用。",
+  "sharedList": {
+    "summary": "公司 {{total}} 位同事里，有 {{people}} 位共享了 {{apps}} 个应用。",
+    "filters": {
+      "all": "全部",
+      "online": "只看在线",
+      "pinned": "我置顶的"
+    },
+    "refresh": "刷新",
+    "refreshing": "刷新中…",
+    "loading": "正在加载同事共享的应用…",
+    "empty": "同事共享了应用会出现在这里。",
+    "lastSeen": "上次在线 {{time}}",
+    "idle": "现在空闲",
+    "queue": "排队 {{length}}，约 {{wait}}",
+    "devices": "{{total}} 台电脑共享 · {{online}} 台在线",
+    "device": "{{name}}的电脑",
+    "pin": "置顶{{name}}的{{title}}",
+    "unpin": "取消置顶{{name}}的{{title}}",
+    "errors": {
+      "load": "无法加载同事共享的应用。",
+      "pins": "无法加载置顶应用。",
+      "pin": "无法更新置顶应用。",
+      "open": "无法打开同事共享的应用。"
+    },
+    "minutes_one": "{{count}} 分钟",
+    "minutes_other": "{{count}} 分钟",
+    "seconds_one": "{{count}} 秒",
+    "seconds_other": "{{count}} 秒"
+  }
 }
