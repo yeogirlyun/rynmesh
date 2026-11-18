@@ -69,8 +69,8 @@ def _install_skill(
     return pkg_dir
 
 
-def test_t1_selected_skills_are_user_skill_fragments_before_assistant_preferences_and_projects_stop_rule(tmp_path: Path):
-    """T1: 选中技能为 user 角色且带 <skill> 标签，偏好仍是 assistant；顺序为技能块在偏好前；AGENTS.md 块尾含停下引用规则（覆盖改动 1、2、4）。"""
+def test_t1_selected_skills_are_user_skill_fragments_before_tagged_preferences_and_projects_stop_rule(tmp_path: Path):
+    """T1: 选中技能为 user 角色且带 <skill> 标签，偏好是带标签的 user 数据；顺序为技能块在偏好前；AGENTS.md 块尾含停下引用规则（覆盖改动 1、2、4）。"""
     ext_store = ExtensionStore(tmp_path / "ext")
     _install_skill(
         ext_store,
@@ -101,19 +101,20 @@ def test_t1_selected_skills_are_user_skill_fragments_before_assistant_preference
     assert "动手前先用 ryn_read_skill_file 读技能要求的参考文件" in msgs[1]["content"]
     assert "If you stop because of a rule in a Skill, name the skill and quote the rule." in msgs[1]["content"]
 
-    # Third message is assistant preferences data block (after skill blocks):
-    assert msgs[2]["role"] == "assistant"
+    # Third message is tagged host preferences data after the skill blocks.
+    assert msgs[2]["role"] == "user" and msgs[2]["synthetic"] is True
+    assert msgs[2]["content"].startswith('<host_note kind="preferences">')
     assert "Reply concisely in Chinese." in msgs[2]["content"]
     assert "audit-flow" not in msgs[2]["content"]
 
     # Step 2: build_context docstring & order (skills before preferences):
-    assert "选中技能是 owner 选择的 user 片段" in (request_context.build_context.__doc__ or "")
+    assert "skills precede saved preferences" in (request_context.build_context.__doc__ or "")
     built = request_context.build_context(
         [{"role": "developer", "content": "sys"}],
         [{"role": "user", "content": "hello"}],
         guidance=msgs,
     )
-    assert [m["role"] for m in built] == ["developer", "user", "user", "assistant", "user"]
+    assert [m["role"] for m in built] == ["developer", "user", "user", "user", "user"]
 
     # Step 4: projects.guidance AGENTS.md block ends with stop-citation rule:
     root = project_folder(tmp_path / "proj_agents")
