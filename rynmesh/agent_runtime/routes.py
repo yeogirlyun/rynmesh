@@ -498,19 +498,22 @@ def install_agent(app: Any, *, store: Any, home: str | Path, workers: Any,
         local_control(request)
         from urllib.parse import quote
 
-        from fastapi.responses import Response
+        from fastapi.responses import FileResponse, Response
 
         from .workspace_artifacts import CONTENT_SECURITY_POLICY
-        item = await call("read_file_artifact", task_id, file_id)
+        item = await call("read_file_artifact", task_id, file_id, True)
         if isinstance(item, JSONResponse):
             return item  # a refusal carrying the current task, as for every other task route
         if v and v != item["sha256"]:
             return JSONResponse(status_code=409, content={"detail": "agent_artifact_content_changed"})
         # Bytes for a sandboxed preview or download, never an active document of this origin.
-        return Response(item["bytes"], media_type=item["media_type"], headers={
+        headers = {
             "Content-Security-Policy": CONTENT_SECURITY_POLICY, "X-Content-Type-Options": "nosniff",
             "Content-Disposition": "inline; filename*=UTF-8''" + quote(item["name"]), "ETag": '"' + item["sha256"] + '"',
-            "X-Ryn-Artifact-Sha256": item["sha256"], "X-Ryn-Artifact-Status": item["status"]})
+            "X-Ryn-Artifact-Sha256": item["sha256"], "X-Ryn-Artifact-Status": item["status"]}
+        if "path" in item:
+            return FileResponse(item["path"], media_type=item["media_type"], headers=headers)
+        return Response(item["bytes"], media_type=item["media_type"], headers=headers)
 
     @app.get("/api/local/agent/tasks/{task_id}/results/{result_id}")
     async def get_result(task_id: str, result_id: str, request: Request, offset: int = 0, limit: int = 8192):

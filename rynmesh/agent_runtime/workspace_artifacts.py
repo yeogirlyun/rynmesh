@@ -20,7 +20,11 @@ import time
 from .store import AgentError
 
 FILE_TOOLS = frozenset({"ryn_file_write", "ryn_file_edit", "ryn_file_manage", "ryn_apply_patch"})
-MAX_ARTIFACT_BYTES = 8 * 1024 * 1024
+MAX_HASH_BYTES = 256 * 1024 * 1024
+MAX_READ_BYTES = 64 * 1024 * 1024
+STREAM_THRESHOLD_BYTES = 8 * 1024 * 1024
+EXECUTABLE = frozenset({".bat", ".cmd", ".ps1", ".vbs", ".js", ".jse", ".wsf", ".hta", ".exe", ".msi",
+                        ".lnk", ".scr", ".com", ".sh", ".command", ".app", ".jar", ".py", ".pyw"})
 IMAGE_TYPES = {".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
                ".gif": "image/gif", ".webp": "image/webp"}
 TEXT_TYPES = {".txt": "text/plain", ".md": "text/markdown", ".csv": "text/csv", ".json": "application/json",
@@ -308,7 +312,7 @@ def _inside(path: Path, root: Path) -> Path | None:
 def _digest(path: Path):
     stat = path.stat()
     size = stat.st_size
-    if size > MAX_ARTIFACT_BYTES:
+    if size > MAX_HASH_BYTES:
         return size, None
     key = (str(path), size, stat.st_mtime_ns)
     with _CACHE_LOCK:
@@ -539,6 +543,8 @@ def listing(row) -> dict:
             item.update(bytes=size, sha256=digest)
             item["status"] = ("too_large" if digest is None else "unverified" if state["sha256"] is None
                               else "current" if digest == state["sha256"] else "changed_outside_task")
+            if digest is None:
+                item["limit_bytes"] = MAX_HASH_BYTES
             if digest and digest in checked:
                 item["render_inspected"] = checked[digest]
         items.append(item)
@@ -600,13 +606,24 @@ def location(row, file_id) -> Path:
 
 def read(row, file_id) -> dict:
     path, state = _resolve_artifact(row, file_id)
-    if path.stat().st_size > MAX_ARTIFACT_BYTES:
+    if path.stat().st_size > MAX_READ_BYTES:
         raise AgentError("agent_artifact_too_large")
     raw = path.read_bytes()
-    if len(raw) > MAX_ARTIFACT_BYTES:
+    if len(raw) > MAX_READ_BYTES:
         raise AgentError("agent_artifact_too_large")
     digest = hashlib.sha256(raw).hexdigest()
     return {"id": file_id, "name": path.name, "media_type": media_type(path.name), "bytes": raw, "sha256": digest,
+            "status": "unverified" if state["sha256"] is None else "current" if digest == state["sha256"] else "changed_outside_task"}
+
+
+def open_stream(row, file_id) -> dict:
+    """Resolve a receipt-backed file and reuse the listing's streaming digest cache."""
+    path, state = _resolve_artifact(row, file_id)
+    size, digest = _digest(path)
+    if digest is None:
+        raise AgentError("agent_artifact_too_large")
+    return {"id": file_id, "path": path, "name": path.name, "media_type": media_type(path.name),
+            "size": size, "sha256": digest,
             "status": "unverified" if state["sha256"] is None else "current" if digest == state["sha256"] else "changed_outside_task"}
 
 
@@ -617,6 +634,9 @@ def open_file(row, file_id, action) -> dict:
     if not isinstance(action, str) or action not in {"open", "reveal"}:
         raise AgentError("agent_artifact_action_invalid")
     path = location(row, file_id)
+    executable = action == "open" and path.suffix.lower() in EXECUTABLE
+    if executable:
+        action = "reveal"
     try:
         if os.name == "nt":
             if action == "open":
@@ -630,4 +650,5 @@ def open_file(row, file_id, action) -> dict:
             subprocess.Popen(["xdg-open", str(path.parent if action == "reveal" else path)])
     except OSError:
         raise AgentError("agent_artifact_open_failed") from None
-    return {"id": file_id, "action": action, "opened": True}
+    return {"id": file_id, "action": action, "opened": not executable,
+            **({"revealed": True, "reason": "executable_not_opened"} if executable else {})}

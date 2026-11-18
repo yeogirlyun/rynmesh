@@ -338,7 +338,7 @@ export interface AgentArtifact { id: string; name: string; bytes: number; sha256
 export interface AgentFileArtifact {
   id: string; name: string; path: string; absolute_path?: string; operation_id?: string; source?: "write" | "command" | "read" | "computer_observation"; media_type: string; preview: "image" | "text" | "download";
   role: "deliverable" | "supporting" | "helper"; status: "current" | "changed_outside_task" | "missing" | "too_large" | "unavailable" | "unverified";
-  bytes?: number; sha256?: string | null; receipt_sha256?: string | null; created_by_task: boolean; revisions: number;
+  bytes?: number; limit_bytes?: number; sha256?: string | null; receipt_sha256?: string | null; created_by_task: boolean; revisions: number;
   attribution?: "observed_during_command"; turn_index?: number;
   goal_revisions: number[]; created_at?: string; updated_at?: string; mentioned_in_answer: boolean;
   render_inspected?: { at?: string; findings: number };
