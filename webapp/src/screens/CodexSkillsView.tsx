@@ -260,6 +260,7 @@ export function CodexSkillsView({
   const [localBusyIds, setLocalBusyIds] = useState<Record<string, boolean>>({});
   const [recommended, setRecommended] = useState<RecommendedSkill[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [savingCatalog, setSavingCatalog] = useState(false);
   const [installingIds, setInstallingIds] = useState<Record<string, boolean>>({});
   const [notice, setNotice] = useState<{ tone: "info" | "error"; text: string } | null>(null);
 
@@ -692,6 +693,20 @@ export function CodexSkillsView({
         </div>
       </div>
 
+      <label className="codex-skills-roots-bar">
+        <input type="checkbox" checked={overview?.skills_catalog_in_context !== false} disabled={!overview || savingCatalog}
+          onChange={async event => {
+            const enabled = event.target.checked;
+            setSavingCatalog(true);
+            try {
+              const settings = await agentExtensions.updateSkillsSettings(enabled);
+              updateOverview({ ...overview!, ...settings });
+            } catch {
+              setNotice({ tone: "error", text: tx("保存技能目录设置失败，请重试。", "Failed to save skills catalog setting. Retry.") });
+            } finally { setSavingCatalog(false); }
+          }} />
+        {tx("技能目录放入上下文", "Include skills catalog in context")}
+      </label>
       {/* Scope Filter Tabs */}
       <div className="codex-skills-filterbar">
         <div

@@ -564,6 +564,16 @@ def install_extension_routes(
         return await _run("delete_plugin", _op)
 
 
+    @app.get("/api/local/agent/extensions/skills/settings")
+    async def skill_settings(request: Request):
+        local_control(request)
+        return await _run("skill_settings", extensions.store.skills_settings)
+
+    @app.patch("/api/local/agent/extensions/skills/settings")
+    async def update_skill_settings(request: Request):
+        payload = await _body(request)
+        return await _run("update_skill_settings", lambda: extensions.store.update_skills_settings(payload))
+
     @app.get("/api/local/agent/extensions/skills/recommended")
     async def list_recommended_skills(request: Request):
         local_control(request)

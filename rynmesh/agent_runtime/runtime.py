@@ -414,6 +414,13 @@ class AgentRuntime(AgentLoop):
             return super()._execute_business_tool(selected, name, arguments, **options)
         from .tool_dispatch import supports_parallel
 
+        skill_snapshot = []
+        if name == "ryn_read_skill_file":
+            context = options["context"]
+            skill_id = arguments.get("skill_id")
+            if skill_id and not any(s.get("id") == skill_id for s in selected.get("skills") or []):
+                skill_snapshot = self._resolve_skills([skill_id], workspace_root=(context.get("local_execution") or {}).get("workspace_root"))
+                context["selected_skills"] = [*(context.get("selected_skills") or []), *skill_snapshot]
         meta = self.tools.metadata(name)
         mode = self._effective_task_permission_mode(selected)
         with self._tool_dispatch_gate.enter(
@@ -421,7 +428,14 @@ class AgentRuntime(AgentLoop):
             parallel=supports_parallel(name, meta, arguments, permission_mode=mode),
             cancelled=options["cancelled"],
         ):
-            return self.tools.execute(name, arguments, **options)
+            result = self.tools.execute(name, arguments, **options)
+        if skill_snapshot and isinstance(result, dict) and not result.get("error") and result.get("path") == "SKILL.md":
+            def activate(data):
+                row = task(data, selected["id"])
+                row["skills"], dropped = self._merge_task_skills(row.get("skills") or [], skill_snapshot)
+                self._record_skill_events_in_tx(row, dropped_skill_ids=dropped)
+            self.store.transaction(activate)
+        return result
 
     def _tool(self, selected: dict, cancelled, started: float) -> None:
         from .tool_dispatch import MAX_PARALLEL_TOOLS
@@ -1078,7 +1092,8 @@ class AgentRuntime(AgentLoop):
             desktop = computer_use + desktop
         has_skill_files = any(isinstance(s, dict) and s.get("files") for s in (row.get("skills") or []))
         if not has_skill_files and self.extensions is not None:
-            has_skill_files = self.extensions.store.any_enabled_skill_has_files()
+            has_skill_files = bool(self.extensions.store.enabled_skills_catalog(
+                workspace_root=(row.get("local_execution") or {}).get("workspace_root")))
         skill_tools = ("ryn_read_skill_file",) if has_skill_files else ()
         resource_tools = (
             ("ryn_list_resource_roots", "ryn_list_resources", "ryn_create_directory", "ryn_upload_resource_file", "ryn_create_text_file")
@@ -3173,7 +3188,7 @@ class AgentRuntime(AgentLoop):
             raise AgentError("agent_task_continued")
 
     def _queued_value(self, row: dict, value: dict) -> dict:
-        if set(value) - {"message", "intent", "attachments", "reasoning_effort", "client_request_id", "paused_reason"}:
+        if set(value) - {"message", "intent", "attachments", "reasoning_effort", "client_request_id", "paused_reason", "skill_ids"}:
             raise AgentError("agent_invalid_request")
         if value.get("paused_reason") not in (None, "paused", "failed", "interrupted", "cancelled"):
             raise AgentError("agent_invalid_request")
@@ -3186,6 +3201,9 @@ class AgentRuntime(AgentLoop):
         if len(content.encode("utf-8")) > 1024 * 1024:
             raise AgentError("agent_task_limit")
         result = {"message": content, "intent": intent}
+        if "skill_ids" in value:
+            result["skill_ids"] = [skill["id"] for skill in self._resolve_skills(
+                value["skill_ids"], workspace_root=(row.get("local_execution") or {}).get("workspace_root"))]
         if "reasoning_effort" in value:
             result["reasoning_effort"] = reasoning.validate(self._model_metadata(row["model_id"]), value["reasoning_effort"])
         if prepared is not None:
@@ -3238,7 +3256,7 @@ class AgentRuntime(AgentLoop):
             if value == {"send_now": True}:
                 self._dispatch_queued_in_tx(data, row, item_id=item_id)
             else:
-                merged = {key: item[key] for key in ("message", "intent", "reasoning_effort") if key in item}
+                merged = {key: item[key] for key in ("message", "intent", "reasoning_effort", "skill_ids") if key in item}
                 merged.update(value)
                 replacement = self._queued_value(row, merged)
                 if "attachments" not in value and "attachments" in item:
@@ -3255,7 +3273,7 @@ class AgentRuntime(AgentLoop):
     def _continue_queued(self, task_id: str, item_id: str) -> dict:
         old = self.store.inspect(lambda data: task(data, task_id))
         item = next(item for item in old["queued_messages"] if item["id"] == item_id)
-        value = {key: item[key] for key in ("message", "reasoning_effort") if key in item}
+        value = {key: item[key] for key in ("message", "reasoning_effort", "skill_ids") if key in item}
         if item.get("attachments"):
             value["attachments"] = [{key: file[key] for key in ("name", "media_type", "path")}
                                     for file in item["attachments"]]
@@ -3295,7 +3313,7 @@ class AgentRuntime(AgentLoop):
         if not items or (item_id is None and row.get("queued_messages_paused_reason")):
             return
         item = next(item for item in items if item["id"] == item_id) if item_id else items[0]
-        value = {key: item[key] for key in ("message", "reasoning_effort") if key in item}
+        value = {key: item[key] for key in ("message", "reasoning_effort", "skill_ids") if key in item}
         value.update(intent=item["intent"], expected_control_revision=row["control_revision"],
                      expected_goal_revision=row["goal"]["revision"])
         if item_id and row["status"] in {"queued", "running", "waiting_input", "waiting_approval"}:

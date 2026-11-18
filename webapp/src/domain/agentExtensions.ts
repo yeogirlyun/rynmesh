@@ -342,6 +342,7 @@ export interface ExtensionOverview {
   desktop_access: boolean;
   windows_supported?: boolean;
   skill_roots?: ExtensionSkillRoot[];
+  skills_catalog_in_context?: boolean;
   plugins: ExtensionPlugin[];
   skills: ExtensionSkill[];
   mcp_servers: ExtensionMcpServer[];
@@ -1084,6 +1085,7 @@ export function normalizeOverview(raw: Record<string, unknown>): ExtensionOvervi
     generation,
     updated_at: typeof raw.updated_at === "string" ? raw.updated_at : null,
     desktop_access: Boolean(raw.desktop_access),
+    skills_catalog_in_context: raw.skills_catalog_in_context !== false,
     windows_supported: typeof raw.windows_supported === "boolean" ? raw.windows_supported : undefined,
     ...(skillRoots ? { skill_roots: skillRoots } : {}),
     plugins: Array.isArray(raw.plugins)
@@ -1123,6 +1125,7 @@ async function extensionRequest<T>(path: string, method = "GET", body?: unknown,
 }
 
 export const agentExtensions = {
+  updateSkillsSettings: (skills_catalog_in_context: boolean) => extensionRequest<{ skills_catalog_in_context: boolean }>("/skills/settings", "PATCH", { skills_catalog_in_context }),
   queryPluginView,
   queryPluginTool,
   overview: async (signal?: AbortSignal): Promise<ExtensionOverview> =>
