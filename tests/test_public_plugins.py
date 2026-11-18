@@ -22,7 +22,7 @@ def setup(tmp_path):
     _, archive, signed = build(PACKAGE, revision="a" * 40, key=key)
     store = SiteStore(tmp_path)
     sites = SimpleNamespace(store=store, engine=SimpleNamespace(me="me"),
-                            host=SimpleNamespace(builtins={}, revoke_cache=lambda: None),
+                            host=SimpleNamespace(builtins={}, summaries={}, revoke_cache=lambda: None),
                             client=SimpleNamespace(), gateway=SimpleNamespace(url=lambda k: f"http://{k}.site.localhost:18150/"))
     data = {"catalog": signed, "archive": archive}
     requests = []

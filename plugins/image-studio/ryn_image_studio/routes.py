@@ -72,6 +72,11 @@ class ImageStudio:
                 "queue_length": len(queue), "running": next((q["id"] for q in queue if q["state"] == "running"), None),
                 "today": sum(row["today"] for row in usage), "average_seconds": round(self.store.average_seconds())}
 
+    def summary(self) -> dict[str, Any]:
+        length = len(self.store.queue())
+        return {"state": "busy" if length else "idle", "queue_length": length,
+                "eta_seconds": round(length * self.store.average_seconds()) if length else 0}
+
     def queue(self) -> list[dict[str, Any]]:
         queue = self.store.queue()
         average = self.store.average_seconds()
