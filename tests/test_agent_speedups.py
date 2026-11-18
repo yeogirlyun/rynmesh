@@ -154,12 +154,12 @@ def test_context_budget_follows_a_declared_window(tmp_path):
     task = runtime.create({"message": "Hi."})
     row = runtime.store.read()["tasks"][task["id"]]
     assert row["limits"]["max_context_chars"] is None
-    assert runtime._context_limit(row) == (output_policy.UNKNOWN_CONTEXT_WINDOW_TOKENS - 4096 - 512) * 3
+    assert runtime._context_limit(row) == (output_policy.UNKNOWN_CONTEXT_WINDOW_TOKENS - 8192 - 512) * 3
     assert runtime._context_policy(row)["context_window_known"] is False
     runtime.catalog = WindowCatalog(200000)
-    assert runtime._context_limit(row) == (200000 - 4096 - 512) * 3
+    assert runtime._context_limit(row) == (200000 - 16384 - 512) * 3
     runtime.catalog = WindowCatalog(8000)
-    assert runtime._context_limit(row) == (8000 - 4096 - 512) * 3
+    assert runtime._context_limit(row) == (8000 - 2000 - 512) * 3
 
 
 def test_ambiguous_old_ceiling_is_preserved_and_later_explicit_values_stay():
