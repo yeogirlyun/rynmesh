@@ -2379,8 +2379,9 @@ class AgentLoop:
                             raise _unattended_approval_rejection(decision.basis)
                         approval = {"id": "approval_" + uuid.uuid4().hex, "tool": call["name"], "arguments": sanitized(call["arguments"]),
                                     "call_id": call["call_id"], "arguments_sha256": digest(call["arguments"]), "preview": preview,
-                                    "preview_sha256": digest(bound_preview(preview)), "title": str(meta.get("title", call["name"]))}
-                        if call["name"] == "ryn_shell_execute":
+                                    "preview_sha256": digest(bound_preview(preview)), "title": str(meta.get("title", call["name"])),
+                                    "approval_basis": decision.basis}
+                        if call["name"] == "ryn_shell_execute" and decision.basis == "confirm_changes":
                             from .execution_policy import shell_prefix_candidate
                             candidate = shell_prefix_candidate(call["arguments"])
                             if candidate:

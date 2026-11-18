@@ -5,6 +5,7 @@ import os
 import pytest
 from test_agent_runtime import make_runtime, assistant, advance
 from rynmesh.agent_runtime.execution_policy import decide, classify_operation
+from rynmesh.agent_runtime.execution_policy import normalize_shell_prefix, shell_prefix_candidate
 from rynmesh.agent_runtime.operation_permissions import projection
 from rynmesh.agent_runtime.runtime import AgentRuntime
 from rynmesh.agent_runtime.store import AgentError, AgentStore
@@ -190,7 +191,8 @@ def test_T1_settings_added_rule_notifies_only_its_first_matching_result(tmp_path
 def test_T1_real_local_shell_writes_only_after_approval_then_prefix_reuse(ext_env):
     runtime, model, _, workspace, _ = ext_env
     shell = "powershell" if os.name == "nt" else "sh"
-    commands = [f"New-Item -ItemType File -Path {name}" if os.name == "nt" else f"touch -- {name}"
+    (workspace / "prefix-source.txt").write_text("synthetic source", encoding="utf-8")
+    commands = [f"Copy-Item prefix-source.txt {name}" if os.name == "nt" else f"cp prefix-source.txt {name}"
                 for name in ("prefix-one.txt", "prefix-two.txt")]
     model.responses = [assistant(name="ryn_shell_execute", args={"command": command, "shell": shell}) for command in commands] + [assistant("done")]
     tid = runtime.create({"message": "Create the two requested empty files"})["id"]
@@ -214,3 +216,117 @@ def test_T5_prefix_settings_do_not_interrupt_an_automatic_task(tmp_path):
     runtime.update_settings({"shell_allow_prefixes": [["npm", "test"]]})
     assert not raw(runtime, tid).get("pending_control")
     assert raw(runtime, tid)["status"] == "running"
+
+
+def prefix_decision(command, prefix, *, shell="powershell"):
+    return decide({"name": "ryn_shell_execute", "arguments": {"command": command, "shell": shell}},
+                  {"effect": "write"}, {"permission_mode": "confirm_changes"},
+                  {"permission_mode": "confirm_changes", "shell_allow_prefixes": [prefix]})
+
+
+@pytest.mark.parametrize("command,prefix", [
+    ("sudo rm -rf /", ["sudo", "rm"]),
+    ("ri -Recurse -Force C:/Users/x", ["ri", "-Recurse"]),
+    ("rd /s /q C:/Users/x", ["rd", "/s"]),
+    ("erase a.txt -Force", ["erase", "a.txt"]),
+    ("Start-Process https://example.test/", ["start-process", "https://example.test/"]),
+])
+def test_rework_dangerous_commands_never_use_even_an_old_prefix(command, prefix):
+    assert prefix_decision(command, prefix).action == "ask"
+
+
+REWORK_BROAD_PROGRAMS = ("env sudo doas timeout nice nohup time xargs exec eval command busybox wsl "
+    "python3 python3.11 py perl ruby php lua deno bun dash ksh fish csh tcsh osascript cscript wscript "
+    "mshta iex invoke-expression ri rd rmdir erase").split()
+
+
+@pytest.mark.parametrize("program", REWORK_BROAD_PROGRAMS)
+def test_rework_wrappers_interpreters_and_delete_aliases_have_no_prefix(program):
+    assert normalize_shell_prefix([program, "literal"]) is None
+    assert shell_prefix_candidate({"command": f"{program} literal payload", "shell": "sh"}) is None
+    assert prefix_decision(f"{program} literal payload", [program, "literal"], shell="sh").action == "ask"
+
+
+@pytest.mark.parametrize("command", [
+    "env CI=true sh -c 'echo arbitrary'", "timeout 30 bash -c 'echo arbitrary'", "python3 -c 'print(1)'",
+    "python3.12 -c 'print(1)'", "py -c 'print(1)'", "perl -e 'print 1'", "dash -c 'echo arbitrary'",
+    "wsl bash -c 'echo arbitrary'", "NODE_ENV=test npm publish", "npm -c payload", "npm /c payload",
+])
+def test_rework_specific_wrapper_assignment_and_second_flag_examples(command):
+    assert shell_prefix_candidate({"command": command, "shell": "sh"}) is None
+
+
+@pytest.mark.parametrize("command", [
+    "git config core.sshCommand evil", "git CONFIG core.sshCommand evil", "git submodule foreach 'echo arbitrary'", "git bisect run evil",
+    "git filter-branch tree-filter", "git difftool file.txt", "git mergetool file.txt",
+])
+def test_rework_git_execution_subcommands_cannot_be_remembered(command):
+    prefix = command.split()[:2]
+    assert normalize_shell_prefix(prefix) is None
+    assert shell_prefix_candidate({"command": command, "shell": "sh"}) is None
+    assert prefix_decision(command, prefix, shell="sh").action == "ask"
+
+
+@pytest.mark.parametrize("command,prefix", [
+    ("git fetch --upload-pack='echo arbitrary' /tmp/local", ["git", "fetch"]),
+    ("git fetch --receive-pack=evil /tmp/local", ["git", "fetch"]),
+    ("git rebase -x 'echo arbitrary'", ["git", "rebase"]),
+    ("git rebase --exec=evil main", ["git", "rebase"]),
+    ("git rebase -ixevil main", ["git", "rebase"]),
+    ("git grep -Oevil needle", ["git", "grep"]),
+    ("git grep --open-files-in-pager=evil needle", ["git", "grep"]),
+    ("git diff --output=out.patch", ["git", "diff"]),
+    ("git diff --ext-diff file.txt", ["git", "diff"]),
+    ("git push --force origin main", ["git", "push"]),
+    ("git PUSH --force origin main", ["git", "PUSH"]),
+    ("git push --force-with-lease origin main", ["git", "push"]),
+    ("git push --mirror origin", ["git", "push"]),
+    ("git push --delete origin main", ["git", "push"]),
+    ("git push -vf origin main", ["git", "push"]),
+    ("git push -d origin main", ["git", "push"]),
+])
+def test_rework_git_exec_output_and_force_flags_still_ask(command, prefix):
+    assert prefix_decision(command, prefix, shell="sh").action == "ask"
+
+
+@pytest.mark.parametrize("executable", ["/tmp/npm", "C:/temp/npm.cmd", r".\tools\npm.cmd"])
+def test_rework_path_qualified_program_cannot_borrow_a_bare_name_rule(executable):
+    assert normalize_shell_prefix([executable, "test"]) is None
+    assert shell_prefix_candidate({"command": f"{executable} test", "shell": "powershell"}) is None
+    assert prefix_decision(f"{executable} test", ["npm", "test"]).action == "ask"
+
+
+@pytest.mark.parametrize("mode", ["workspace", "confirm_changes"])
+def test_rework_explicit_approval_source_has_no_prefix_option(tmp_path, mode):
+    runtime, _, tools, _ = shell_runtime(tmp_path, "git add one.txt")
+    runtime.update_settings({"permission_mode": mode})
+    metadata = tools.metadata
+    tools.metadata = lambda name: {**metadata(name), "requires_explicit_approval": True}
+    tid = runtime.create({"message": "Prepare a host-required approval"})["id"]
+    advance(runtime, 2)
+    assert not runtime.get(tid)["pending_approval"].get("remember_prefix_candidate")
+    with pytest.raises(AgentError, match="agent_shell_prefix_invalid"):
+        approve_prefix(runtime, tid)
+
+
+@pytest.mark.parametrize("basis", [None, "dangerous_command", "explicit_approval"])
+def test_rework_action_rejects_unsupported_or_legacy_approval_source(tmp_path, basis):
+    runtime, _, _, _ = shell_runtime(tmp_path, "git add one.txt")
+    tid = runtime.create({"message": "Stage one file"})["id"]
+    advance(runtime, 2)
+    def source(data):
+        data["tasks"][tid]["pending_approval"]["approval_basis"] = basis
+    runtime.store.transaction(source)
+    with pytest.raises(AgentError, match="agent_shell_prefix_invalid"):
+        approve_prefix(runtime, tid)
+
+
+def test_rework_action_rejects_nonconfirmation_task_mode(tmp_path):
+    runtime, _, _, _ = shell_runtime(tmp_path, "git add one.txt")
+    tid = runtime.create({"message": "Stage one file"})["id"]
+    advance(runtime, 2)
+    def mode(data):
+        data["tasks"][tid]["permission_mode"] = "workspace"
+    runtime.store.transaction(mode)
+    with pytest.raises(AgentError, match="agent_shell_prefix_invalid"):
+        approve_prefix(runtime, tid)

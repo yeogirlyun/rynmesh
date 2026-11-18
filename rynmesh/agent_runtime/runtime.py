@@ -3928,6 +3928,8 @@ class AgentRuntime(AgentLoop):
                     row["approved"] = {**approval, "revision": row["revision"]}
                     remembered = {}
                     if value.get("remember_prefix"):
+                        if row["permission_mode"] != "confirm_changes" or approval.get("approval_basis") != "confirm_changes":
+                            raise AgentError("agent_shell_prefix_invalid")
                         from .execution_policy import shell_prefix_candidate
                         prefix = shell_prefix_candidate(call["arguments"]) if call["name"] == "ryn_shell_execute" else None
                         if prefix is None:

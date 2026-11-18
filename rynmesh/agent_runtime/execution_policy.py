@@ -33,6 +33,10 @@ GIT_UNSAFE_FLAGS = (
     "--config-env",
     "--git-dir",
     "--work-tree",
+    "--upload-pack",
+    "--receive-pack",
+    "-x",
+    "--open-files-in-pager",
 )
 
 
@@ -692,7 +696,13 @@ def desktop_access_enabled(row, settings):
         (row.get("local_execution") or {}).get("desktop_access") and settings.get("desktop_access"))
 
 
-SHELL_BROAD_PREFIXES = frozenset({"sh", "bash", "zsh", "cmd", "powershell", "pwsh", "python", "node", "npx", "rm", "del", "remove-item"})
+SHELL_BROAD_PREFIXES = frozenset({
+    "sh", "bash", "zsh", "cmd", "powershell", "pwsh", "python", "node", "npx", "rm", "del", "remove-item",
+    "env", "sudo", "doas", "timeout", "nice", "nohup", "time", "xargs", "exec", "eval", "command", "busybox", "wsl",
+    "py", "perl", "ruby", "php", "lua", "deno", "bun", "dash", "ksh", "fish", "csh", "tcsh", "osascript",
+    "cscript", "wscript", "mshta", "iex", "invoke-expression", "ri", "rd", "rmdir", "erase",
+})
+GIT_PREFIX_EXEC_SUBCOMMANDS = frozenset({"config", "submodule", "bisect", "filter-branch", "difftool", "mergetool"})
 SHELL_PREFIX_META = re.compile(r"[\r\n\x00;&|<>`$(){}#*?\[\]%!'\"]")
 
 
@@ -701,28 +711,49 @@ def normalize_shell_prefix(prefix):
     if (not isinstance(prefix, list) or not 1 <= len(prefix) <= 3
             or any(not isinstance(word, str) or not word.strip() or SHELL_PREFIX_META.search(word) for word in prefix)):
         return None
-    normalized = [executable_key(prefix[0]), *prefix[1:]]
-    if not normalized[0] or normalized[0] in SHELL_BROAD_PREFIXES:
+    if ("/" in prefix[0] or "\\" in prefix[0] or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", prefix[0])
+            or (len(prefix) >= 2 and prefix[1].startswith(("-", "/")))):
         return None
-    if normalized[0] == "git" and (len(normalized) != 2 or normalized[1].startswith("-")):
+    normalized = [executable_key(prefix[0]), *prefix[1:]]
+    if (not normalized[0] or normalized[0] in SHELL_BROAD_PREFIXES
+            or re.fullmatch(r"python3(?:\.\d+)*", normalized[0])):
+        return None
+    if normalized[0] == "git" and (len(normalized) != 2 or normalized[1].lower() in GIT_PREFIX_EXEC_SUBCOMMANDS):
         return None
     return normalized
 
 
-def shell_prefix_candidate(arguments):
+def _shell_prefix_words(arguments):
     shell = arguments.get("shell", "powershell" if os.name == "nt" else "sh")
     words = literal_command(arguments.get("command"), shell)
-    return normalize_shell_prefix(words[:2]) if words else None
+    if not words or normalize_shell_prefix(words[:2]) is None:
+        return None
+    words = [executable_key(words[0]), *words[1:]]
+    from .dangerous_commands import dangerous_shell
+    if dangerous_shell(arguments):
+        return None
+    if words[0] == "git":
+        for word in words[2:]:
+            short = word.startswith("-") and not word.startswith("--")
+            if word.lower().startswith(GIT_UNSAFE_FLAGS) or (short and any(flag in word[1:] for flag in "xOo")):
+                return None
+            if words[1].lower() == "push" and (word.startswith(("--force", "--mirror", "--delete"))
+                                      or (short and any(flag in word[1:] for flag in "fd"))):
+                return None
+    return words
+
+
+def shell_prefix_candidate(arguments):
+    words = _shell_prefix_words(arguments)
+    return words[:2] if words else None
 
 
 def matching_shell_prefix(arguments, settings):
-    shell = arguments.get("shell", "powershell" if os.name == "nt" else "sh")
-    words = literal_command(arguments.get("command"), shell)
+    words = _shell_prefix_words(arguments)
     if not words:
         return None
-    words = [executable_key(words[0]), *words[1:]]
     for prefix in sorted(settings.get("shell_allow_prefixes", []), key=len, reverse=True):
-        if words[:len(prefix)] == prefix:
+        if normalize_shell_prefix(prefix) is not None and words[:len(prefix)] == prefix:
             return prefix
     return None
 
