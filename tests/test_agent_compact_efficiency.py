@@ -9,7 +9,7 @@ from test_agent_resource_writes import writable as writable_fixture
 from test_agent_runtime import advance, approve, assistant, fit_window, make_runtime
 from test_agent_tool_menu import ManyTools
 
-from rynmesh.agent_runtime import projects, tool_menu
+from rynmesh.agent_runtime import tool_menu
 from rynmesh.agent_runtime.control import MID_TURN_NOTES
 from rynmesh.agent_runtime.prompt import PROGRESS_TAIL_PREFIX
 from rynmesh.agent_runtime.runtime import AgentRuntime
@@ -80,23 +80,17 @@ def observed_state(history, previous=None):
     return state
 
 
-def test_real_resource_tools_reach_body_and_approved_artifact_under_pressure(writable, record_property, monkeypatch):
+def test_real_resource_tools_reach_body_and_approved_artifact_under_pressure(writable, record_property):
     tools, _, _, _, source, server, root, app, store = writable
-    # The 16KB window below is clamped at the small-window bound, so it cannot
-    # absorb prompt growth. S12-I11's non-project <environment_context> (~240 B
-    # here, sized by the pytest tmp cwd) takes the last room this scenario's
-    # history needs; it is covered by tests/test_ovh_s12_i11.py instead.
-    guidance = projects.guidance
-    monkeypatch.setattr(projects, "guidance", lambda row: guidance(row)
-                        if row.get("project") or row.get("workspace_instructions") else "")
-    source_text = "\n".join(f"Amount={n}" for n in [17, 29, 43]) + "\n" + "Observation detail. " * 85
+
+    source_text = "\n".join(f"Amount={n}" for n in [17, 29, 43]) + "\n" + "Observation detail. " * 220
     (root / "allowed/observations.txt").write_bytes(source_text.encode("utf-8"))
     owners = ["Read observations.txt and create totals.md with the sum. Never modify the source.",
               "Include only the observed total; never share or change permissions."]
     catalog = SimpleNamespace(list_models=lambda: [{"id": "fixture", "source": "local_api", "available": True,
         "agent_supported": True, "peer_id": "local", "source_id": "fixture", "destination_revision": "rev1"}])
     calls, summary_sources = [], []
-    cap = 12000  # replaced below by the historical 12000 plus prompt growth
+    cap = 0  # Set from the measured prompt before the first model call.
     read_names = ["ryn_list_resource_roots", "ryn_list_resources", "ryn_read_resource"]
 
     class BoundModel:
@@ -123,7 +117,7 @@ def test_real_resource_tools_reach_body_and_approved_artifact_under_pressure(wri
                 return assistant(json.dumps({"status": "passed", "summary": "Created content was mechanically read back.",
                     "uncovered_requirements": [], "evidence_refs": [e["id"] for e in payload["evidence"]]}))
             assert [m["content"] for m in messages if m["role"] == "user"
-                    and not str(m.get("content") or "").startswith((PROGRESS_TAIL_PREFIX, "<environment_context>"))
+                    and not str(m.get("content") or "").startswith((PROGRESS_TAIL_PREFIX, "<environment_context>", "<host_note"))
                     and m.get("content") not in MID_TURN_NOTES.values()] == owners
             state, references = {}, {}
             for m in messages:
@@ -172,7 +166,7 @@ def test_real_resource_tools_reach_body_and_approved_artifact_under_pressure(wri
         "expected_destination_revision": "rev1"})
     task = runtime.add_message(task["id"], {"message": owners[1], "intent": "steer",
         "expected_control_revision": task["control_revision"], "expected_goal_revision": task["goal"]["revision"]})
-    cap = fit_window(runtime, task["id"], 12000, small_window=True)
+    cap = fit_window(runtime, task["id"], 18000)
     pressure, restarted = [], False
     for _ in range(45):
         row = runtime.store.read()["tasks"][task["id"]]
@@ -196,11 +190,9 @@ def test_real_resource_tools_reach_body_and_approved_artifact_under_pressure(wri
     done = runtime.store.read()["tasks"][task["id"]]
     assert done["status"] == "completed", (done.get("error"), [
         {k: e[k] for k in ("bytes", "maximum") if k in e} for e in done["events"] if e["type"] == "context_compaction_rejected"])
-    # The separate checker has its own larger evidence envelope and correctly
-    # refuses it at 12 KiB. This test establishes observed business completion,
-    # not a successful model semantic check or formal acceptance.
-    assert done["outcome"]["status"] == "unverified"
-    assert "agent_verification_context_limit" in done["outcome"]["uncertainties"]
+    # The larger fixture window fits the independent checker as well.
+    assert done["outcome"]["status"] == "verified"
+    assert "agent_verification_context_limit" not in done["outcome"]["uncertainties"]
     assert all(item["status"] == "passed" for item in done["outcome"]["mechanical_scope"])
     assert (root / "allowed/totals.md").read_text(encoding="utf-8") == "Observed total: 89\n"
     assert (root / "allowed/observations.txt").read_text(encoding="utf-8") == source_text
