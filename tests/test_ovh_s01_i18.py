@@ -161,7 +161,9 @@ def test_t2_connect_cli_writes_conservative_windows_32k_output_and_cli_default_b
     rows = {r["id"]: r for r in catalog.list_models()}
     claude_row = rows["local/claude-cli"]
     assert claude_row["context_window"] == 200000
-    assert claude_row["max_output_tokens"] == 32000
+    assert claude_row["max_output_tokens"] == 4096
+    assert claude_row["max_output_tokens_known"] is False
+    assert claude_row["max_output_basis"] == "unknown_fallback"
     assert claude_row["context_window_known"] is False
     assert claude_row["context_window_basis"] == "cli_default"
 

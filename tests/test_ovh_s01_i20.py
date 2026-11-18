@@ -33,7 +33,7 @@ def _sample_tool_spec(name: str = "inspect_service") -> dict:
     }
 
 
-def test_t1_codex_and_antigravity_accept_12_proposals_up_to_16_and_reject_17(monkeypatch):
+def test_t1_codex_and_antigravity_accept_12_proposals_and_pair_overflow(monkeypatch):
     """T1: Codex object protocol and Antigravity accept 12 (up to 16) proposals and reject 17 (covers Step 1)."""
     tool_spec = _sample_tool_spec("inspect_service")
     tools_map = {"inspect_service": tool_spec["function"]}
@@ -73,18 +73,20 @@ def test_t1_codex_and_antigravity_accept_12_proposals_up_to_16_and_reject_17(mon
     )
     assert len(ag_res["message"]["tool_calls"]) == 12
 
-    # 17 proposals (> 16) still rejected with proposal_feedback_code == 'tool_calls':
-    seventeen = [
+    # S06-I23 preserves the valid siblings and pairs the excess proposal as a rejection.
+    limit = codex_tools.MAX_PROPOSALS
+    proposals = [
         {"name": "inspect_service", "arguments": {"service_id": f"svc_{idx}"}}
-        for idx in range(17)
+        for idx in range(limit + 1)
     ]
-    with pytest.raises(AdapterError) as codex_err:
-        codex_tools._validated(
-            {"text": json.dumps({"content": "", "tool_calls": seventeen})},
-            tools_map,
-            required=False,
-        )
-    assert codex_err.value.proposal_feedback_code == "tool_calls"
+    result = codex_tools._validated(
+        {"text": json.dumps({"content": "", "tool_calls": proposals})},
+        tools_map,
+        required=False,
+    )["tool_calls"]
+    assert len({call["id"] for call in result}) == len(result) == limit + 1
+    assert [c["function"]["name"] for c in result] == ["inspect_service"] * limit + ["ryn_proposal_overflow"]
+    assert json.loads(result[-1]["function"]["arguments"]) == {}
 
 
 def test_t2_antigravity_and_codex_default_max_tokens_use_model_max_output_tokens_and_experimental_marker(
