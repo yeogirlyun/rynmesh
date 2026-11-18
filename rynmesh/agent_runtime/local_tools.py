@@ -1255,7 +1255,7 @@ class LocalTools:
             if cache_ttl > 0.0 and last_checked_at is not None and (now_mono - last_checked_at) < cache_ttl:
                 return last_result
             try:
-                from .execution_policy import decide, owner_tool_key, shell_read, verified_read_classification
+                from .execution_policy import automatic_flight_allowed, owner_tool_key, shell_read, verified_read_classification
                 # Process watchers poll exit every 50 ms, while authority checks run
                 # once per second (cached); browser checks run on demand. Project only
                 # authority rather than cloning every task transcript on each check.
@@ -1289,14 +1289,11 @@ class LocalTools:
                     last_checked_at = now_mono
                     last_result = False
                     return False
-            if operation.get("authorization") == "automatic":
-                if decide(operation, {"effect": operation.get("effect"),
-                    "computer_access": operation.get("computer_access"),
-                    "workstation_permission_tool": operation.get("workstation_permission_tool")}, row, current).action != "execute":
-                    consecutive_errors = 0
-                    last_checked_at = now_mono
-                    last_result = False
-                    return False
+            if operation.get("authorization") == "automatic" and not automatic_flight_allowed(operation, row, current):
+                consecutive_errors = 0
+                last_checked_at = now_mono
+                last_result = False
+                return False
             try:
                 workspace_ok = self.policy(context, state)["workspace_root"] == expected_root
             except AgentToolRejected:

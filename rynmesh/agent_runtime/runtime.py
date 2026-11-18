@@ -221,7 +221,7 @@ def revision(row: dict, expected: Any) -> None:
 
 
 def write_permission_revoked(row: dict, settings: dict) -> bool:
-    from .execution_policy import decide, owner_tool_key, task_grant_proof, verified_read_classification
+    from .execution_policy import automatic_flight_allowed, owner_tool_key, task_grant_proof, verified_read_classification
     flight = row.get("in_flight") or {}
     has_computer_access = (
         str(flight.get("name") or "").startswith(("ryn_browser_", "ryn_computer_"))
@@ -248,9 +248,7 @@ def write_permission_revoked(row: dict, settings: dict) -> bool:
     if flight.get("authorization") == "task_grant":
         return task_grant_proof(flight, {}, row) is None
     if flight.get("authorization") == "automatic":
-        return decide(flight, {"effect": flight["effect"],
-            "computer_access": flight.get("computer_access"),
-            "workstation_permission_tool": flight.get("workstation_permission_tool")}, row, settings).action != "execute"
+        return not automatic_flight_allowed(flight, row, settings)
     return False
 
 

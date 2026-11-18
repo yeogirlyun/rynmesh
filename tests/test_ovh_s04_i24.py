@@ -205,8 +205,13 @@ def test_t7_automatic_live_guard_and_browser_dispatch(craft, monkeypatch):
     monkeypatch.setattr(browser, "execute", run)
     assert local.perform(operation["name"], operation["arguments"], context, lambda: False) == {"opened": True}
     runtime.store.transaction(lambda d: d["tasks"][tid].update(in_flight={
-        **operation, "name": INSTALL, "requires_explicit_approval": True}))
+        **operation, "name": INSTALL, "computer_access": False,
+        "operation_classification": classify_operation(INSTALL, operation["arguments"],
+                                                       {"requires_explicit_approval": True})}))
     assert local.allowed(context)() is True
+    assert write_permission_revoked(runtime.store.read()["tasks"][tid], policy("workspace")) is True
+    runtime.update_settings({"permission_mode": "workspace"})
+    assert local.allowed(context)() is False
 
 
 def test_t10_node_app_real_mutation_and_automatic_event(tmp_path):

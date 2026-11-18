@@ -890,3 +890,15 @@ def decide(call, metadata, row, settings):
             return Decision("ask", "external_change")
     # When both sides are automatic, no approval or desktop gate remains.
     return Decision("execute", "automatic")
+
+
+def automatic_flight_allowed(flight, row, settings):
+    """Recheck dispatch using the original host classification of the operation."""
+    classification = flight.get("operation_classification") or {}
+    metadata = {
+        "effect": flight.get("effect"),
+        "computer_access": flight.get("computer_access"),
+        "workstation_permission_tool": flight.get("workstation_permission_tool"),
+        "requires_explicit_approval": classification.get("basis") == "explicit_approval",
+    }
+    return decide(flight, metadata, row, settings).action == "execute"
