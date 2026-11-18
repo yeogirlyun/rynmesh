@@ -885,8 +885,6 @@ class LocalTools:
                 raise AgentToolRejected(str(exc)) from None
         else:
             current_root = current.get("workspace_root") or self.store.default_workspace()
-        if bound.get("workspace_root", "") != current_root:
-            raise AgentToolRejected("agent_workspace_changed_new_task_required")
         row_info = (data.get("tasks") or {}).get(task_id) if task_id else None
         if isinstance(row_info, dict):
             row_mode = row_info["permission_mode"] if row_info.get("permission_mode") in _PERMISSION_ORDER else "workspace"
@@ -894,10 +892,15 @@ class LocalTools:
             row_mode = context["permission_mode"]
         else:
             row_mode = "workspace"
+        workspace_root = bound.get("workspace_root", "")
+        if not workspace_root and row_mode == "automatic" and not bound.get("project_id"):
+            workspace_root = current_root
+        if workspace_root != current_root and (bound.get("project_id") or bound.get("workspace_source") != "task"):
+            raise AgentToolRejected("agent_workspace_changed_new_task_required")
         row_desktop = (row_info.get("local_execution") or {}).get("desktop_access") if isinstance(row_info, dict) else bound.get("desktop_access")
         from .execution_policy import desktop_access_enabled
         return {
-            "workspace_root": bound.get("workspace_root", ""),
+            "workspace_root": workspace_root,
             "desktop_access": desktop_access_enabled(
                 {"permission_mode": row_mode, "local_execution": {"desktop_access": row_desktop}}, current),
             "permission_mode": row_mode,
@@ -1214,6 +1217,10 @@ class LocalTools:
             return self._desktop
 
     def _build_authority_checker(self, context, *, stop_on_paused: bool, cache_ttl: float):
+        expected_root = ((context.get("local_execution") or {}).get("workspace_root")
+                         or context.get("workspace_root")
+                         or self.store.inspect(lambda data: data["settings"].get("workspace_root"))
+                         or self.store.default_workspace())
         stopped_statuses = (
             {"paused", "cancelled", "failed", "interrupted"}
             if stop_on_paused
@@ -1291,7 +1298,7 @@ class LocalTools:
                     last_result = False
                     return False
             try:
-                workspace_ok = self.policy(context, state)["workspace_root"] == context["local_execution"].get("workspace_root", "")
+                workspace_ok = self.policy(context, state)["workspace_root"] == expected_root
             except AgentToolRejected:
                 workspace_ok = False
             ok = bool(
@@ -1680,7 +1687,7 @@ class LocalTools:
             {"effect": SPECS[name][1]},
             operation_id=operation_id,
             task_id=context["task_id"],
-            workspace_root=policy["workspace_root"],
+            workspace_root=context["local_execution"].get("workspace_root", ""),
             goal_revision=context.get("goal_revision"),
             scope_revision=context.get("scope_revision"),
             context_epoch=context.get("context_epoch"),
@@ -1697,7 +1704,7 @@ class LocalTools:
             and verified_read_classification(
                 {"operation_classification": host_classification},
                 task_id=context["task_id"],
-                workspace_root=policy["workspace_root"],
+                workspace_root=context["local_execution"].get("workspace_root", ""),
                 operation_id=operation_id,
                 tool=name,
                 arguments=args,

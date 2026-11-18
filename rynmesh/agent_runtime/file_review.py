@@ -249,6 +249,17 @@ class FileReview:
         self.lock = self.directory.parent / ".review.lock"
         self.usage_path = self.directory.parent / "usage-v1.json"
         safe_path(self.directory.parent, str(self.lock))
+        # Keep an earlier workspace's undo history, but never load it for the
+        # new workspace after an owner binds a previously unbound task.
+        safe_path(self.directory.parent, str(self.manifest))
+        if self.manifest.exists():
+            try:
+                previous_root = read_json(self.manifest).get("root")
+            except (OSError, ValueError, AttributeError):
+                previous_root = None  # load() retains the existing corruption error.
+            if isinstance(previous_root, str) and os.path.normcase(previous_root) != os.path.normcase(self.root):
+                root_key = hashlib.sha256(os.path.normcase(self.root).encode()).hexdigest()[:32]
+                self.manifest = self.directory / f"review-v2-{root_key}.json"
 
     def _read_usage(self):
         safe_path(self.directory.parent, str(self.usage_path))

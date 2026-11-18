@@ -1149,6 +1149,14 @@ class AgentRuntime(AgentLoop):
         epoch = row.get("context_epoch", 0)
         return [message for message in row["messages"] if _is_owner_user_message(message) or message.get("context_epoch", 0) == epoch]
 
+    def _task_workspace_root(self, row: dict) -> str:
+        bound = row.get("local_execution") or {}
+        root = bound.get("workspace_root", "")
+        if not root and row.get("permission_mode") == "automatic" and not bound.get("project_id"):
+            root = (self.store.inspect(lambda data: data["settings"].get("workspace_root"))
+                    or self.store.default_workspace())
+        return root
+
     def _execution_context(self, row: dict, operation_id=None, *, cheap_only=False) -> dict:
         origins = {}
         inherited = row.get("continuation_resource_origins") or {}
@@ -1184,6 +1192,7 @@ class AgentRuntime(AgentLoop):
         # every stream chunk. Full checks still run at each dispatch boundary.
         policy_context = ({"consumer_node_id": self.consumer_node_id, "model_destination": model_destination,
                            "model_destination_verified": False} if cheap_only else self._policy_context(row))
+        workspace_root = self._task_workspace_root(row)
         return {**policy_context,
                 "_admit_extension_policy": _ExtensionPolicyAdmitter(self, row),
                 "task_id": row["id"], "operation_id": operation_id, "owner_id": self.owner_id,
@@ -1191,6 +1200,7 @@ class AgentRuntime(AgentLoop):
                 "control_revision": row["control_revision"], "scope_revision": row["scope_revision"],
                 "settings_revision": self.store.inspect(lambda data: data.get("settings_revision", 0)),
                 "local_execution": copy.deepcopy(row.get("local_execution") or {}),
+                "workspace_root": workspace_root,
                 "result_budget_bytes": row["limits"]["max_output_chars"],
                 "model_destination": model_destination,
                 "resource_grants": resource_grants,
@@ -2109,12 +2119,10 @@ class AgentRuntime(AgentLoop):
                     or (row.get("local_execution") or {}).get("workspace_root")):
                 raise AgentError("agent_invalid_transition")
             current = data["settings"].get("workspace_root", "")
-            if current and Path(current).resolve() != Path(root):
-                raise AgentError("agent_workspace_changed_new_task_required")
             if not current:
                 data["settings"]["workspace_root"] = root
                 data["settings_revision"] = data.get("settings_revision", 0) + 1
-            row.setdefault("local_execution", {})["workspace_root"] = data["settings"]["workspace_root"]
+            row.setdefault("local_execution", {}).update(workspace_root=root, workspace_source="task")
             row.pop("task_grants", None)
             row["observed_files"] = {}
             close_queue(row, event, "agent_owner_changed")
@@ -2987,7 +2995,7 @@ class AgentRuntime(AgentLoop):
         return {"events": hydrated_events(row, [item for item in row["events"] if item["seq"] > after]), "cursor": row["event_cursor"], "status": row["status"], "revision": row["revision"], "control_revision": row["control_revision"]}
 
     def create(self, value: dict, *, _continuation=None) -> dict:
-        if set(value) - {"message", "model_id", "title", "client_request_id", "scope", "expected_destination_revision", "skill_ids", "budget_limits", "response_language", "project_id", "reasoning_effort", "attachments", "allow_model_goal_creation"}:
+        if set(value) - {"message", "model_id", "title", "client_request_id", "scope", "expected_destination_revision", "skill_ids", "budget_limits", "response_language", "project_id", "reasoning_effort", "attachments", "allow_model_goal_creation", "workspace_root"}:
             raise AgentError("agent_invalid_request")
         if "allow_model_goal_creation" in value and type(value["allow_model_goal_creation"]) is not bool:
             raise AgentError("agent_invalid_request")
@@ -3011,12 +3019,19 @@ class AgentRuntime(AgentLoop):
                 return public_task(existing, settings=configuration["settings"])
         cfg_settings = {**DEFAULT_SETTINGS, **configuration["settings"]}
         task_workspace_root = cfg_settings.get("workspace_root") or self.store.default_workspace()
+        explicit_workspace = "workspace_root" in value and value.get("project_id") is None
+        if explicit_workspace:
+            from .local_tools import validate_configuration
+            validate_configuration({"workspace_root": value["workspace_root"]})
+            if not value["workspace_root"]:
+                raise AgentError("agent_invalid_workspace")
+            task_workspace_root = str(Path(value["workspace_root"]).resolve(strict=True))
         if value.get("project_id") is not None:
             proj_id = value["project_id"]
             proj_row = (configuration.get("projects") or {}).get(proj_id) if isinstance(proj_id, str) else None
             if isinstance(proj_row, dict) and proj_row.get("enabled") and proj_row.get("path"):
                 task_workspace_root = str(proj_row["path"])
-        elif _continuation:
+        elif _continuation and not explicit_workspace:
             cont_src = configuration.get("tasks", {}).get(_continuation["id"])
             if isinstance(cont_src, dict):
                 cont_ws = (cont_src.get("local_execution") or {}).get("workspace_root")
@@ -3101,6 +3116,8 @@ class AgentRuntime(AgentLoop):
             if effort is not None:
                 row["reasoning_effort"] = effort
             row["local_execution"] = {"workspace_root": settings.get("workspace_root") or self.store.default_workspace(), "desktop_access": desktop_enabled(settings["permission_mode"], settings.get("desktop_access"))}
+            if explicit_workspace:
+                row["local_execution"].update(workspace_root=task_workspace_root, workspace_source="task")
             row["local_execution"].update(restrict_web_policy({}, settings))
             if value.get("project_id") is not None:
                 row["project"] = copy.deepcopy(projects.selected(data, value["project_id"], refresh=True))
@@ -4404,7 +4421,10 @@ class AgentRuntime(AgentLoop):
                 return False
         else:
             current_root = data["settings"].get("workspace_root") or self.store.default_workspace()
-        if bound.get("workspace_root", "") != current_root:
+        effective_root = bound.get("workspace_root", "")
+        if not effective_root and row.get("permission_mode") == "automatic" and not bound.get("project_id"):
+            effective_root = current_root
+        if effective_root != current_root and (bound.get("project_id") or bound.get("workspace_source") != "task"):
             return False
         try:
             self._validate_context(row, cheap_only=True, control_state=data)
@@ -5451,7 +5471,7 @@ class AgentRuntime(AgentLoop):
     def _change_review(self, row: dict):
         """Net file changes this task made through file tools, or None when there is nothing to review."""
         tool = getattr(self.tools, "change_review", None)
-        root = (row.get("local_execution") or {}).get("workspace_root", "")
+        root = self._task_workspace_root(row)
         goal = row["goal"]["revision"]
         if tool is None or not root or not any(
                 r.get("effect") == "write" and r.get("status") == "confirmed" and r.get("goal_revision") == goal

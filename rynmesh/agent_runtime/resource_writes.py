@@ -49,7 +49,7 @@ class ResourceWrites:
             reject("agent_resource_scope_denied")
         ws_path = args.get("workspace_path")
         if name == "ryn_upload_resource_file" or (name == "ryn_create_text_file" and ws_path):
-            ws_root_raw = (context.get("local_execution") or {}).get("workspace_root") or ""
+            ws_root_raw = (context.get("local_execution") or {}).get("workspace_root") or context.get("workspace_root") or ""
             if not ws_root_raw:
                 reject("agent_workspace_required")
             try:
