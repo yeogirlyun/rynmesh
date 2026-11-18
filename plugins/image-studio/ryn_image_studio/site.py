@@ -77,7 +77,7 @@ class StudioSite:
                                "now": self.store.clock(),
                                "average_seconds": round(self.store.average_seconds()),
                                "scenes": {k: {"label": v["label"], "purpose": v["purpose"],
-                                              "width": v["size"][0], "height": v["size"][1]}
+                                              "width": v["size"][0], "height": v["size"][1], "sizes": v["sizes"]}
                                           for k, v in templates.SCENES.items()},
                                "styles": {k: {"label": v["label"]} for k, v in templates.STYLES.items()},
                                "purposes": {k: {"label": v["label"], "ratio": v["ratio"], "width": v["size"][0],

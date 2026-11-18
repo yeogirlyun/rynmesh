@@ -80,6 +80,7 @@ def test_me_lists_scenes_with_size_and_styles(studio, monkeypatch):
     assert set(me["scenes"]) == set(templates.SCENES)
     assert me["scenes"]["detail"] == {
         "label": "详情页头图", "purpose": "banner", "width": 1820, "height": 1024,
+        "sizes": templates.SCENES["detail"]["sizes"],
     }
     assert me["styles"] == {key: {"label": style["label"]} for key, style in templates.STYLES.items()}
 
