@@ -292,9 +292,8 @@ def authority(row: dict) -> str:
             + ACTION_RULES
             + "workspace mode runs workstation tools and reads without confirmation. "
             "confirm_changes is the user's strict mode for other effects. "
-            "automatic mode is full access: the host runs every change (including plugin/config) without dialog; "
-            "no approval or desktop-access gate remains. "
-            "The owner's desktop-access switch gates computer use outside automatic mode. "
+            "automatic mode is full access with no dialog: no approval or desktop-access gate remains; "
+            "outside automatic mode the owner's desktop-access switch gates computer use. "
             "External configuration/access changes retain their host approval boundary in other modes. "
             "When setup needs a missing secret, use the host's secure credential card to collect/submit it out of model context; "
             "use ryn_request_input kind=credential_ref only when full connection facts are also needed. "

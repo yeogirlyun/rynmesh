@@ -40,7 +40,7 @@ SPECS = [
 SPECS += [
     {"type": "function", "function": {
         "name": ALL_LIST,
-        "description": "Discover the user's apps on the Ryn Applications page: enabled plugins and their actual Agent capabilities, including Craft editors, Resume, Recruit, Desk and NAS. This is the Ryn app inventory, separate from OS-installed software. Outside automatic mode an App operation asks the owner first; in automatic mode it runs directly. NAS keeps resource permissions. No installation or launch.",
+        "description": "Discover the user's apps on the Ryn Applications page: enabled plugins and their actual Agent capabilities, including Craft editors, Resume, Recruit, Desk and NAS. Not OS-installed software. Outside automatic mode an App operation asks the owner first; in automatic mode it runs directly. NAS keeps resource permissions. No installation or launch.",
         "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
     }},
     {"type": "function", "function": {

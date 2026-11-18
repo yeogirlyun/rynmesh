@@ -54,7 +54,7 @@ def test_write_proposal_exposes_contract_stages_exact_approval_and_cannot_run_ea
     assert PROMPT_VERSION in system and "confirm_changes is the user's strict mode" in system
     assert "External configuration/access changes retain their host approval boundary" in system
     input_tool = next(spec["function"] for spec in model.calls[0][2] if spec["function"]["name"] == "ryn_request_input")
-    assert "answers never authorize writes" in input_tool["description"]
+    assert "answers grant no write/directory authority" in input_tool["description"]
     advance(runtime, 2)
     assert writes == [] and len(model.calls) == 1
     approve(runtime, task["id"])
