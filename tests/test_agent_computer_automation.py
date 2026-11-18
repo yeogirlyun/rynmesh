@@ -19,9 +19,11 @@ def test_builtin_desktop_inherits_full_access_without_dialog():
 
 
 @pytest.mark.parametrize("mode,expected", [("read_only", "deny"), ("confirm_changes", "ask")])
-def test_restrictive_permission_still_wins(mode, expected):
-    assert decide(CALL, META, policy(), policy(mode)).action == expected
+def test_restrictive_task_permission_still_wins(mode, expected):
     assert decide(CALL, META, policy(mode), policy()).action == expected
+    assert decide(CALL, META, policy(mode), policy("automatic")).action == expected
+    # S13-I25 keeps the active task's mode when the default for new tasks changes.
+    assert decide(CALL, META, policy(), policy(mode)).action == "execute"
 
 
 def test_external_mcp_cannot_claim_builtin_permission_by_name_or_annotation():
@@ -59,7 +61,8 @@ def test_automatic_builtin_grant_survives_dispatch_and_is_revoked_with_desktop_a
     row['in_flight'] = {**CALL, **META, 'authorization':'automatic'}
     assert not write_permission_revoked(row, policy())
     assert write_permission_revoked(row, policy(desktop=False))
-    assert write_permission_revoked(row, policy('confirm_changes'))
+    assert not write_permission_revoked(row, policy('confirm_changes'))
+    assert write_permission_revoked({**row, 'permission_mode': 'confirm_changes'}, policy())
     row['in_flight'].pop('workstation_permission_tool')
     assert write_permission_revoked(row, policy())
 
