@@ -7,9 +7,11 @@ from types import SimpleNamespace
 import pytest
 from test_agent_apply_patch import patch, specs
 from test_agent_local_tools import execute, local  # noqa: F401
+from test_agent_integrations import node  # noqa: F401
 from test_agent_runtime import advance, approve, assistant, make_runtime
 
 from rynmesh.agent_runtime import local_patch, output_policy
+from rynmesh.agent_runtime.bridge import build_agent_integrations
 from rynmesh.agent_runtime.local_specs import SPECS, TEXT
 from rynmesh.agent_runtime.local_tools import LocalTools
 from rynmesh.agent_runtime.operation_ledger import OperationLedger
@@ -152,3 +154,59 @@ def test_t4_real_loop_approves_and_executes_200kb_write(tmp_path):
         assert (workspace / "large.txt").read_text() == content
     finally:
         local_tools.processes.close()
+
+
+@pytest.mark.parametrize("name", ["ryn_file_write", "ryn_file_edit", "ryn_apply_patch"])
+def test_rework_real_registry_previews_and_executes_200kb(node, tmp_path, name):
+    app, store = node
+    workspace = tmp_path / "registry-workspace"
+    workspace.mkdir()
+    runtime, _, _, _ = make_runtime(tmp_path / "registry-agent")
+    configuration = {"workspace_root": str(workspace), "desktop_access": False}
+    runtime.update_settings(configuration)
+    task = runtime.create({"message": "Registry large write"})
+    context = {"task_id": task["id"], "local_execution": configuration}
+    _, registry, _ = build_agent_integrations(app, store, store.home)
+    registry.local.store = runtime.store
+    content = "x" * 200000
+    if name == "ryn_apply_patch":
+        args = {"patch": patch("*** Add File: registry.txt", "+" + content)}
+        expected = content + "\n"
+    elif name == "ryn_file_edit":
+        (workspace / "registry.txt").write_bytes(b"before")
+        args = {"path": "registry.txt", "old_text": "before", "new_text": content,
+                "expected_sha256": hashlib.sha256(b"before").hexdigest()}
+        expected = content
+    else:
+        args = {"path": "registry.txt", "content": content}
+        expected = content
+    try:
+        preview = registry.preview(name, args, context=context)
+        result = registry.execute(name, args, operation_id="registry-large", cancelled=lambda: False,
+                                  expected_preview=preview, context=context)
+        assert (workspace / "registry.txt").read_text() == expected
+        assert result.get("applied", True)
+        with pytest.raises(AgentToolRejected) as error:
+            registry._validate("ryn_file_read", {"path": "x" * 100000})
+        assert error.value.details["max_bytes"] == 96 * 1024
+    finally:
+        registry.close()
+
+
+def test_rework_code_mode_child_delivery_uses_router_cap_but_parent_code_stays_96kb():
+    from rynmesh.agent_runtime import js_state, tool_delivery
+    from rynmesh.agent_runtime.js_runtime.protocol import MAX_CODE_BYTES
+    args = {"path": "code-mode.txt", "content": "x" * 200000}
+    routed = normalize_tool_calls([call("ryn_file_write", args)], specs(["ryn_file_write"]))[0]
+    validated, raw, digest = tool_delivery._validate_router_raw_and_semantic_args(routed)
+    assert validated == args and len(raw) > 96 * 1024
+    assert digest == hashlib.sha256(raw).hexdigest()
+    assert js_state.ROUTER_MAX_ARGUMENT_BYTES == output_policy.MAX_TOOL_CALL_ARGUMENT_BYTES
+    assert js_state.MAX_PARENT_CODE_BYTES == min(MAX_CODE_BYTES, 96 * 1024)
+
+
+def test_rework_preview_limit_has_specific_diagnostic_guidance():
+    from rynmesh.agent_runtime.diagnostics import _classify_error
+    code, guidance = _classify_error("agent_preview_limit")
+    assert code == "agent_preview_limit"
+    assert guidance[0] == "narrow_request" and "ryn_apply_patch" in guidance[1]

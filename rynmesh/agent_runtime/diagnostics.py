@@ -55,6 +55,7 @@ _ERROR_GUIDANCE = {
     "agent_model_output_limit_reached": ("review_models", "模型把输出额度都用在思考上了，请调高该模型的输出上限或降低推理强度", "/services/sources"),
     "agent_context_limit": ("start_new_or_continue", "对话太长超出模型上下文窗口，请新开对话或从摘要续接。", "/agent"),
     "agent_output_limit": ("narrow_request", "回复超过单次输出长度上限，请要求分段或精简输出。", "/agent"),
+    "agent_preview_limit": ("narrow_request", "预览过大；请把写入拆成多个文件或改用 ryn_apply_patch。", "/agent"),
     "agent_inference_failed": ("review_connection", "模型调用异常，请检查模型来源连接与服务状态。", "/services/sources"),
     "agent_compaction_failed": ("retry_task", "上下文压缩未能生成有效摘要，可重试当前轮次。", "/agent"),
     "agent_compaction_incomplete": ("retry_task", "上下文压缩摘要未完整结束，可重试当前轮次或调高模型输出上限。", "/agent"),

@@ -37,7 +37,7 @@ from .cli_sources import CLISources
 from .code_mode import NAME as CODE_MODE_NAME
 from .code_mode import SPEC as CODE_MODE_SPEC
 from .code_mode import CodeModeRunner
-from . import code_mode, input_attachments
+from . import code_mode, input_attachments, output_policy
 from .tool_dispatch import PARALLEL_READS
 from .default_model import NAME as DEFAULT_MODEL_NAME
 from .default_model import DefaultModelTool
@@ -515,6 +515,8 @@ class RynTools:
         self.metadata(name)
         is_ext = self.extensions.handles(name)
         max_bytes = 96 * 1024 if name in LOCAL_NAMES or name in CRAFT_NAMES or name in {CODE_MODE_NAME, "ryn_create_text_file"} else 32 * 1024 if is_ext else 24 * 1024 if name in WRITE_NAMES or name in APP_NAMES else 8192
+        if name in {"ryn_file_write", "ryn_file_edit", "ryn_apply_patch"}:
+            max_bytes = output_policy.MAX_TOOL_CALL_ARGUMENT_BYTES
         if not isinstance(arguments, dict) or len(json.dumps(arguments, ensure_ascii=False).encode()) > max_bytes:
             raise AgentToolRejected(
                 "agent_tool_arguments_invalid",

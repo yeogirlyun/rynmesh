@@ -11,6 +11,7 @@ import json
 import math
 import re
 from typing import Any
+from .output_policy import MAX_TOOL_CALL_ARGUMENT_BYTES
 
 from .js_runtime.protocol import (
     MAX_CODE_BYTES,
@@ -24,9 +25,9 @@ from .js_runtime.protocol import (
 JS_STATE_VERSION = 1
 CONTAINER_TOOL_NAME = "ryn_js_execute"
 
-# Preserve router's smaller 96 KiB tool-call argument limit for parent code/calls.
-ROUTER_MAX_ARGUMENT_BYTES = 96 * 1024
-MAX_PARENT_CODE_BYTES = min(MAX_CODE_BYTES, ROUTER_MAX_ARGUMENT_BYTES)
+# Child calls share the router budget; parent JavaScript retains its own cap.
+ROUTER_MAX_ARGUMENT_BYTES = MAX_TOOL_CALL_ARGUMENT_BYTES
+MAX_PARENT_CODE_BYTES = min(MAX_CODE_BYTES, 96 * 1024)
 MAX_JS_STATE_BYTES = 1024 * 1024
 MAX_OUTBOX_PAYLOAD_BYTES = MAX_RESULT_BYTES
 MAX_ADMITTED_CALLBACKS = 64
