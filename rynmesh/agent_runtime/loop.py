@@ -2730,7 +2730,12 @@ class AgentLoop:
         args = call["arguments"]
         if call["name"] in goals.TOOL_NAMES:
             goals.check_subagent(selected)
-        spec = next(item["function"] for item in ALL_INTERNAL_SPECS if item["function"]["name"] == call["name"])
+        spec = next((item["function"] for item in self._internal_specs(selected)
+                     if item["function"]["name"] == call["name"]), None)
+        if spec is None:
+            # Already queued controls still reach their execution-time state
+            # checks, including the unchanged maximum-depth spawn refusal.
+            spec = next(item["function"] for item in ALL_INTERNAL_SPECS if item["function"]["name"] == call["name"])
         discovery = None
         if "schema_snapshot" in call and call["name"] != tool_menu.NAME:
             (current_specs, _), _ = self._menu(selected)

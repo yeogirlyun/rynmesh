@@ -1074,7 +1074,10 @@ class AgentRuntime(AgentLoop):
             computer_use = tuple(spec["function"]["name"] for spec in business_specs
                                  if spec["function"]["name"].startswith("mcp__computer_use__computer_"))
             desktop = computer_use + desktop
-        skill_tools = ("ryn_read_skill_file",) if any(isinstance(s, dict) and s.get("files") for s in (row.get("skills") or [])) else ()
+        has_skill_files = any(isinstance(s, dict) and s.get("files") for s in (row.get("skills") or []))
+        if not has_skill_files and self.extensions is not None:
+            has_skill_files = self.extensions.store.any_enabled_skill_has_files()
+        skill_tools = ("ryn_read_skill_file",) if has_skill_files else ()
         resource_tools = (
             ("ryn_list_resource_roots", "ryn_list_resources", "ryn_create_directory", "ryn_upload_resource_file", "ryn_create_text_file")
             if (not row["scope"].get("resource_grants") and "selection" not in row["scope"]
@@ -1100,7 +1103,8 @@ class AgentRuntime(AgentLoop):
     def _internal_specs(row):
         return [spec for spec in ALL_INTERNAL_SPECS
                 if (spec["function"]["name"] not in HISTORY_TOOL_NAMES or (row or {}).get("context_checkpoint"))
-                and (spec["function"]["name"] not in goals.TOOL_NAMES or goals.available(row))]
+                and (spec["function"]["name"] not in goals.TOOL_NAMES or goals.available(row))
+                and not (spec["function"]["name"] == "ryn_spawn_agent" and subagents.at_max_depth(row))]
 
     def _specs(self, row=None) -> list:
         specs = self._business_specs(row)

@@ -446,6 +446,7 @@ class ExtensionStore:
         self._cached_state: dict[str, Any] | None = None
         self._agent_store: Any = None
         self._skill_roots_fingerprint_cache: dict[tuple[Any, ...], tuple[Any, list[str], list[dict[str, Any]]]] = {}
+        self._skill_files_cache: tuple[int, bool] | None = None
         with file_transaction(self.lock):
             if not self.path.exists() and not self.prev_path.exists():
                 self._write(self._default_state())
@@ -1319,6 +1320,18 @@ class ExtensionStore:
                      "revision": int(plugin.get("revision", 1)), "enabled": bool(plugin.get("enabled")),
                      "peer_provider": validate_peer_provider(plugin["peer_provider"])}
                     for plugin in state["plugins"].values() if plugin.get("peer_provider") is not None]
+
+    def any_enabled_skill_has_files(self) -> bool:
+        """Check package manifests once per catalog revision, without scanning files."""
+        with file_transaction(self.lock):
+            state = self._read(borrow=True)
+            revision = state["revision"]
+            if self._skill_files_cache is None or self._skill_files_cache[0] != revision:
+                found = any(skill.get("files") and not skill.get("source_missing")
+                            and self._is_skill_effectively_enabled(skill, state)
+                            for skill in state["skills"].values())
+                self._skill_files_cache = (revision, found)
+            return self._skill_files_cache[1]
 
     def enabled_skills_catalog(
         self,
