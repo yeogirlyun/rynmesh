@@ -81,10 +81,11 @@ it("groups models shared by colleagues with the provider's name and reachability
   company({ publisher: false, models: [...own, shared, { ...shared, id: shared.id + "-2", name: "Claude Code", source_name: "管理员", available: false, agent_supported: false }] });
   page();
   expect(await screen.findByRole("heading", { name: /公司共享/ })).toBeVisible();
-  const row = screen.getByText("Codex").closest(".mp-model") as HTMLElement;
+  const models = within(screen.getByLabelText("模型池"));
+  const row = models.getByText("Codex").closest(".mp-model") as HTMLElement;
   expect(within(row).getByText("提供人 老板 · 在线")).toBeVisible();
   expect(within(row).getByRole("button", { name: "用于助手" })).toBeEnabled();
-  expect(within(screen.getByText("Claude Code").closest(".mp-model") as HTMLElement).getByText("提供人 管理员 · 离线")).toBeVisible();
+  expect(within(models.getByText("Claude Code").closest(".mp-model") as HTMLElement).getByText("提供人 管理员 · 离线")).toBeVisible();
   // Received models carry no sharing switch of their own.
   expect(within(row).queryByRole("checkbox")).not.toBeInTheDocument();
 });
