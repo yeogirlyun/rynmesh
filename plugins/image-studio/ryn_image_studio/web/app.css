@@ -116,3 +116,10 @@ button.thumb { padding: 0; background: #fff; }
 .asset-pick { display: grid; gap: 5px; width: 100%; padding: 0; border: 0; background: transparent; text-align: start; }
 .asset-error { margin: 0; color: var(--bad); }
 .asset-error:empty { display: none; }
+
+.thumb.alpha-preview, .stage.alpha-preview img { background-color: #f5f5f5;
+  background-image: conic-gradient(#dedede 25%, transparent 0 50%, #dedede 0 75%, transparent 0);
+  background-size: 16px 16px; }
+.size-choice { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--line); padding: 5px 8px; border-radius: 6px; }
+.edit-dialog form { margin-top: 14px; }
+.origin-link { font-size: 12px; }
