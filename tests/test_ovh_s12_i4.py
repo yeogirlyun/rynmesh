@@ -44,7 +44,9 @@ def test_t3_file_policy_has_single_line_links_and_tables(tmp_path):
     first = prompt.authority(row).splitlines()[1]
     context = json.loads(first.removeprefix("Server control state: "))
     policy = context["file_output_policy"]
-    assert "Create and edit text files in workspace_root with ryn_apply_patch (several files per patch); generate images with ryn_image_generate; download URLs or plugin fileRef values with ryn_download_file; other binary files may use shell. Confirm outputs via readback or workspace_files. " in policy
+    assert "Create new text files with ryn_file_write when supplied" in policy
+    assert "read existing files before editing with ryn_file_edit or ryn_apply_patch (several files per patch)" in policy
+    assert "Generate images with ryn_image_generate; download URLs or plugin fileRef values with ryn_download_file; other binary files may use shell. Confirm outputs via readback or workspace_files." in policy
     assert "Link final files as [name](absolute-path) with forward slashes, <paths with spaces>; embed images as ![description](absolute-path). " in policy
     assert "A link may end with :line" in policy
     assert "never use file:// URIs or line ranges" in policy
