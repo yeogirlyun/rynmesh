@@ -151,5 +151,12 @@ def test_workspace_cannot_change_under_running_work_or_expand_an_existing_grant(
     other = tmp_path / 'existing'; other.mkdir()
     runtime.update_settings({'workspace_root': str(other)})
     body['expected_control_revision'] = runtime.get(task['id'])['control_revision']
-    with pytest.raises(AgentError, match='workspace_changed'):
+    bound = runtime.bind_workspace(task['id'], body)
+    assert bound['local_execution']['workspace_root'] == str(tmp_path.resolve())
+    assert bound['local_execution']['workspace_source'] == 'task'
+    assert runtime.store.read()['settings']['workspace_root'] == str(other)
+    body['workspace_root'] = str(other)
+    body['expected_control_revision'] = bound['control_revision']
+    body['client_request_id'] = str(uuid.uuid4())
+    with pytest.raises(AgentError, match='invalid_transition'):
         runtime.bind_workspace(task['id'], body)
