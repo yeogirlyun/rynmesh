@@ -203,3 +203,22 @@ def test_synthetic_host_data_is_not_a_compacted_owner_or_memory_source(tmp_path)
     assert memory_runtime.latest_authentic_owner_message(row)["content"] == "Authentic owner request"
     compacted = request_context.build_context([], row["messages"], checkpoint={"through": 2, "content": "Summary"})
     assert [m["content"] for m in compacted if m["role"] == "user"] == ["Authentic owner request"]
+
+
+def test_header_progress_does_not_leave_a_model_request_ending_in_assistant(tmp_path, monkeypatch):
+    from rynmesh.agent_runtime import model_profiles
+
+    runtime, _, _, _ = make_runtime(tmp_path)
+    task = runtime.create({"message": "Original owner request"})
+    row = runtime.store.read()["tasks"][task["id"]]
+    row["messages"].append(assistant("The last recorded answer.")["message"])
+    profile_for_task = model_profiles.for_task
+    monkeypatch.setattr(model_profiles, "for_task", lambda *args, **kwargs: {
+        **profile_for_task(*args, **kwargs), "progress_placement": "header",
+    })
+
+    projected = runtime._context(row)
+    assert projected[-2] == {"role": "assistant", "content": "The last recorded answer."}
+    assert projected[-1]["role"] == "user"
+    assert projected[-1]["content"].startswith('<host_note kind="continuation">')
+    assert INTRO in projected[-1]["content"]
