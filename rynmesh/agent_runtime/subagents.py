@@ -680,6 +680,15 @@ def _new_user_msg(content: str, *, kind: str = "message") -> dict:
     }
 
 
+def subagent_depth(row: dict) -> int:
+    path = str(((row or {}).get("subagent_meta") or {}).get("agent_path") or "/root")
+    return max(0, len([part for part in path.split("/") if part]) - 1)
+
+
+def at_max_depth(row: dict) -> bool:
+    return subagent_depth(row) >= MAX_SUBAGENT_DEPTH
+
+
 def spawn_agent_in_tx(data: dict, parent_row: dict, args: dict) -> dict:
     """Create and queue a new subagent child task linked to parent_row."""
     from .prompt import PROMPT_VERSION, select_base_instructions
@@ -720,8 +729,7 @@ def spawn_agent_in_tx(data: dict, parent_row: dict, args: dict) -> dict:
     task_name = _slug_task_name(str(args.get("task_name") or nickname))
     parent_meta = parent_row.get("subagent_meta") or {}
     parent_path = str(parent_meta.get("agent_path") or "/root").rstrip("/")
-    parent_depth = max(0, len([seg for seg in parent_path.split("/") if seg]) - 1)
-    if parent_depth >= MAX_SUBAGENT_DEPTH:
+    if at_max_depth(parent_row):
         raise AgentToolRejected(
             "agent_subagent_depth_limit_reached",
             correction=f"Maximum subagent nesting depth ({MAX_SUBAGENT_DEPTH}) reached at {parent_path}. Handle this task directly.",
