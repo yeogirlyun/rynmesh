@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from . import generator, prompts, sizes, templates
+from .assets import AssetError, AssetStore
 
 MAX_ACTIVE_PER_CALLER = 20
 MAX_BRIEF = 2000
@@ -27,6 +28,7 @@ UPLOAD_TTL_S = 24 * 3600
 RETENTION_S = 90 * 24 * 3600
 MAX_ATTEMPTS = 3
 DEFAULT_SECONDS = 60.0
+REFERENCE_MISSING = "image_reference_missing"
 STATES = ("queued", "running", "succeeded", "failed", "cancelled")
 
 SCHEMA = """
@@ -82,6 +84,7 @@ class JobStore:
                                  ("copy_json", "TEXT NOT NULL DEFAULT '{}'")):
             if name not in columns:
                 self._db.execute(f"ALTER TABLE jobs ADD COLUMN {name} {definition}")
+        self.assets = AssetStore(self.root / "assets", self._db, self._lock, clock)
         self.changed = threading.Condition(self._lock)
 
     def close(self) -> None:
@@ -127,7 +130,7 @@ class JobStore:
     def upload_bytes(self, caller: str, upload_id: str) -> bytes:
         row = self._one("SELECT * FROM uploads WHERE id=? AND caller=?", (upload_id, caller))
         if row is None:
-            raise JobError("image_reference_missing", 404)
+            raise JobError(REFERENCE_MISSING, 404)
         return self.upload_path(caller, upload_id).read_bytes()
 
     # ---- submitting -------------------------------------------------------------------
@@ -175,6 +178,9 @@ class JobStore:
         for ref in references:
             if isinstance(ref, str):
                 ref = {"id": ref, "role": "material"}
+            if isinstance(ref, dict) and "asset" in ref:
+                refs.append(self._asset_reference(caller, ref))
+                continue
             if (not isinstance(ref, dict) or ref.keys() != {"id", "role"}
                     or not isinstance(ref["id"], str) or ref["role"] not in ("material", "style")):
                 raise JobError("image_bad_references")
@@ -183,7 +189,7 @@ class JobStore:
         if source is not None:
             src = self._one("SELECT * FROM jobs WHERE id=? AND caller=?", (source, caller)) if isinstance(source, str) else None
             if src is None or src["state"] != "succeeded":
-                raise JobError("image_reference_missing", 404)
+                raise JobError(REFERENCE_MISSING, 404)
         active = self._one("SELECT COUNT(*) n FROM jobs WHERE caller=? AND state IN ('queued','running')", (caller,))
         if active["n"] + count > MAX_ACTIVE_PER_CALLER:
             raise JobError("image_too_many_active", 429)
@@ -200,6 +206,18 @@ class JobStore:
                 ids.append(job_id)
             self.changed.notify_all()
         return [self.view(self.job(caller, job_id)) for job_id in ids]
+
+    def _asset_reference(self, caller: str, ref: dict[str, Any]) -> dict[str, str]:
+        asset_id = ref["asset"]
+        if set(ref) - {"asset", "role"} or not isinstance(asset_id, str):
+            raise JobError("image_bad_references")
+        if "role" in ref and ref["role"] not in ("material", "style"):
+            raise JobError("image_bad_references")
+        try:
+            kind = self.assets.kind(caller, asset_id)
+        except AssetError as exc:
+            raise JobError(REFERENCE_MISSING, 404) from exc
+        return {"asset": asset_id, "role": ref.get("role", "style" if kind == "style" else "material")}
 
     # ---- reading ---------------------------------------------------------------------
     def job(self, caller: str | None, job_id: str) -> dict[str, Any]:
@@ -223,9 +241,11 @@ class JobStore:
     def view(self, row: dict[str, Any], *, queue: list[dict[str, Any]] | None = None,
              average: float | None = None, owner: bool = False) -> dict[str, Any]:
         roles = prompts.reference_roles(row)
+        failure = row["failure"]
+        failure_text = "参考图不见了" if failure == REFERENCE_MISSING else generator.FAILURES.get(failure)
         out = {"id": row["id"], "batch": row["batch"], "purpose": row["purpose"], "width": row["width"],
                "height": row["height"], "brief": row["brief"], "words": row["words"], "state": row["state"],
-               "failure": row["failure"], "failure_text": generator.FAILURES.get(row["failure"] or "", None),
+               "failure": failure, "failure_text": failure_text,
                "created_at": row["created_at"], "started_at": row["started_at"], "finished_at": row["finished_at"],
                "seconds": row["seconds"], "references": len(roles), "reference_roles": roles,
                "source_job": row["source_job"], "scene": templates.job_scene(row), "style": row["style"],
@@ -320,7 +340,14 @@ class JobStore:
         self._exec("UPDATE jobs SET state='queued', started_at=NULL WHERE state='running'")
 
     def references(self, row: dict[str, Any]) -> list[bytes]:
-        refs = [self.upload_bytes(row["caller"], ref["id"]) for ref in prompts.read_references(row["refs"])]
+        caller = row["caller"]
+        try:
+            refs = [
+                self.assets.reference(caller, ref["asset"]) if "asset" in ref else self.upload_bytes(caller, ref["id"])
+                for ref in prompts.read_references(row["refs"])
+            ]
+        except AssetError as exc:
+            raise JobError(REFERENCE_MISSING, 404) from exc
         if row["source_job"]:
             source = self.job(row["caller"], row["source_job"])
             refs.insert(0, self.image_path(source, "png").read_bytes())
@@ -336,7 +363,7 @@ class JobStore:
                 self.image_path(row, kind).unlink(missing_ok=True)
             self._exec("DELETE FROM jobs WHERE id=?", (row["id"],))
         live = {ref["id"] for r in self._rows("SELECT refs FROM jobs WHERE state IN ('queued','running')")
-                for ref in prompts.read_references(r["refs"])}
+                for ref in prompts.read_references(r["refs"]) if "id" in ref}
         for up in self._rows("SELECT * FROM uploads WHERE created_at < ?", (now - UPLOAD_TTL_S,)):
             if up["id"] not in live:
                 self.upload_path(up["caller"], up["id"]).unlink(missing_ok=True)
@@ -409,8 +436,8 @@ class Worker:
             if self._stop.is_set() and exc.code == "cancelled" and not self.store.cancel_requested(job["id"]):
                 return  # shutting down: recover() requeues it on the next start
             self.store.finish(job["id"], failure=exc.code)
-        except JobError:
-            self.store.finish(job["id"], failure="generation_failed")
+        except JobError as exc:
+            self.store.finish(job["id"], failure=exc.code if exc.code == REFERENCE_MISSING else "generation_failed")
         except Exception:
             self.store.finish(job["id"], failure="generation_failed")
         finally:
