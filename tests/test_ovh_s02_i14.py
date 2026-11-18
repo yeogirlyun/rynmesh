@@ -1,12 +1,16 @@
 """S02-I14: durable owner follow-up queues on real store/worker/HTTP paths."""
 import base64
+from pathlib import Path
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
+from test_agent_integrations import node
+from test_agent_runtime_lifecycle import change
 from test_agent_runtime import Catalog, Model, Tools, advance, assistant, make_runtime
+from rynmesh.agent_runtime.bridge import build_agent_integrations
 from rynmesh.agent_runtime.routes import install_agent
 from rynmesh.agent_runtime.runtime import AgentRuntime
 from rynmesh.agent_runtime.store import AgentError, AgentStore
@@ -69,6 +73,22 @@ def test_T3_restart_keeps_queue_and_uploaded_bytes(tmp_path):
     advance(runtime, 2)
     assert "QUEUE_BYTES" in str(model.calls[-1][1])
     assert runtime.get(row["id"])["result"] == "file reviewed"
+
+
+def test_T3_deleting_task_cleans_undispatched_queue_upload(node, tmp_path):
+    app, server_store = node
+    tools = build_agent_integrations(app, server_store, server_store.home)[1]
+    runtime, _, _, _ = make_runtime(tmp_path)
+    row = runtime.create({"message": "start"})
+    row = runtime.queue_message(row["id"], {"message": "review this", "attachments": [
+        {"name": "note.txt", "media_type": "text/plain", "data_base64": base64.b64encode(b"QUEUE_BYTES").decode()}]})
+    upload = Path(row["queued_messages"][0]["attachments"][0]["path"])
+    assert upload.is_file()
+    runtime.action(row["id"], {"action": "cancel"})
+    runtime = AgentRuntime(runtime.store, runtime.model, tools, runtime.catalog)
+    result = change(runtime, row["id"], "delete")
+    assert result["deleted"] and not result["cleanup_pending"]
+    assert not upload.parent.exists()
 
 
 def test_T4_count_and_row_size_limits_are_atomic(tmp_path):
@@ -184,7 +204,6 @@ def test_T1_queued_context_overflow_continues_and_moves_the_rest(tmp_path, monke
 
 
 def test_T2_bad_queued_attachment_preserves_completed_answer_and_queue(tmp_path):
-    from pathlib import Path
     runtime, _, _, _ = make_runtime(tmp_path, assistant("completed before missing attachment"))
     row = runtime.create({"message": "start"})
     row = runtime.queue_message(row["id"], {"message": "review", "attachments": [
@@ -228,7 +247,8 @@ def test_T5_send_now_steers_an_active_turn_and_preserves_the_rest(tmp_path):
     row = runtime.update_queued(row["id"], item_id, {"send_now": True})
     assert row["goal"]["revision"] == 2
     assert row["goal"]["constraints"][-1]["text"] == "urgent"
-    assert row["messages"][-1]["ui"]["kind"] == "steer"
+    assert [message["ui"]["kind"] for message in row["messages"]
+            if message["role"] == "user" and message["content"] == "urgent"] == ["steer"]
     assert [item["message"] for item in row["queued_messages"]] == ["remaining"]
     advance(runtime, 2)
     assert runtime.get(row["id"])["result"] == "remaining done"
