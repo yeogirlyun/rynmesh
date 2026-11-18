@@ -1020,6 +1020,7 @@ class JsRuntimeSession:
                     )
                 except JsProtocolError as exc:
                     active.settled_callbacks.add(callback_id)
+                    error_code = "agent_model_output_limit" if exc.code == "ryn_js_frame_too_large" else exc.code
                     try:
                         self._send_frame(
                             build_host_result_frame(
@@ -1029,7 +1030,7 @@ class JsRuntimeSession:
                                 callback_id=callback_id,
                                 ok=False,
                                 error={
-                                    "code": exc.code,
+                                    "code": error_code,
                                     "message": str(exc),
                                     "not_executed": True,
                                     "outcome": "not_executed",

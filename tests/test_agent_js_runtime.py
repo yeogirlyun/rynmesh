@@ -239,6 +239,38 @@ def test_quickjs_public_sky_proxy_and_persistent_state() -> None:
 
 
 @requires_quickjs_worker
+def test_oversized_sky_arguments_reject_only_that_call() -> None:
+    manager = _make_dev_manager()
+    try:
+        seen = []
+
+        def host_handler(envelope):
+            seen.append(envelope.method)
+            return []
+
+        snapshot = manager.run_to_completion(
+            "task_oversized_host_arguments",
+            """
+            const { sky } = await import('@oai/sky');
+            const result = await sky.type_text({
+              window: { app: 'notepad.exe', id: 1 },
+              text: 'x'.repeat(256 * 1024),
+            }).catch(({ code, not_executed, outcome }) => ({ code, not_executed, outcome }));
+            return { result, windows: await sky.list_windows() };
+            """,
+            host_handler=host_handler,
+        )
+        assert snapshot.status == "completed"
+        assert snapshot.value == {
+            "result": {"code": "agent_model_output_limit", "not_executed": True, "outcome": "not_executed"},
+            "windows": [],
+        }
+        assert seen == ["list_windows"]
+    finally:
+        manager.close()
+
+
+@requires_quickjs_worker
 def test_quickjs_task_isolation_across_sessions() -> None:
     manager = _make_dev_manager()
     try:
