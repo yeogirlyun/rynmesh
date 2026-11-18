@@ -1495,11 +1495,17 @@ class CodeModeRunner:
                 "values": copy.deepcopy(values),
             }
 
+    def _desktop_access(self, context: dict[str, Any] | None) -> bool:
+        local = getattr(self.parent_tools, "local", None)
+        if local is not None and context:
+            return bool(local.policy(context or {})["desktop_access"])
+        return bool(((context or {}).get("local_execution") or {}).get("desktop_access"))
+
     def _read_only_catalog(self, context: dict[str, Any] | None) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]], list[dict[str, str]]]:
         specs_by_name: dict[str, dict[str, Any]] = {}
         meta_by_name: dict[str, dict[str, Any]] = {}
         enabled_tools: list[dict[str, str]] = []
-        desktop_enabled = bool(((context or {}).get("local_execution") or {}).get("desktop_access"))
+        desktop_enabled = self._desktop_access(context)
 
         specs = (self.parent_tools.specs(context=context)
                  if getattr(self.parent_tools, "supports_model_context", False) is True else self.parent_tools.specs())
@@ -1549,7 +1555,7 @@ class CodeModeRunner:
         task_id = str(ctx.get("task_id") or "")
         epoch = int(ctx.get("context_epoch", 0))
         scope_revision = int(ctx.get("scope_revision", 1))
-        desktop_enabled = bool(((ctx.get("local_execution") or {}) if isinstance(ctx.get("local_execution"), dict) else {}).get("desktop_access"))
+        desktop_enabled = self._desktop_access(ctx)
 
         stored_values = self._get_stored_values(task_id, epoch, scope_revision, reset=reset)
         specs_by_name, meta_by_name, enabled_tools = self._read_only_catalog(ctx)

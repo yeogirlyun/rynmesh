@@ -49,6 +49,7 @@ from . import (
     verification,
 )
 from .web_search import normalize_domains, restrict_web_policy
+from .execution_policy import desktop_access_enabled, desktop_enabled
 from .control import (
     acknowledgeable,
     allowed_actions,
@@ -216,7 +217,7 @@ def write_permission_revoked(row: dict, settings: dict) -> bool:
         or bool(flight.get("computer_access"))
         or bool((flight.get("extension_binding") or {}).get("computer_access"))
     )
-    if has_computer_access and not (row.get("local_execution") or {}).get("desktop_access"):
+    if has_computer_access and not desktop_access_enabled(row, settings):
         return True
     if flight.get("effect") != "write":
         return False
@@ -1063,7 +1064,8 @@ class AgentRuntime(AgentLoop):
         # Provider projection keeps manifests pinned, omitting archived excerpts
         # from compacted owners while retaining the unanswered owner's excerpt.
         authority_bytes = len(encoded(self._context(pinned)))
-        desktop = tool_menu.BROWSER_TOOLS if (row.get("local_execution") or {}).get("desktop_access") else ()
+        desktop_settings = self.store.inspect(lambda data: data["settings"])
+        desktop = tool_menu.BROWSER_TOOLS if desktop_access_enabled(row, desktop_settings) else ()
         if desktop:
             # Expose installed desktop schemas immediately; dispatch still checks
             # the provider binding and workstation grants on every operation.
@@ -2258,6 +2260,12 @@ class AgentRuntime(AgentLoop):
                 # The owner's own pick is never replaced by a later shipped default.
                 data[PERMISSION_MODE_SOURCE] = "owner"
             data["settings"].update(values)
+            if permission_changed or any(key in values for key in ("permission_mode", "desktop_access")):
+                for row in data["tasks"].values():
+                    if not row.get("archived"):
+                        bound = row.setdefault("local_execution", {})
+                        bound["desktop_access"] = desktop_enabled(
+                            row["permission_mode"], bound.get("desktop_access") and data["settings"].get("desktop_access"))
             if {"web_search_mode", "web_allowed_domains"} & values.keys():
                 for row in data["tasks"].values():
                     bound = row.setdefault("local_execution", {})
@@ -2265,8 +2273,6 @@ class AgentRuntime(AgentLoop):
             if permission_changed:
                 for row in data["tasks"].values():
                     if row["status"] not in TERMINAL:
-                        if desktop_revoked:
-                            row.setdefault("local_execution", {})["desktop_access"] = False
                         previous_updated_at = row["updated_at"]
                         preserve_activity = row["status"] in {"paused", "waiting_approval", "waiting_input"}
                         row.update(approved=None, pending_approval=None)
@@ -3040,7 +3046,7 @@ class AgentRuntime(AgentLoop):
                 row["allow_model_goal_creation"] = True
             if effort is not None:
                 row["reasoning_effort"] = effort
-            row["local_execution"] = {"workspace_root": settings.get("workspace_root") or self.store.default_workspace(), "desktop_access": settings.get("desktop_access", False)}
+            row["local_execution"] = {"workspace_root": settings.get("workspace_root") or self.store.default_workspace(), "desktop_access": desktop_enabled(settings["permission_mode"], settings.get("desktop_access"))}
             row["local_execution"].update(restrict_web_policy({}, settings))
             if value.get("project_id") is not None:
                 row["project"] = copy.deepcopy(projects.selected(data, value["project_id"], refresh=True))
@@ -3094,7 +3100,7 @@ class AgentRuntime(AgentLoop):
                             "verify_text_responses", "workspace_instructions"):
                     if key in source:
                         row[key] = copy.deepcopy(source[key])
-                row["local_execution"]["desktop_access"] = bool(row["local_execution"].get("desktop_access") and settings.get("desktop_access"))
+                row["local_execution"]["desktop_access"] = desktop_enabled(row["permission_mode"], row["local_execution"].get("desktop_access") and settings.get("desktop_access"))
                 row["local_execution"].update(restrict_web_policy(row["local_execution"], settings))
                 merged_cont, dropped_skills = self._merge_task_skills(row.get("skills"), skills)
                 row["skills"] = merged_cont
@@ -3594,6 +3600,7 @@ class AgentRuntime(AgentLoop):
                     raise AgentError("agent_invalid_permission_mode")
                 old_mode = row["permission_mode"]
                 row.update(permission_mode=mode, approved=None, pending_approval=None)
+                row.setdefault("local_execution", {})["desktop_access"] = desktop_enabled(mode, data["settings"].get("desktop_access"))
                 row.pop("task_grants", None)
                 if row["status"] == "waiting_approval":
                     row["status"] = "paused"

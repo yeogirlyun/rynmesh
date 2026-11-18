@@ -22,6 +22,7 @@ from ...atomic_io import atomic_write_bytes
 from ...llm_package.chat import validate_tool_arguments, validate_tool_schema
 from ...services import peer_box
 from .. import data_policy, results
+from ..execution_policy import desktop_access_enabled
 from ..native_computer import NativeComputerFacade, bind_owner_native_computer
 from ..store import AgentError, AgentToolRejected, encoded
 from ..schema_compaction import compact_tool_schema
@@ -1102,9 +1103,7 @@ class ExtensionToolAdapter:
             ctrl = store.read_control(task_id)
             settings = ctrl.get("settings") or {}
             row = (ctrl.get("tasks") or {}).get(task_id) or {}
-            if not settings.get("desktop_access") or not (row.get("local_execution") or {}).get(
-                "desktop_access"
-            ):
+            if not desktop_access_enabled(row, settings):
                 raise AgentToolRejected("agent_desktop_access_required")
         return policy
 

@@ -168,7 +168,7 @@ def test_t6_global_desktop_revocation_updates_live_rows_and_rejects_stale_contex
     ("workspace", "automatic", ("ask", "explicit_approval")),
     ("read_only", "automatic", ("deny", "read_only")),
 ])
-def test_explicit_approval_and_desktop_decisions_use_task_mode_only(mode, global_mode, expected):
+def test_explicit_approval_and_desktop_mixed_modes_require_confirmation(mode, global_mode, expected):
     row = {"permission_mode": mode, "local_execution": {"desktop_access": True}}
     settings = {"permission_mode": global_mode, "desktop_access": False}
     result = decide({"name": "external", "arguments": {}}, {"effect": "write", "requires_explicit_approval": True}, row, settings)
@@ -177,7 +177,8 @@ def test_explicit_approval_and_desktop_decisions_use_task_mode_only(mode, global
     desktop = decide({"name": "ryn_computer_action", "arguments": {}},
                      {"effect": "write", "computer_access": True, "workstation_permission_tool": "ryn_computer_action"}, row, settings)
     if mode != "read_only":
-        assert desktop.action == "execute"
+        # S04-I24 retains the two stored flags when either side is not automatic.
+        assert (desktop.action, desktop.basis) == ("ask", "desktop_access")
 
 
 def test_default_model_change_uses_task_authority_despite_global_read_only(tmp_path):

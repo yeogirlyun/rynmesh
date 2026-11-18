@@ -895,9 +895,11 @@ class LocalTools:
         else:
             row_mode = "workspace"
         row_desktop = (row_info.get("local_execution") or {}).get("desktop_access") if isinstance(row_info, dict) else bound.get("desktop_access")
+        from .execution_policy import desktop_access_enabled
         return {
             "workspace_root": bound.get("workspace_root", ""),
-            "desktop_access": bool(bound.get("desktop_access") and row_desktop),
+            "desktop_access": desktop_access_enabled(
+                {"permission_mode": row_mode, "local_execution": {"desktop_access": row_desktop}}, current),
             "permission_mode": row_mode,
         }
 

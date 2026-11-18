@@ -362,12 +362,14 @@ def test_lost_response_original_intent_survives_reload_and_resumes_once(mesh, mo
         ("wordcraft", "editor_info", {}),
     ],
 )
-def test_app_agent_requires_approval_even_in_automatic_mode(tmp_path, app_id, action, arguments):
+@pytest.mark.parametrize("mode", ["automatic", "workspace"])
+def test_app_agent_approval_follows_mode(tmp_path, app_id, action, arguments, mode):
     from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
     from test_agent_runtime import Catalog, Model, approve, assistant
 
     from rynmesh.agent_runtime.runtime import AgentRuntime
     from rynmesh.agent_runtime.store import AgentStore
+    from rynmesh.agent_runtime import tool_menu
     from rynmesh.node_apps.agent import ACTION, SPECS, AppTools
 
     key = X25519PrivateKey.generate()
@@ -399,6 +401,7 @@ def test_app_agent_requires_approval_even_in_automatic_mode(tmp_path, app_id, ac
             return impl.execute(name, args, operation_id, cancelled, expected_preview, context)
 
     model = Model(
+        assistant(name=tool_menu.NAME, args={"load": [ACTION]}),
         assistant(
             name=ACTION,
             args={
@@ -420,22 +423,28 @@ def test_app_agent_requires_approval_even_in_automatic_mode(tmp_path, app_id, ac
         {
             "enabled": True,
             "model_id": "local:test",
-            "permission_mode": "automatic",
+            "permission_mode": mode,
             "allowed_write_tools": [ACTION],
         }
     )
     created = runtime.create({"message": "Create a ticket"})
     runtime.run_once()
     runtime.run_once()
-    task = runtime.get(created["id"])
-    assert task["status"] == "waiting_approval"
-    assert service.call("", "view", {"app": "desk"})["records"] == {}
-    assert (
-        task["pending_approval"]["preview"]["model_data_recipient"]["catalog_model_id"]
-        == "local:test"
-    )
-    approve(runtime, created["id"])
     runtime.run_once()
+    runtime.run_once()
+    task = runtime.get(created["id"])
+    if mode == "workspace":
+        assert task["status"] == "waiting_approval"
+        assert service.call("", "view", {"app": "desk"})["records"] == {}
+        preview = task["pending_approval"]["preview"]
+        approve(runtime, created["id"])
+        runtime.run_once()
+    else:
+        assert task["pending_approval"] is None
+        automatic = next(e for e in task["events"] if e["type"] == "automatically_authorized")
+        assert automatic["explicit_approval_bypassed"] is True
+        preview = automatic["preview"]
+    assert preview["model_data_recipient"]["catalog_model_id"] == "local:test"
     if app_id == "desk":
         assert (
             service.call("", "view", {"app": "desk"})["records"]["tickets"][0]["name"]

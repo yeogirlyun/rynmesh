@@ -46,6 +46,7 @@ from .execution_policy import (
     PERMISSION_DENIED_CORRECTIONS,
     classify_operation,
     decide,
+    desktop_access_enabled,
     is_full_automatic,
     parallel_read,
     task_grant_proof,
@@ -2197,7 +2198,7 @@ class AgentLoop:
                     or meta.get("computer_access")
                     or (call.get("extension_binding") or {}).get("computer_access")
                 ):
-                    if not data["settings"].get("desktop_access") or not (row.get("local_execution") or {}).get("desktop_access"):
+                    if not desktop_access_enabled(row, data["settings"]):
                         if row.get("automation_run_id"):
                             raise _unattended_approval_rejection("desktop_access")
                         raise AgentToolRejected("agent_desktop_access_required")
@@ -2315,7 +2316,8 @@ class AgentLoop:
                         row["approved"] = None
                         raise AgentError("agent_approval_preview_changed")
                     if automatic and not approved:
-                        event(row, "automatically_authorized", tool=call["name"], arguments_sha256=digest(call["arguments"]), preview=preview)
+                        event(row, "automatically_authorized", tool=call["name"], arguments_sha256=digest(call["arguments"]), preview=preview,
+                              **({"explicit_approval_bypassed": True} if meta.get("requires_explicit_approval") else {}))
                     if decision.basis == "task_grant" and not approved:
                         grant_proof = task_grant_proof(call, meta, row)
                         event(row, "task_grant_authorized", tool=call["name"], **grant_proof)
