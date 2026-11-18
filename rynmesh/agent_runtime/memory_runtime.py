@@ -64,8 +64,8 @@ MEMORY_TOOL_SPECS = (
         "function": {
             "name": MEMORY_PROPOSE_TOOL,
             "description": (
-                "Propose durable owner facts/skills/preferences or memory requests; host checks source. "
-                "Any owner language; text must reuse their current message words; do not translate, paraphrase or normalize."
+                "Any language: text must reuse owner words; do not translate, paraphrase or normalize. "
+                "Earlier facts: use message_id from rejection's last 5 owner previews."
             ),
             "parameters": {
                 "type": "object",
@@ -74,6 +74,7 @@ MEMORY_TOOL_SPECS = (
                     "operation": {
                         "enum": ["remember", "update", "forget"],
                     },
+                    "message_id": {"type": "string", "maxLength": 200},
                     "category": {"type": "string", "maxLength": 64},
                     "fact_key": {"type": "string", "maxLength": 128},
                     "text": {"type": "string", "maxLength": 500},
@@ -246,18 +247,19 @@ def _message_text(msg: dict[str, Any]) -> str:
     return str(msg.get("content") or "")
 
 
-def latest_authentic_owner_message(row: dict[str, Any]) -> dict[str, Any] | None:
-    """Return the latest authentic owner message on the active task branch, if any."""
+def recent_authentic_owner_messages(row: dict[str, Any], limit: int = 5) -> list[dict[str, Any]]:
+    """Return recent authentic owner messages on the active branch, newest first."""
     if not isinstance(row, dict):
-        return None
+        return []
     messages = row.get("messages")
-    if not isinstance(messages, list):
-        return None
+    if not isinstance(messages, list) or limit <= 0:
+        return []
     raw_conv_rev = row.get("conversation_revision")
     conv_rev = int(raw_conv_rev) if raw_conv_rev is not None else 0
     raw_ctx_epoch = row.get("context_epoch")
     row_ctx_epoch = int(raw_ctx_epoch) if raw_ctx_epoch is not None else 0
 
+    recent = []
     for idx in range(len(messages) - 1, -1, -1):
         msg = messages[idx]
         if not isinstance(msg, dict):
@@ -275,15 +277,23 @@ def latest_authentic_owner_message(row: dict[str, Any]) -> dict[str, Any] | None
         msg_id = str(msg.get("message_id") or msg.get("id") or f"{row.get('id', 'task')}:owner:{idx}")
         msg_ctx_raw = msg.get("context_epoch")
         msg_ctx_epoch = int(msg_ctx_raw) if msg_ctx_raw is not None else row_ctx_epoch
-        return {
+        recent.append({
             "index": idx,
             "message_id": msg_id,
             "content": content,
             "context_epoch": msg_ctx_epoch,
             "conversation_revision": conv_rev,
             "task_id": str(row.get("id") or ""),
-        }
-    return None
+        })
+        if len(recent) == limit:
+            break
+    return recent
+
+
+def latest_authentic_owner_message(row: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the latest authentic owner message on the active task branch, if any."""
+    recent = recent_authentic_owner_messages(row, limit=1)
+    return recent[0] if recent else None
 
 
 def build_task_owner_source_ref(row: dict[str, Any], owner_msg: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -1081,22 +1091,42 @@ def execute_memory_tool_call_in_tx(
         }
 
     if tool_name == MEMORY_PROPOSE_TOOL:
-        allowed_keys = {"operation", "category", "fact_key", "text", "scope_kind", "keywords"}
+        allowed_keys = {"operation", "category", "fact_key", "text", "scope_kind", "keywords", "message_id"}
         if any(k not in allowed_keys for k in arguments):
             raise AgentToolRejected("agent_invalid_tool_arguments")
         operation = str(arguments.get("operation") or "").strip().lower()
         if operation not in {"remember", "update", "forget"}:
             raise AgentToolRejected("agent_invalid_tool_arguments")
 
-        owner_msg = latest_authentic_owner_message(row)
+        latest = latest_authentic_owner_message(row)
+        def record_receipt(receipt):
+            if latest:
+                receipt["turn_message_id"] = latest["message_id"]
+                receipt["conversation_revision"] = latest["conversation_revision"]
+            row["memory_last_receipt"] = copy.deepcopy(receipt)
+            # Owner-turn processing may replace memory_last_receipt on the next
+            # dispatch. Keep the latest tool receipt with its actual turn binding.
+            row["memory_last_proposal_receipt"] = copy.deepcopy(receipt)
+
+        if "message_id" in arguments:
+            if row.get("subagent_meta") is not None:
+                raise AgentToolRejected("agent_invalid_tool_arguments")
+            message_id = arguments["message_id"]
+            if not isinstance(message_id, str) or len(message_id) > 200:
+                raise AgentToolRejected("agent_invalid_tool_arguments")
+            owner_msg = next((msg for msg in recent_authentic_owner_messages(row)
+                              if msg["message_id"] == message_id), None)
+        else:
+            owner_msg = latest
         if not owner_msg:
             receipt = {
                 "saved": False,
                 "applied": False,
                 "status": "rejected",
-                "reason": "no_authentic_owner_message",
+                "reason": ("message_not_recent_owner_message" if "message_id" in arguments
+                           else "no_authentic_owner_message"),
             }
-            row["memory_last_receipt"] = copy.deepcopy(receipt)
+            record_receipt(receipt)
             return receipt
 
         msg_id = owner_msg["message_id"]
@@ -1120,7 +1150,7 @@ def execute_memory_tool_call_in_tx(
                     "conversation_revision": conv_rev,
                     "reason": reason,
                 }
-                row["memory_last_receipt"] = copy.deepcopy(receipt)
+                record_receipt(receipt)
                 return receipt
 
         host_scope = _infer_scope_from_text(command_content, row)
@@ -1134,7 +1164,7 @@ def execute_memory_tool_call_in_tx(
                 "conversation_revision": conv_rev,
                 "reason": "scope_mismatch_with_owner_intent",
             }
-            row["memory_last_receipt"] = copy.deepcopy(receipt)
+            record_receipt(receipt)
             return receipt
 
         src_ref = build_task_owner_source_ref(row, owner_msg)
@@ -1149,7 +1179,7 @@ def execute_memory_tool_call_in_tx(
                     "conversation_revision": conv_rev,
                     "reason": "owner_did_not_request_forget",
                 }
-                row["memory_last_receipt"] = copy.deepcopy(receipt)
+                record_receipt(receipt)
                 return receipt
 
             req_key = str(arguments.get("fact_key") or "").strip().lower()
@@ -1185,7 +1215,7 @@ def execute_memory_tool_call_in_tx(
                             "conversation_revision": conv_rev,
                             "reason": "forget_target_not_grounded_in_owner_message",
                         }
-                        row["memory_last_receipt"] = copy.deepcopy(receipt)
+                        record_receipt(receipt)
                         return receipt
                     host_ops = matched_ops
             else:
@@ -1198,7 +1228,7 @@ def execute_memory_tool_call_in_tx(
                         "conversation_revision": conv_rev,
                         "reason": "forget_target_not_grounded_in_owner_message",
                     }
-                    row["memory_last_receipt"] = copy.deepcopy(receipt)
+                    record_receipt(receipt)
                     return receipt
                 host_ops = [
                     {
@@ -1223,7 +1253,7 @@ def execute_memory_tool_call_in_tx(
                     "conversation_revision": conv_rev,
                     "reason": str(exc),
                 }
-                row["memory_last_receipt"] = copy.deepcopy(receipt)
+                record_receipt(receipt)
                 return receipt
 
             receipt = {
@@ -1240,7 +1270,7 @@ def execute_memory_tool_call_in_tx(
             if receipt["applied"] and intent_info["intent"] == "forget":
                 receipt.update(intent="forget", entries=[], errors=[])
                 row.setdefault("memory_explicit_receipts", {})[f"{msg_id}:r{conv_rev}"] = copy.deepcopy(receipt)
-            row["memory_last_receipt"] = copy.deepcopy(receipt)
+            record_receipt(receipt)
             if receipt.get("needs_confirmation"):
                 mem_state = memory.ensure_memory_state(data)
                 pools = {**mem_state.get("entries", {}), **mem_state.get("candidates", {})}
@@ -1259,7 +1289,7 @@ def execute_memory_tool_call_in_tx(
                 "conversation_revision": conv_rev,
                 "reason": "owner_did_not_request_save_or_update",
             }
-            row["memory_last_receipt"] = copy.deepcopy(receipt)
+            record_receipt(receipt)
             return receipt
 
         proposed_text = str(arguments.get("text") or "").strip()
@@ -1272,7 +1302,7 @@ def execute_memory_tool_call_in_tx(
                 "conversation_revision": conv_rev,
                 "reason": "empty_memory_text",
             }
-            row["memory_last_receipt"] = copy.deepcopy(receipt)
+            record_receipt(receipt)
             return receipt
 
         if not verify_proposal_grounding_in_owner_message(proposed_text, command_content):
@@ -1284,7 +1314,12 @@ def execute_memory_tool_call_in_tx(
                 "conversation_revision": conv_rev,
                 "reason": "proposal_not_grounded_in_owner_message",
             }
-            row["memory_last_receipt"] = copy.deepcopy(receipt)
+            if row.get("subagent_meta") is None:
+                receipt["recent_owner_messages"] = [
+                    {"message_id": msg["message_id"], "preview": sanitized(msg["content"])[:80]}
+                    for msg in recent_authentic_owner_messages(row)
+                ]
+            record_receipt(receipt)
             return receipt
 
         inferred = _classify_fact_clause(proposed_text, scope_kind=host_scope["kind"]) or {}
@@ -1331,7 +1366,7 @@ def execute_memory_tool_call_in_tx(
                 "conversation_revision": conv_rev,
                 "entry": res["entry"],
             }
-            row["memory_last_receipt"] = copy.deepcopy(receipt)
+            record_receipt(receipt)
             return receipt
         except AgentError as exc:
             receipt = {
@@ -1342,7 +1377,7 @@ def execute_memory_tool_call_in_tx(
                 "conversation_revision": conv_rev,
                 "reason": str(exc),
             }
-            row["memory_last_receipt"] = copy.deepcopy(receipt)
+            record_receipt(receipt)
             return receipt
 
     raise AgentToolRejected("agent_unknown_tool")
@@ -1389,14 +1424,17 @@ def format_memory_context_messages(memory_selection: dict[str, Any] | None, *, c
             continue
         raw_scope = entry.get("scope")
         scope_kind = raw_scope.get("kind", "personal") if isinstance(raw_scope, dict) else str(raw_scope or "personal")
+        fact = sanitized(str(entry.get("text") or ""))
         candidate_item = {
             "id": entry.get("id"),
             "scope": scope_kind,
             "category": entry.get("category"),
             "fact_key": entry.get("fact_key"),
-            "fact": sanitized(str(entry.get("text") or ""))[:240],
+            "fact": fact[:240],
             "revision": entry.get("revision", 1),
         }
+        if len(fact) > 240:
+            candidate_item.update(truncated=True, full_text="full text: ryn_memory_search")
         trial_items = [*items, candidate_item]
         trial_content = render(trial_items)
         if len(trial_content.encode("utf-8")) > max_bytes and items:
@@ -1531,6 +1569,11 @@ _SENTENCE_BOUNDARY_RE = re.compile(r"(\n+|[。！？!?]+|(?<!\d)\.(?=\s|$))")
 def _turn_called_memory_propose(row: dict[str, Any], latest: dict[str, Any] | None) -> bool:
     if not isinstance(row, dict):
         return False
+    receipt = row.get("memory_last_proposal_receipt")
+    if (latest and isinstance(receipt, dict)
+            and receipt.get("turn_message_id") == latest["message_id"]
+            and receipt.get("conversation_revision") == latest["conversation_revision"]):
+        return True
     messages = row.get("messages")
     if not isinstance(messages, list):
         return False
@@ -1646,10 +1689,14 @@ def guard_false_memory_save_claim(row: dict[str, Any], content: str) -> str:
     if latest is not None and isinstance(row, dict):
         msg_id = latest["message_id"]
         conv_rev = int(latest["conversation_revision"])
-        last_r = row.get("memory_last_receipt")
+        proposal = row.get("memory_last_proposal_receipt")
+        last_r = (proposal if isinstance(proposal, dict)
+                  and proposal.get("turn_message_id") == msg_id
+                  and proposal.get("conversation_revision") == conv_rev
+                  else row.get("memory_last_receipt"))
         if (
             isinstance(last_r, dict)
-            and last_r.get("message_id") == msg_id
+            and last_r.get("turn_message_id", last_r.get("message_id")) == msg_id
             and int(last_r.get("conversation_revision", -1)) == conv_rev
         ):
             current_receipt = last_r
