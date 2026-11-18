@@ -11,7 +11,7 @@ from rynmesh.agent_runtime import local_processes
 from rynmesh.agent_runtime.local_processes import Processes, shell_command
 from rynmesh.agent_runtime.local_specs import SPECS
 from rynmesh.agent_runtime.output_policy import MAX_TOOL_CALL_ARGUMENT_BYTES
-from rynmesh.agent_runtime.tool_router import ToolCallProtocolError, normalize_tool_calls
+from rynmesh.agent_runtime.tool_router import normalize_tool_calls
 
 
 @pytest.fixture
@@ -47,9 +47,11 @@ def test_shell_schema_removes_only_command_length_gate_and_retains_shared_byte_b
         routed = normalize_tool_calls([proposal(command)], [spec])[0]
         assert routed["error_result"] is None
         assert routed["arguments"]["command"] == command
-    with pytest.raises(ToolCallProtocolError) as rejected:
-        normalize_tool_calls([proposal("x" * MAX_TOOL_CALL_ARGUMENT_BYTES)], [spec])
-    assert rejected.value.reason == "arguments_too_large"
+    rejected = normalize_tool_calls([proposal("x" * MAX_TOOL_CALL_ARGUMENT_BYTES)], [spec])[0]
+    assert rejected["oversize"] is True
+    assert rejected["error_result"]["error"] == "agent_model_output_limit"
+    assert rejected["arguments"] == {}
+    assert rejected["raw_arguments_json"].startswith("<arguments omitted:")
     assert normalize_tool_calls([proposal("")], [spec])[0]["error_result"]["error"] == "agent_tool_arguments_invalid"
 
 

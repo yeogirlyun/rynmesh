@@ -15,6 +15,7 @@ from rynmesh.agent_runtime.model_events import (
     ModelEventStream,
     project_leading_developer,
 )
+from rynmesh.agent_runtime.output_policy import MAX_RAW_RESPONSE_BYTES
 from rynmesh.agent_runtime.store import AgentModelResponseError
 from rynmesh.llm_package.adapters import OllamaAdapter, OpenAICompatibleAdapter
 
@@ -142,7 +143,7 @@ def test_unproven_responses_order_defers_until_final_without_false_envelope_erro
 def test_chat_batch_byte_limit_is_checked_before_any_item_is_emitted():
     events = []
     stream = ModelEventStream(events.append)
-    arguments = '{"text":"' + "x" * 70000 + '"}'
+    arguments = '{"text":"' + "x" * (MAX_RAW_RESPONSE_BYTES // 4) + '"}'
     fragments = [{"index": index, **call(arguments=arguments, call_id=f"call_{index}")} for index in range(4)]
     with pytest.raises(ModelEventError, match="batch limit"):
         stream.feed({"choices": [{"delta": {"tool_calls": fragments}, "finish_reason": "tool_calls"}]})
