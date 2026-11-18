@@ -38,7 +38,7 @@
   "studio": {
     "eyebrow": "Shared pages",
     "title": "Your image studio",
-    "openHelp": "When open, colleagues see your image studio under Shared pages. When closed, they can't open it.",
+    "openHelp": "When enabled, colleagues can use your image studio from Apps › Shared by colleagues. Images are generated on your computer using your GPT quota.",
     "notPublisher": "Your company hasn't made you a publisher, so colleagues can't open pages on this computer. Ask an admin to add you.",
     "notConnected": "This computer isn't connected to a company, so colleagues can't see this page. Sign in to the company plugin first.",
     "modelLabel": "Image model",

@@ -60,7 +60,6 @@ import RynAgent from "./screens/RynAgent";
 import NodeApps from "./screens/NodeApps";
 import NodeSites from "./screens/NodeSites";
 import NodeSiteWindow from "./screens/NodeSiteWindow";
-import ImageStudioOwner from "./screens/ImageStudioOwner";
 import ExtensionWebApp from "./screens/ExtensionWebApp";
 import CraftApps from "./screens/CraftApps";
 import PluginWorkspace from "./screens/PluginWorkspace";
@@ -86,7 +85,8 @@ import Settings from "./screens/Settings";
 import { APIAccessPage, AgentSharingPage, ModelMappingPage } from "./screens/AIWorkspacePages";
 import AISources from "./screens/AISources";
 import AgentExtensions from "./screens/AgentExtensions";
-import PublicPluginPage from "./screens/PublicPluginPage";
+import PublicPluginPage, { LegacyImageStudioRedirect } from "./screens/PublicPluginPage";
+import AppDetail from "./screens/AppDetail";
 import UnlockGate from "./screens/components/UnlockGate";
 const NasPage = lazy(() => import("./personal/Nas").then(m => ({ default: m.NasPage })));
 const DrivePreview = lazy(() => import("./personal/Drives").then(m => ({ default: m.DrivesPage })));
@@ -416,7 +416,7 @@ export function AppRoutes() {
           <Route path="apps/workspaces" element={<NodeApps />} />
           <Route path="apps/sites" element={<NodeSites />} />
           <Route path="apps/sites/open/:key" element={<NodeSiteWindow />} />
-          <Route path="apps/sites/image-studio" element={<ImageStudioOwner />} />
+          <Route path="apps/sites/image-studio" element={<LegacyImageStudioRedirect />} />
           <Route path="ask" element={<LegacyAgentRedirect />} />
           <Route path="ask/history" element={<AskRyn />} />
           <Route path="friends" element={<Friends />} />
@@ -428,6 +428,7 @@ export function AppRoutes() {
           <Route path="drives" element={<Suspense fallback={<LoadingPanel />}><DrivePreview /></Suspense>} />
           <Route path="settings/plugins" element={<Suspense fallback={<LoadingPanel />}><PluginsPage /></Suspense>} />
           <Route path="apps/public-plugins/:pluginId" element={<PublicPluginPage />} />
+          <Route path="apps/app/public/:id" element={<AppDetail />} />
           <Route path="settings/extensions" element={<AgentExtensions />} />
           <Route path="settings/extensions/:section" element={<AgentExtensions />} />
           <Route path="settings/desktop" element={<DesktopPage />} />
