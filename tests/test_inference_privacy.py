@@ -177,6 +177,7 @@ def test_zcode_api_a_encrypted_b_codex_tool_response(fake_rpc, tmp_path, protoco
     records = TaskOrderStore(tmp_path / "provider-records")
     provider = ProviderService(manifest=manifest, adapter=CLIAgentAdapter("codex_cli"),
         store=b, task_store=records, balance=TaskBalanceLedger(tmp_path / "balance.json"), messaging_key=bk)
+    provider.adapter.current_models()
     requests = []
 
     async def execute(order, emit):
