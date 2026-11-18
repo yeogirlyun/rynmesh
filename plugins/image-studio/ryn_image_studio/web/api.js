@@ -1,4 +1,4 @@
-import { T } from "./i18n.js";
+import { A, T } from "./i18n.js";
 import { toast } from "./dom.js";
 
 export const state = { me: null, jobs: [], filter: "all", queueLength: 0, average: 60, offset: 0, timer: 0 };
@@ -16,7 +16,7 @@ export async function api(path, options = {}) {
   }
   return body;
 }
-export const errorText = (err) => T.errors[err?.message] || T.errors.default;
+export const errorText = (err) => A[err?.message] || T.errors[err?.message] || T.errors.default;
 export const now = () => Date.now() / 1000 + state.offset;
 
 // ---- data ----

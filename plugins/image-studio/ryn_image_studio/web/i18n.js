@@ -70,3 +70,23 @@ const english = { banner: "Banner", main: "Product image", poster: "Poster", det
   minimal: "Minimal", tech: "Tech", festive: "Festive", promo: "Promotional", premium: "Premium", fresh: "Fresh" };
 export const presetLabel = (id, preset) => (!zh && english[id]) || preset?.label || id;
 export const roleLabel = role => role === "style" ? F.reference : role === "source" ? F.source : F.material;
+
+export const A = zh ? {
+  choose: "从素材库选", manage: "管理素材", saveTo: "存到素材库", save: "保存", saved: "已存入素材库",
+  mine: "我的素材", public: "公共素材", publicSave: "存为公共素材", search: "搜索素材", name: "素材名称",
+  kind: "类型", product: "商品", logo: "Logo", style: "风格图", close: "关闭", remove: "删除",
+  confirm: "确认删除", cancel: "取消", empty: "这里还没有素材。", noMatches: "没有匹配的素材。",
+  loading: "正在读取素材…", limit: "每次最多可用 5 张图，请先移除一张。", emptyName: "请填写素材名称。",
+  image_asset_limit: "这个素材库已满（最多 100 张），请先删除不用的素材。",
+  image_bad_asset: "请填写 1 至 80 字的名称并选择素材类型。",
+  image_asset_not_found: "这份素材已被删除，请重新选择。", image_asset_public_forbidden: "只有主人可以管理公共素材。"
+} : {
+  choose: "Choose from library", manage: "Manage assets", saveTo: "Save to library", save: "Save", saved: "Saved to library",
+  mine: "My assets", public: "Public assets", publicSave: "Save as public", search: "Search assets", name: "Asset name",
+  kind: "Type", product: "Product", logo: "Logo", style: "Style image", close: "Close", remove: "Delete",
+  confirm: "Confirm deletion", cancel: "Cancel", empty: "No assets here yet.", noMatches: "No matching assets.",
+  loading: "Loading assets…", limit: "You can use up to 5 images. Remove one first.", emptyName: "Enter an asset name.",
+  image_asset_limit: "This library is full (100 assets). Delete an unused asset first.",
+  image_bad_asset: "Enter a name of 1–80 characters and choose an asset type.",
+  image_asset_not_found: "This asset was deleted. Choose another.", image_asset_public_forbidden: "Only the owner can manage public assets."
+};
