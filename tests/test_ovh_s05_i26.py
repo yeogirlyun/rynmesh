@@ -8,7 +8,7 @@ from test_agent_local_tools import local as local
 from test_agent_runtime import Catalog, assistant, make_runtime
 from test_agent_codex_loop import WorkstationTools
 from rynmesh.agent_runtime import local_tools, local_specs, results
-from rynmesh.agent_runtime.store import AgentToolRejected
+from rynmesh.agent_runtime.store import AgentToolRejected, encoded
 
 
 def read(local, args, context=None):
@@ -126,8 +126,14 @@ def test_t3_real_runtime_dispatch_passes_selected_model_window_and_retains_page(
         assert expected > 40000 and len(seen[0][1]['text']) == expected
         saved = runtime.get(row['id'])
         reference = saved['result_refs'][0]
-        page = runtime.get_result(row['id'], reference['id'], 0, 48000)
-        assert expected <= len(page['content']) <= 48000 and results.MAX_RESULT_BYTES >= 48000
+        chunks, offset = [], 0
+        while offset is not None:
+            page = runtime.get_result(row['id'], reference['id'], offset, 48000)
+            assert len(encoded(page)) <= saved['limits']['max_output_chars'] - 512
+            chunks.append(page['content'])
+            offset = page['next_offset']
+        assert json.loads("".join(chunks))["text"] == seen[0][1]["text"]
+        assert results.MAX_RESULT_BYTES >= 48000
     finally:
         tools.local.processes.close()
 

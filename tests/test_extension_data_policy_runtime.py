@@ -302,7 +302,11 @@ def test_large_result_pages_follow_real_tool_workflow_and_switch_cannot_disclose
     assert reference["data_policy_state"] == state
     assert marker not in json.dumps(current["messages"])
     assert marker not in results.path(runtime.store, row["id"], reference["id"]).read_text()
-    original = runtime.get_result(row["id"], reference["id"], 0, 16384)["content"]
+    original, cursor = "", 0
+    while cursor is not None:
+        page = runtime.get_result(row["id"], reference["id"], cursor, 16384)
+        original += page["content"]
+        cursor = page["next_offset"]
     offset = original.index(marker) - 16
     model.responses = [_assistant(name="ryn_read_result", args={"result_id": reference["id"], "offset": offset}, call_id="page"),
                        _assistant(content="Read the bounded synthetic page.")]
