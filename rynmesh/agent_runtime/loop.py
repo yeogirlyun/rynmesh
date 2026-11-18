@@ -2177,7 +2177,7 @@ class AgentLoop:
                 preview_options = {"context": preview_ctx} if preview_ctx is not None else {}
                 preview = sanitized(self.tools.preview(call["name"], copy.deepcopy(call["arguments"]), **preview_options))
                 if len(encoded(preview)) > max(selected["limits"]["max_output_chars"], output_policy.MAX_TOOL_CALL_ARGUMENT_BYTES):
-                    raise AgentError("agent_output_limit")
+                    raise AgentError("agent_preview_limit")
 
             authorized_classification = None
 
