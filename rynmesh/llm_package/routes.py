@@ -1682,15 +1682,18 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                         image_state = model_settings.image_input_state(record, model)
                         revision = model_settings.fingerprint(record, model)
                         policy = model_settings.effective(record, model)
+                        window_basis = model_settings.context_metadata(record, model)["context_window_basis"]
                         sid = source_store.model_service_id(record, model)
                         current = source_managers.get(sid)
-                        # A new image test result changes what is published, not the destination.
+                        # Image/window evidence can change publication without changing the destination.
                         if (current is None or getattr(current, "_source_revision", "") != revision
-                                or getattr(current, "_image_state", None) != image_state):
+                                or getattr(current, "_image_state", None) != image_state
+                                or current.manifest.context_window_basis != window_basis):
                             manifest = LLMPackageManifest(package_id=sid, mode="openai_compatible",
                                 public_model_alias=record["name"] + " · " + model, adapter="openai_compatible",
                                 model=model, base_url=record["base_url"], allow_non_loopback=record["kind"] == "api",
                                 context_window=policy["context_window"], max_output_tokens=policy["max_output_tokens"], max_concurrent=policy["max_concurrent"],
+                                context_window_basis=window_basis,
                                 timeout_seconds=policy["max_request_seconds"], capabilities=["text-generation", "streaming", "client-tools",
                                     "explicit-friends" if policy["share_scope"] == "friends" else "personal-space-only",
                                     *(["protocol:" + record["protocol"]] if record.get("protocol") in

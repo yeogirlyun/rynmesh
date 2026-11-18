@@ -1405,10 +1405,27 @@ class AgentRuntime(AgentLoop):
         density = context_compaction.applied_density(context_policy, self._effective_capacity(row)[1])
         policy = output_policy.select(model, dispatch_messages, specs, request_cap=output_cap,
                                       bytes_per_token=density if density is not None and density > context_compaction.DEFAULT_BYTES_PER_TOKEN else None)
+        if getattr(self.model, "supports_calibrated_capacity", False) is True:
+            options["bytes_per_token"] = density if density is not None and density > context_compaction.DEFAULT_BYTES_PER_TOKEN else None
         profile_record = model_profiles.request_record(model_profiles.for_task(self, row, model),
                                                        dispatch_messages, options)
         meter_row = {**row, "_request_id": active_request_id} if active_request_id else row
         dispatched = False
+        limit_retry_state = {}
+        def model_event(metadata):
+            if isinstance(metadata, dict) and metadata.get("type") in {"model_limit_adjusted", "output_limit_raised"}:
+                def record(data):
+                    current = task(data, row["id"])
+                    if current["control_revision"] != row["control_revision"] or current["status"] != "running":
+                        raise AgentToolRejected("agent_cancelled")
+                    event(current, metadata["type"], **{key: metadata[key] for key in (
+                        "basis", "old_context_window", "new_context_window", "old_max_output_tokens", "new_max_output_tokens", "request_id") if key in metadata})
+                    if not nested and stage is None:
+                        # Internal adaptation consumes the existing one-shot format repair.
+                        current["model_retry_count"] = max(1, current.get("model_retry_count", 0))
+                self.store.transaction(record)
+            if on_event is not None:
+                on_event(metadata)
         def _invoke_model(allowed):
             nonlocal dispatched
             # Read live state, including restrictions added by overlapped reads.
@@ -1425,14 +1442,18 @@ class AgentRuntime(AgentLoop):
                 if "conversation" in options:
                     options["conversation"] += ":policy:" + str(state["revision"])
             dispatched = True
+            if getattr(self.model, "supports_limit_retry", False) is True:
+                options["on_limit_retry"] = lambda next_policy, usage, minimum_output: limit_retry_state["reserve"](
+                    {**next_policy, "model_id": row["model_id"], "model_profile": profile_record}, usage, minimum_output)
             return self.model.complete(
-                row["model_id"], dispatch_messages, specs, cancelled, on_event,
+                row["model_id"], dispatch_messages, specs, cancelled, model_event if on_event is not None else None,
                 **options, **({"max_output_tokens": allowed} if getattr(self.model, "supports_output_token_limit", False) else {}))
         def _metered():
             # The model tag lets later density calibration ignore another model's usage.
             return self._meter_model(meter_row, _invoke_model,
                 input_bound=policy["estimated_input_tokens"], output_bound=policy["effective_cap"],
                 output_policy_record={**policy, "model_id": row["model_id"], "model_profile": profile_record},
+                retry_state=limit_retry_state,
                 nested=nested, stage=stage,
                 can_reduce_output=getattr(self.model, "supports_output_token_limit", False) is True)
         try:
@@ -1527,7 +1548,8 @@ class AgentRuntime(AgentLoop):
         model = self._model_metadata(row.get("model_id", "")) if isinstance(row, dict) else None
         return budget.infer_cached_input_weight(row, model if isinstance(model, dict) else None)
 
-    def _meter_model(self, selected, invoke, *, input_bound, output_bound, nested=False, stage=None, can_reduce_output=True, output_policy_record=None):
+    def _meter_model(self, selected, invoke, *, input_bound, output_bound, nested=False, stage=None, can_reduce_output=True, output_policy_record=None, retry_state=None):
+        minimum_output = 1
         def admit(data):
             row = task(data, selected["id"])
             if (row["status"] != "running" or row["control_revision"] != selected.get("_run_control_revision", selected["control_revision"])
@@ -1538,7 +1560,7 @@ class AgentRuntime(AgentLoop):
             max_tokens = state["limits"]["max_total_tokens"]
             wrap_up_reserve = min(100000, max_tokens // 15) if nested and max_tokens >= 100000 else 0
             available = max_tokens - wrap_up_reserve - state["lifetime"]["charged_tokens"] - input_bound
-            if available <= 0 or (available < output_bound and not can_reduce_output):
+            if available < minimum_output or (available < output_bound and not can_reduce_output):
                 raise AgentError("agent_token_budget_exhausted")
             flight = row.get("in_flight") or {}
             record = budget.reserve(row, "model", stage or flight.get("stage") or flight.get("kind", "model"),
@@ -1554,6 +1576,18 @@ class AgentRuntime(AgentLoop):
             return record
         reservation = self.store.transaction(admit)
         started = time.monotonic()
+        def reserve_retry(next_policy, usage, minimum):
+            nonlocal reservation, started, input_bound, output_bound, output_policy_record, minimum_output
+            self._settle_usage(selected["id"], reservation["id"], usage=usage, elapsed=0 if nested else time.monotonic() - started)
+            input_bound = next_policy["estimated_input_tokens"]
+            output_bound = next_policy["effective_cap"]
+            output_policy_record = next_policy
+            minimum_output = minimum
+            reservation = self.store.transaction(admit)
+            started = time.monotonic()
+            return reservation["output_reservation"]
+        if retry_state is not None:
+            retry_state["reserve"] = reserve_retry
         response = None
         retryable_failure = False
         try:

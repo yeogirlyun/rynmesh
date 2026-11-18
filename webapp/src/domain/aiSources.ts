@@ -74,7 +74,8 @@ export interface AIModelSettings {
 export type AISource = {
   id: string; name: string; kind: "api" | "local"; provider: string; base_url: string;
   protocol?: APIProtocol;
-  models: string[]; context_window: number; max_output_tokens: number;
+  models: string[]; context_window: number; max_output_tokens: number | null;
+  max_output_tokens_explicit?: boolean;
   context_window_mode?: "auto" | "manual";
   model_metadata?: Record<string, { context_window: number }>;
   request_defaults: Record<string, unknown>; enabled: boolean; sharing: boolean;
@@ -101,7 +102,8 @@ export function newSource(provider = "zai"): AISource {
   return { id: "new", name: preset.name, kind: ["ollama", "lmstudio"].includes(provider) ? "local" : "api",
     provider, protocol: provider === "anthropic" ? "anthropic_messages" : "openai_chat",
     base_url: preset.url, models: provider === "deepseek" ? ["deepseek-flash", "deepseek-v4-pro"] : preset.model ? [preset.model] : [],
-    context_window: 32768, context_window_mode: "auto", max_output_tokens: 4096,
+    context_window: 32768, context_window_mode: "auto", max_output_tokens: provider === "deepseek" ? 65536 : null,
+    max_output_tokens_explicit: false,
     request_defaults: provider === "zai" ? { thinking: { type: "enabled" }, reasoning_effort: "max" } : {},
     enabled: true, sharing: false, status: "untested", has_key: false };
 }

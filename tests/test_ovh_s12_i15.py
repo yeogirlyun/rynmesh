@@ -126,12 +126,13 @@ def test_t3_real_http_retries_once_and_only_learns_success(node, monkeypatch, re
     if reject_retry:
         with pytest.raises(AgentError):
             bridge.complete(model_id, messages, [], lambda: False)
-        assert output_policy.configured_output(catalog.resolve(model_id)) == 8192
+        # S12-I26: an explicit upstream bound is evidence even if retry fails.
+        assert output_policy.configured_output(catalog.resolve(model_id)) == 4096
     else:
         result = bridge.complete(model_id, messages, [], lambda: False)
         assert result["message"]["content"] == "ok"
         assert result["output_policy"]["effective_cap"] == 4096
-        assert catalog.resolve(model_id)["max_output_basis"] == "upstream_learned"
+        assert catalog.resolve(model_id)["max_output_basis"] == "upstream_rejection"
         assert output_policy.configured_output(catalog.resolve(model_id)) == 4096
         bridge.complete(model_id, messages, [], lambda: False)
         assert attempts[-1]["max_tokens"] == 4096

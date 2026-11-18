@@ -180,7 +180,7 @@ export default function ModelPoolSettings({ source, modelID, onClose, onSaved }:
       const inheritedContext = inheritedSource.context_window_mode === "auto"
         ? inheritedSource.model_metadata?.[modelID]?.context_window || settings.effective.context_window || 32768 : inheritedSource.context_window;
       const context = Number(configuration.context_window || inheritedContext);
-      const output = Number(configuration.max_output_tokens || inheritedSource.max_output_tokens);
+      const output = Number(configuration.max_output_tokens || inheritedSource.max_output_tokens || settings.effective.max_output_tokens);
       if (output > context) throw new Error(text("最大输出不能超过上下文窗口。", "Maximum output cannot exceed the context window."));
     } catch (reason) { setError(reason instanceof Error ? reason.message : text("参数格式无效。", "Invalid parameter format.")); return; }
     setBusy(true);
@@ -257,7 +257,9 @@ export default function ModelPoolSettings({ source, modelID, onClose, onSaved }:
   return <Modal title={`${text("此模型参数", "Parameters for this model")} · ${modelID}`} onClose={() => { if (!busy) onClose(); }}><div className="ais-modal mp-parameters">
     <p className="mp-modal-sub">{source.name} · {modelID}</p>
     <ModelTokenUsageSummaryCard usage={usage} busy={busy} onReset={usage?.usage_key ? handleResetUsage : undefined} />
-    {settings.context_window_basis && <p className="ais-muted">{settings.context_window_known === false
+    {settings.context_window_basis && <p className="ais-muted">{settings.context_window_basis === "vendor_family_guess"
+      ? text("窗口由模型族名推测，实际可能更小；任务使用保守窗口，可手动覆盖。", "Window inferred from the model family; the actual limit may be smaller. Tasks use a conservative window; you can set an override.")
+      : settings.context_window_known === false
       ? text("模型未声明实际窗口，当前为保守回退值；可手动覆盖。", "The model did not declare its window. A conservative fallback applies; you can set an override.")
       : settings.context_window_basis === "provider_model_metadata"
         ? text("窗口来自该来源的模型列表；手动覆盖优先。", "The window comes from this source's model listing; manual overrides take priority.")

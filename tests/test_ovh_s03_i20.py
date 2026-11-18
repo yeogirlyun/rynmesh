@@ -37,12 +37,13 @@ def catalog_row(tmp_path, *, own=False, alias="deepseek-v4", service_id="service
 def test_t1_missing_manifest_window_uses_deepseek_family_and_actual_admission(tmp_path, own):
     catalog, row = catalog_row(tmp_path, own=own)
     assert row["context_window"] == 1048576
-    assert row["context_window_known"] is True
-    assert row["context_window_basis"] == "vendor_family_default"
+    assert row["context_window_known"] is False
+    assert row["context_window_basis"] == "vendor_family_guess"
     assert catalog.get_model(row["id"])["context_window"] == 1048576
     policy = output_policy.context_budget(row)
-    assert policy["effective_max_context_bytes"] > 120000
-    output_policy.admit_request_context(row, [{"role": "user", "content": "x" * 150000}], [])
+    assert policy["context_window_tokens"] == 32768 and policy["effective_max_context_bytes"] <= 120000
+    with pytest.raises(AgentError, match="^agent_context_limit$"):
+        output_policy.admit_request_context(row, [{"role": "user", "content": "x" * 150000}], [])
 
 
 @pytest.mark.parametrize("own", [False, True])
@@ -69,13 +70,15 @@ def test_t3_integer_manifest_has_priority_over_vendor_table(tmp_path, own, windo
 @pytest.mark.parametrize("own", [False, True])
 def test_missing_alias_uses_service_id(tmp_path, own):
     _, row = catalog_row(tmp_path, own=own, alias=MISSING, service_id="deepseek-v4-local")
-    assert row["context_window"] == 1048576 and row["context_window_known"]
+    assert row["context_window"] == 1048576 and not row["context_window_known"]
+    assert row["context_window_basis"] == "vendor_family_guess"
 
 
 @pytest.mark.parametrize("window", [None, "65536", True])
 def test_noninteger_manifest_window_uses_vendor_inference(tmp_path, window):
     _, row = catalog_row(tmp_path, window=window)
-    assert row["context_window"] == 1048576 and row["context_window_known"]
+    assert row["context_window"] == 1048576 and not row["context_window_known"]
+    assert row["context_window_basis"] == "vendor_family_guess"
 
 
 def test_public_lookup_preserves_existing_private_callers_and_table():
