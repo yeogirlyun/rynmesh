@@ -40,6 +40,7 @@ def test_t1_api_creation_requires_declaration_and_reaches_real_http(tmp_path, mo
         "max_output_tokens": 32768, "request_defaults": {"reasoning_effort": "medium"},
     }}}
     world.source_store.read = lambda: {"src-a": copy.deepcopy(source)}
+    world.source_store.version = 1
     manager = world.managers["api-src-a-claude-fixture"]
     manager._source_revision = model_settings.fingerprint(source, "claude-fixture")
     current = world.runtime.catalog.resolve(API_MODEL)
