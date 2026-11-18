@@ -904,7 +904,11 @@ def test_host_call_transition_table_monotonicity_and_deferred_write_guards() -> 
         }
 
         deferred_cid = f"cb_{generation}_{exec_id}_3"
+        deadline = time.monotonic() + 1.0
         deferred_rec = coordinator.get_record("task_transitions", deferred_cid)
+        while deferred_rec is None and time.monotonic() < deadline:
+            coordinator.poll_step("task_transitions", timeout=0.05)
+            deferred_rec = coordinator.get_record("task_transitions", deferred_cid)
         assert deferred_rec is not None
         assert deferred_rec.status == "pending_admission"
         deferred_ids = {
