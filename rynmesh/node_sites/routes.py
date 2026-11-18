@@ -155,7 +155,7 @@ def install_node_sites(app: FastAPI, *, engine: DropEngine, home: Path,
                 # Device rows alone omit colleagues who have no registered device.
                 members = {(d["resource"], m["id"])
                            for _, d in directory._cached() for m in d["members"]
-                           if m["id"] != (d.get("self") or {}).get("userid")
+                           if m["id"] != (d.get("self") or {}).get("member_id")
                            and all(device["peer_id"] != engine.me for device in m["devices"])}
             return sites.client.shared_apps(refresh=refresh, members=members)
         return await run(grouped)

@@ -47,6 +47,19 @@ def test_grouping_cache_and_colleague_counts(pair, tmp_path):
         second.stop()
 
 
+def test_same_member_other_device_is_listed_without_counting_self(pair):
+    opener, host, authority, backend = pair
+    authority._rows[1]["member_id"] = "m-0"
+    directory = {"resource": RESOURCE, "self": {"member_id": "m-0", "userid": "account"},
+                 "members": [{"id": "m-0", "devices": authority.rows()}]}
+    opener.app.state.peer_providers = SimpleNamespace(_cached=lambda: [("plugin", directory)])
+    publish(host, backend)
+    result = TestClient(opener.app).get("/api/local/node-sites/shared-apps?refresh=true").json()
+    app, = result["apps"]
+    assert [device["peer_id"] for device in app["providers"]] == [host.e.me]
+    assert (result["colleagues_total"], result["sharing_total"]) == (0, 0)
+
+
 @pytest.mark.parametrize("bad", [
     {"state": "other", "queue_length": 0, "eta_seconds": 0},
     {"state": "idle", "queue_length": True, "eta_seconds": 0},

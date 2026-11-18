@@ -191,7 +191,7 @@ class SiteClient:
 
         if members is None:
             members = {member(row) for row in rows}
-        colleagues = [row for row in rows if member(row) in members]
+        devices = [row for row in rows if row["peer_id"] != self.engine.me]
 
         def lookup(row):
             resource, peer_id = row["provider_resource"], row["peer_id"]
@@ -213,7 +213,7 @@ class SiteClient:
         groups = {}
         sharing = set()
         with ThreadPoolExecutor(max_workers=8) as pool:
-            for row, listings in pool.map(lookup, colleagues):
+            for row, listings in pool.map(lookup, devices):
                 for site, provider in listings:
                     sharing.add(member(row))
                     sid = site["site_id"]
@@ -225,7 +225,7 @@ class SiteClient:
             group["providers"].sort(key=lambda p: (not p["online"], p["member_name"], p["device_name"], p["peer_id"]))
         apps = sorted(groups.values(), key=lambda g: (not g["providers"][0]["online"], g["title"], g["site_id"]))
         return {"apps": apps, "colleagues_total": len(members),
-                "sharing_total": len(sharing)}
+                "sharing_total": len(sharing & members)}
 
     # ---- opening -------------------------------------------------------------------
     def open(self, resource: Any, peer_id: Any, sid: Any) -> dict[str, Any]:
