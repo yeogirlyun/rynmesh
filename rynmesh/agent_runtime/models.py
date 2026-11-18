@@ -143,9 +143,14 @@ class ModelCatalog:
                                    if now - v[0] < 2 and k[2:] == key[2:]}
             snapshot = self._catalog_cache.get(key)
         if snapshot is None:
-            inputs = self._catalog_inputs(selected_model_id=selected_model_id, display_only=display_only)
-            with self._catalog_lock:
-                self._catalog_cache[key] = (now, inputs)
+            records, discovered, usage = self._catalog_inputs(selected_model_id=selected_model_id, display_only=display_only)
+            inputs = records, discovered, usage
+            # Peer regrants and scope changes must take effect before the next request.
+            peer_bindings = any(record.get("binding_verified") is True and record.get("peer_id") != self.store.peer_id
+                                for record in discovered)
+            if display_only or not peer_bindings:
+                with self._catalog_lock:
+                    self._catalog_cache[key] = (now, inputs)
         else:
             inputs = snapshot[1]
         # Cache metadata inputs, never invocation authority. CLI bindings and

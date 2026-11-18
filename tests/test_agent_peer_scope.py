@@ -108,7 +108,7 @@ def test_unverified_or_other_recipient_catalog_cannot_authorize_scope_or_switch(
         altered["expected_model_binding"]["ai_permission"]["revision"] += 1
     else:
         altered["source"] = "local_service"
-    runtime.catalog.list_models = lambda: [altered]
+    runtime.catalog.list_models = lambda **_: [altered]
     with pytest.raises(AgentError, match="agent_model_destination_unverifiable"):
         runtime.preview_model_switch(task_id, model["id"])
     with pytest.raises(AgentError, match="agent_model_destination_unverifiable"):
