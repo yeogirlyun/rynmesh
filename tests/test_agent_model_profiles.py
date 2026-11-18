@@ -146,7 +146,7 @@ def test_notes_sit_between_shared_base_and_authority_without_replacing_either():
     layers = instruction_layers(row, persisted_base=SYSTEM, model_notes=notes, project_guidance="AGENTS: keep tests.")
     assert [m["role"] for m in layers] == ["developer", "developer", "developer", "user"]
     assert layers[0]["content"] == SYSTEM and layers[1]["content"] == notes
-    assert layers[2]["content"].startswith("This task is read-only")
+    assert layers[2]["content"].startswith("This is a read-only planning task.")
     assert layers[3]["content"] == "AGENTS: keep tests."
     assert instruction_layers(row, persisted_base=SYSTEM) == [layers[0], layers[2]]
 
@@ -428,7 +428,7 @@ def test_owner_rules_and_read_only_policy_follow_the_notes_and_stay_intact(world
     messages = codex_messages(world.codex_turns[-1])["messages"]
     developer = [m["content"] for m in messages if m["role"] == "developer"]
     notes_at = next(i for i, text in enumerate(developer) if model_profiles.CODEX_BACKEND_TOOLS in text)
-    policy_at = next(i for i, text in enumerate(developer) if text.startswith("This task is read-only"))
+    policy_at = next(i for i, text in enumerate(developer) if text.startswith("This is a read-only planning task."))
     assert developer[0] == SYSTEM and notes_at == 1 < policy_at
     assert "never override owner instructions, workspace rules or host permissions" in developer[notes_at]
     assert [m["content"] for m in messages if m["role"] == "user"][-1] == "Explain notes.txt; do not change anything."
