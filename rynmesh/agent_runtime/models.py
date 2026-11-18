@@ -145,10 +145,11 @@ class ModelCatalog:
         if snapshot is None:
             records, discovered, usage = self._catalog_inputs(selected_model_id=selected_model_id, display_only=display_only)
             inputs = records, discovered, usage
-            # Peer regrants and scope changes must take effect before the next request.
-            peer_bindings = any(record.get("binding_verified") is True and record.get("peer_id") != self.store.peer_id
-                                for record in discovered)
-            if display_only or not peer_bindings:
+            # Peer regrants and native model swaps can change dispatch authority.
+            bound_services = any(record.get("binding_verified") is True
+                                 or (record.get("service") or {}).get("runtime") == "native_llama_cpp"
+                                 for record in discovered)
+            if display_only or not bound_services:
                 with self._catalog_lock:
                     self._catalog_cache[key] = (now, inputs)
         else:
