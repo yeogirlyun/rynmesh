@@ -87,7 +87,8 @@ def test_discovery_to_real_business_operation_keeps_exact_approval(apps, tmp_pat
     model = BusinessModel(slug, action)
     runtime = AgentRuntime(AgentStore(tmp_path / "agent", apps.key), model, apps.tools, Catalog(),
                            consumer_node_id=apps.peer_id)
-    runtime.update_settings({"enabled": True, "model_id": "local:test", "permission_mode": "automatic",
+    # Automatic mode runs App operations without a dialog (S04-I24); this exercises the approval path.
+    runtime.update_settings({"enabled": True, "model_id": "local:test", "permission_mode": "workspace",
                              "allowed_write_tools": [ACTION], "desktop_access": False})
     task = runtime.create({"message": f"请在 Ryn {slug} 创建一条记录"})
     advance(runtime, 20)
