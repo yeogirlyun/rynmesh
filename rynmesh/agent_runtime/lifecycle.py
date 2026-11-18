@@ -239,7 +239,8 @@ def change(store, task_id, value, operation, emit, stamp, *, on_mutate=None, rea
             for child in rows:
                 child["archived"] = False
                 child.pop("archive_reason", None)
-                child.setdefault("local_execution", {})["desktop_access"] = bool(data.get("settings", {}).get("desktop_access", False))
+                local = child.setdefault("local_execution", {})
+                local["desktop_access"] = bool(local.get("desktop_access") and data["settings"].get("desktop_access"))
                 child.update(approved=None, pending_approval=None)
                 emit(child, "restored")
                 data["tasks"][child["id"]] = child
