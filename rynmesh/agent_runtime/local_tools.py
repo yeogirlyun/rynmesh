@@ -904,6 +904,7 @@ class LocalTools:
             "desktop_access": desktop_access_enabled(
                 {"permission_mode": row_mode, "local_execution": {"desktop_access": row_desktop}}, current),
             "permission_mode": row_mode,
+            "allow_outside_workspace": row_mode == current.get("permission_mode") == "automatic",
         }
 
     def _shell_cwd(self, value, context, policy=None):
@@ -916,7 +917,7 @@ class LocalTools:
             raise AgentToolRejected("agent_local_path_invalid")
         expanded = os.path.expanduser(value) if (value == "~" or value.startswith(("~/", "~\\"))) else value
         requested = Path(expanded)
-        if policy.get("permission_mode") == "automatic" and requested.is_absolute():
+        if policy.get("allow_outside_workspace", False) and requested.is_absolute():
             if os.name == "nt" and _has_invalid_windows_parts(requested):
                 raise AgentToolRejected("agent_local_path_invalid")
             cwd = requested.resolve()
@@ -940,7 +941,7 @@ class LocalTools:
         expanded = os.path.expanduser(value) if (value == "~" or value.startswith(("~/", "~\\"))) else value
         requested = Path(expanded)
         is_abs = requested.is_absolute()
-        outside_ok = policy.get("permission_mode") == "automatic" and is_abs
+        outside_ok = policy.get("allow_outside_workspace", False) and is_abs
         # Windows ADS/device names bypass ordinary file semantics; check all segments before & after resolve.
         if os.name == "nt" and _has_invalid_windows_parts(requested):
             raise AgentToolRejected("agent_local_path_invalid")
@@ -1426,7 +1427,7 @@ class LocalTools:
     def _patch_plan(self, args, context, policy):
         """Resolve and apply every hunk in memory; raises before any file is written."""
         from . import local_patch
-        outside_ok = policy.get("permission_mode") == "automatic"
+        outside_ok = policy.get("allow_outside_workspace", False)
         plan, seen = [], set()
         for operation in local_patch.parse(args["patch"]):
             from .file_review import safe_path
@@ -2051,7 +2052,7 @@ class LocalTools:
                 if len(raw) > 8 * 1024 * 1024 or cancelled():
                     raise AgentToolRejected("agent_cancelled" if cancelled() else "agent_table_output_limit")
                 policy = self.policy(context)
-                outside_ok = policy.get("permission_mode") == "automatic"
+                outside_ok = policy.get("allow_outside_workspace", False)
                 self.file_review(task_id, self.path(".", context, policy)).apply(
                     [(path, None, raw, None)], operation_id=operation_id, outside_ok=outside_ok
                 )
@@ -2520,7 +2521,7 @@ class LocalTools:
             from . import local_patch
             from .file_review import safe_path
             policy = self.policy(context)
-            outside_ok = policy.get("permission_mode") == "automatic"
+            outside_ok = policy.get("allow_outside_workspace", False)
             parsed_ops = local_patch.parse(args["patch"])
             lock_targets = []
             for op in parsed_ops:
@@ -2575,7 +2576,7 @@ class LocalTools:
             from .file_review import safe_path
             policy = self.policy(context)
             root = policy["workspace_root"]
-            outside_ok = policy.get("permission_mode") == "automatic"
+            outside_ok = policy.get("allow_outside_workspace", False)
             safe_path(root, args["path"], allow_directory=name == "ryn_file_manage", outside_ok=outside_ok)
             if args.get("destination"):
                 safe_path(root, args["destination"], outside_ok=outside_ok)
