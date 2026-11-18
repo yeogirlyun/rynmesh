@@ -3534,6 +3534,8 @@ class AgentRuntime(AgentLoop):
         row.pop("unattended_blocked", None)
         if row.get("fork"):
             row["fork"]["awaiting_instruction"] = False
+        if not row.get("in_flight"):
+            row.pop("manual_compaction", None)
         row.setdefault("pending_user_messages", []).append(message)
         was_stopped = row.pop("turn_stopped", False)
         row.pop("retired_writes", None)
@@ -4502,6 +4504,8 @@ class AgentRuntime(AgentLoop):
                                   reason="owner_message_pending" if owner_continued else "node_restarted",
                                   **({"cleanup_confirmed": cleanup_ok} if read_flight else {}),
                                   **({"ledger_outcome": settled_outcome} if settled_outcome else {}))
+                if row.get("status") == "paused":
+                    row.pop("manual_compaction", None)
                 if row.get("status") not in {"completed", "cancelled", "failed"}:
                     _note_lost_background_processes(row, boot_id)
             deleted_ids = []
