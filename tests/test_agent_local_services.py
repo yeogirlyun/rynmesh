@@ -84,7 +84,10 @@ def test_service_callback_requires_exact_durable_grant_and_live_authority(tmp_pa
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
+    from rynmesh.atomic_io import atomic_write_json
+    from rynmesh.agent_runtime.artifact_transfers import ArtifactTransfers, CHANNEL
     from rynmesh.agent_runtime.extensions.routes import install_extension_routes
+    from rynmesh.services import peer_box
     from rynmesh.agent_runtime.operation_ledger import OperationLedger
 
     store, service, _, _ = fixture(tmp_path)
@@ -109,7 +112,10 @@ def test_service_callback_requires_exact_durable_grant_and_live_authority(tmp_pa
                                       expected_config_generation=server["config_generation"])
     extensions = SimpleNamespace(store=store, manager=None, ledger_factory=lambda: ledger, verify_binding=verify)
     app = FastAPI()
-    install_extension_routes(app, runtime=SimpleNamespace(store=SimpleNamespace(root=tmp_path / "runtime", inspect=lambda fn: fn(data))),
+    key = peer_box.load_or_create_messaging_key(tmp_path / "artifact-key")
+    runtime_store = SimpleNamespace(root=tmp_path / "runtime", inspect=lambda fn: fn(data),
+                                    key=key, pub=peer_box.public_key_b64(key))
+    install_extension_routes(app, runtime=SimpleNamespace(store=runtime_store),
                              extensions=extensions, local_control=lambda request: None)
     headers = {"X-Ryn-Service-Token": pending["credential"], "X-Ryn-Service-Generation": pending["generation"]}
     path = "/api/local/agent/extensions/local-service/authorize-operation"
@@ -123,9 +129,10 @@ def test_service_callback_requires_exact_durable_grant_and_live_authority(tmp_pa
         descriptor = {"artifact_ref": ref, "name": "report.txt", "size": len(content),
                       "sha256": hashlib.sha256(content).hexdigest(), "media_type": "text/plain",
                       "purpose": "plugin_attachment", "expires_at": time.time()+900}
-        snapshot = tmp_path / "runtime" / "artifact-transfers" / ref
+        snapshot = ArtifactTransfers(runtime_store)._path("task1", ref)
         snapshot.parent.mkdir(parents=True, exist_ok=True)
-        snapshot.write_bytes(content)
+        nonce, ciphertext = peer_box.seal(runtime_store.key, runtime_store.pub, content, info=CHANNEL)
+        atomic_write_json(snapshot, {"nonce": nonce, "ciphertext": ciphertext})
         task["artifact_transfers"] = {ref: {**descriptor, "owner_id": "owner-A", "task_id": "task1", "scope_revision": 1}}
         operation["artifact"] = descriptor
         artifact_path = "/api/local/agent/extensions/local-service/artifact"
