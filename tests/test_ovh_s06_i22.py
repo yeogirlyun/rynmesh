@@ -116,18 +116,23 @@ def test_T1_real_runtime_runs_good_siblings_and_pairs_oversize_without_retry(tmp
 def test_T1_phase_a_js_oversize_callback_has_deliverable_paired_rejection(tmp_path, tamper):
     store = AgentStore(tmp_path, X25519PrivateKey.generate())
     _, catalog = _seed_task_row(store)
-    arguments = {"window": {"app": "Notepad", "id": 1}, "text": "x" * (MAX_TOOL_CALL_ARGUMENT_BYTES + 10)}
+    arguments = {"window": {"app": "Notepad", "id": 1}, "text": "short"}
     env = PendingHostCallEnvelope(task_id="task_js_phase_a", session_id="sess_001", generation=1, execution_id="exec_001",
         callback_id="cb_large", ordinal=0, method="type_text", effect="write", target_tool="computer_act_window",
         arguments=arguments, arguments_sha256=canonical_arguments_sha256(arguments))
-    routed = store.transaction(lambda data: plan_child_call(data["tasks"][env.task_id], env, catalog, HOST_METHOD_MAPPING))
+    # The guest frame must fit even when host translation makes the tool call too large.
+    def translate(_method, original):
+        return {**original, "text": "x" * (MAX_TOOL_CALL_ARGUMENT_BYTES + 10)}
+
+    routed = store.transaction(lambda data: plan_child_call(data["tasks"][env.task_id], env, catalog,
+                               HOST_METHOD_MAPPING, argument_translator=translate))
     assert routed["error_result"]["error"] == "agent_model_output_limit"
     routed = copy.deepcopy(routed)
     if tamper:
         if tamper == "digest":
             routed["arguments_sha256"] = "0" * 64
         elif tamper == "placeholder":
-            routed["arguments_json"] = routed["raw_arguments_json"] = "<arguments omitted: 200000 bytes>"
+            routed["arguments_json"] = routed["raw_arguments_json"] = f"<arguments omitted: {MAX_TOOL_CALL_ARGUMENT_BYTES} bytes>"
         elif tamper == "arguments":
             routed["arguments"] = {"text": "replacement"}
         else:
