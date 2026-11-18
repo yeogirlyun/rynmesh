@@ -1,6 +1,7 @@
 import { state, api, submit, errorText } from "./api.js";
 import { h, toast } from "./dom.js";
-import { F, T, presetLabel, roleLabel } from "./i18n.js";
+import { browseAssets, saveAsset } from "./assets.js";
+import { A, F, T, presetLabel, roleLabel } from "./i18n.js";
 
 const MAX_REFS = 5, MAX_UPLOAD = 8 * 1024 * 1024;
 const draft = { scene: "", style: null, width: 1024, height: 1024, custom: false, count: 1, refs: [], busy: false };
@@ -8,10 +9,10 @@ const copyLimits = { title: 40, subtitle: 60, badge: 20 };
 
 export async function addFiles(files) {
   for (const file of files) {
-    if (draft.refs.length >= MAX_REFS) break;
+    if (draft.refs.length >= MAX_REFS) { toast(A.limit); break; }
     if (!/^image\/(png|jpeg|webp)$/.test(file.type)) { toast(T.errors.image_upload_type); continue; }
     if (file.size > MAX_UPLOAD) { toast(T.errors.image_upload_too_large); continue; }
-    const ref = { url: URL.createObjectURL(file), id: null, role: "material" };
+    const ref = { file, url: URL.createObjectURL(file), id: null, role: "material" };
     draft.refs.push(ref); renderForm();
     try {
       ref.id = (await api("/api/uploads", { method: "POST", headers: { "Content-Type": file.type }, body: file })).upload_id;
@@ -22,6 +23,19 @@ export async function addFiles(files) {
   }
 }
 
+
+function library(manage) {
+  return browseAssets({manage, choose(asset) {
+    if (draft.refs.length >= MAX_REFS) return false;
+    draft.refs.push({asset: asset.id, url: `/api/assets/${asset.id}/thumb`, name: asset.name,
+      role: asset.kind === "style" ? "style" : "material"});
+    renderForm();
+    return true;
+  }, removed(id) {
+    draft.refs = draft.refs.filter(ref => ref.asset !== id);
+    renderForm();
+  }});
+}
 
 function sceneSizes(scene) {
   return scene.sizes?.length ? scene.sizes : [scene];
@@ -62,16 +76,17 @@ export function renderForm() {
     const select = h("select", {"aria-label": `${F.image} ${index + 1}`,
       onchange: e => { ref.role = e.target.value; }},
       ...["material", "style"].map(role => h("option", {value: role, selected: ref.role === role}, roleLabel(role))));
-    return h("div", {class: "attachment"}, h("div", {class: `ref${ref.id ? "" : " uploading"}`},
-      h("img", {src: ref.url, alt: ""}), h("button", {type: "button", class: "x", "aria-label": T.remove,
-        onclick: () => { draft.refs = draft.refs.filter(item => item !== ref); URL.revokeObjectURL(ref.url); renderForm(); }}, "×")), select);
+    return h("div", {class: "attachment"}, h("div", {class: `ref${ref.file && !ref.id ? " uploading" : ""}`},
+      h("img", {src: ref.url, alt: ref.name || ref.file.name}), h("button", {type: "button", class: "x", "aria-label": T.remove,
+        onclick: () => { draft.refs = draft.refs.filter(item => item !== ref); if (ref.file) URL.revokeObjectURL(ref.url); renderForm(); }}, "×")), select,
+      ref.file && ref.id && h("button", {type: "button", class: "link", onclick: () => saveAsset(ref)}, A.saveTo));
   }));
   form.querySelector("#add").hidden = draft.refs.length >= MAX_REFS;
   form.querySelector("#counts").replaceChildren(...[1, 2, 4].map(n =>
     chip(n, draft.count === n, () => { draft.count = n; })));
   form.querySelector("#ahead").textContent = T.ahead(state.queueLength, Math.max(1, Math.round(state.queueLength * state.average / 60)));
   const button = form.querySelector("#submit");
-  button.disabled = draft.busy || draft.refs.some(ref => !ref.id);
+  button.disabled = draft.busy || draft.refs.some(ref => ref.file && !ref.id);
   button.textContent = draft.busy ? T.submitting : T.submit;
 }
 
@@ -97,7 +112,7 @@ async function send(event) {
   renderForm();
   try {
     await submit({scene: draft.scene, style: draft.style, purpose, width: draft.width, height: draft.height,
-      brief, copy, references: draft.refs.map(({id, role}) => ({id, role})), count: draft.count});
+      brief, copy, references: draft.refs.map(ref => ref.asset ? {asset: ref.asset, role: ref.role} : {id: ref.id, role: ref.role}), count: draft.count});
   } finally { draft.busy = false; renderForm(); }
 }
 
@@ -109,7 +124,9 @@ export function buildForm() {
     field(F.images, h("div", {id: "dropzone", class: "field"},
       h("p", {class: "muted"}, F.drop, T.refsHint),
       h("div", {class: "refs", id: "refs"}),
-      h("button", {id: "add", type: "button", class: "ghost", onclick: () => form.elements.file.click()}, "+ ", T.add),
+      h("div", {class: "actions"}, h("button", {id: "add", type: "button", class: "ghost", onclick: () => form.elements.file.click()}, "+ ", T.add),
+        h("button", {type: "button", class: "ghost", onclick: () => library(false)}, A.choose),
+        h("button", {type: "button", class: "link", onclick: () => library(true)}, A.manage)),
       h("input", {name: "file", id: "file", type: "file", accept: "image/png,image/jpeg,image/webp", multiple: true, hidden: true,
         onchange: e => { addFiles([...e.target.files]); e.target.value = ""; }}),
       h("p", {class: "muted"}, F.tip))),
