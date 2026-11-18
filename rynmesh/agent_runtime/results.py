@@ -28,11 +28,19 @@ WORKSTATION_INLINE_PREVIEW_FIELDS = {
     "ryn_process_read": "output",
     "ryn_code_exec": "output",
 }
+MODEL_CATALOG_TOOLS = {"ryn_list_models", "ryn_inspect_services"}
 
 
 def model_projection(tool_name: str, result: object) -> object:
-    """Omit an exact MCP text duplicate only from the model-visible copy."""
-    if not tool_name.startswith("mcp__") or not isinstance(result, dict):
+    """Keep model-visible output compact without changing durable observations."""
+    if not isinstance(result, dict):
+        return result
+    if tool_name in MODEL_CATALOG_TOOLS and isinstance(result.get("models"), list):
+        return {**result, "models": [
+            {key: value for key, value in row.items() if key != "model_settings"}
+            for row in result["models"]
+        ]}
+    if not tool_name.startswith("mcp__"):
         return result
     text, blocks = result.get("text"), result.get("content")
     if not isinstance(text, str) or not text or not isinstance(blocks, list) or not blocks:
@@ -79,6 +87,10 @@ def format_reference_result(
     }
     if reference.get("truncated") is True:
         base["truncated"] = True
+    if tool_name in MODEL_CATALOG_TOOLS and isinstance(result, dict):
+        preview = {**model_projection(tool_name, result), **base}
+        if len(encoded(preview)) <= max_bytes:
+            return preview
     field = WORKSTATION_INLINE_PREVIEW_FIELDS.get(tool_name)
     if field and isinstance(result, dict) and isinstance(result.get(field), str):
         preview = {

@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 
 from . import observation_transitions
 from .diagnostics import NAMES as DIAGNOSTIC_NAMES
+from .results import model_projection
 from .store import AgentToolRejected, encoded
 
 READ_SPECS = [
@@ -113,7 +114,7 @@ def verify_read(tools, receipt, *, context, cancelled):
     else:
         matches, provenance = observation_transitions.compare(tools, receipt, prior, fresh, context=context, cancelled=cancelled)
         evidence.update(provenance)
-        evidence.update(checked_facts=fresh, coverage=("Current task-authorized roots only; no directory contents inspected." if name == "ryn_list_resource_roots" else
+        evidence.update(checked_facts=model_projection(name, fresh), coverage=("Current task-authorized roots only; no directory contents inspected." if name == "ryn_list_resource_roots" else
                         "Matching observed catalog/config/grants only in provider/recipient scope; no new inference, global absence or causal proof."))
     evidence.update(current_state_matches=matches, observation_sha256=hashlib.sha256(encoded(fresh)).hexdigest())
     return {"status": "passed" if matches else "failed", "evidence": evidence, "checked_at": stamp}

@@ -700,7 +700,10 @@ class RynTools:
                     if prior[0] != fingerprint:
                         raise AgentToolRejected("agent_operation_id_conflict")
                     return copy.deepcopy(prior[1])
-            result = bounded_result(self._read_only_result(name, arguments, cancelled))
+            snapshot = self._read_only_result(name, arguments, cancelled)
+            # Catalog verification needs the full policy snapshot. The model
+            # conversation still applies its own result budget to this output.
+            result = bounded_result(snapshot, max_bytes=(48 if name != "ryn_list_devices" else 24) * 1024)
             with self.lock:
                 prior = self.completed.get(operation_id)
                 if prior and prior[0] != fingerprint:
@@ -776,17 +779,11 @@ class RynTools:
                 self.completed.popitem(last=False)
             return copy.deepcopy(result)
 
-    def _model_observations(self):
-        # The nested Settings view repeats usage and model policy metadata.
-        # Keep the Agent observations within the tool budget as those views grow.
-        return [{key: value for key, value in row.items() if key != "model_settings"}
-                for row in self.catalog.list_models()]
-
     def _read_only_result(self, name, arguments, cancelled):
         if cancelled():
             raise AgentToolRejected("agent_cancelled")
         if name == "ryn_list_models":
-            result = {"models": self._model_observations()}
+            result = {"models": self.catalog.list_models()}
         elif name == "ryn_list_devices":
             space = self._space()
             fields = ("peer_id", "node_name", "name", "role", "removed", "status", "relationship_id")
@@ -887,7 +884,7 @@ class RynTools:
                 "evidence_note": "online=null means unknown; membership is not proof of connectivity. evidence_source=self proves only the executing process is alive; no HTTP/LAN probe is performed for self. Reachability=null means untested, not failed. HTTP failure alone does not prove offline."}
         elif name == "ryn_inspect_services":
             access = getattr(self.app.state, "ai_access", None)
-            result = {"models": self._model_observations(), "friend_grants": access.store.list() if access else [],
+            result = {"models": self.catalog.list_models(), "friend_grants": access.store.list() if access else [],
                       "friend_grants_scope": {"provider_peer_id": self.store.peer_id, "direction": "local_outgoing",
                                               "remote_provider_grants": "unknown"}}
         return result
