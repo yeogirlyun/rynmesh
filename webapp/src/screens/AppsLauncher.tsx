@@ -15,6 +15,7 @@ const isBuiltin = (app: CraftPlugin) => app.kind === "builtin_adapter";
 const canInstall = (app: CraftPlugin) => app.installable ?? app.web;
 
 type Props = {
+  embedded?: boolean;
   catalog: CraftCatalog;
   extensionOverview?: ExtensionOverview | null;
   onRefreshExtensions?: () => void;
@@ -30,7 +31,7 @@ type Props = {
 };
 
 /** The Apps page: what is installed is one click from opening, what is not is one click from installing. */
-export default function AppsLauncher({ catalog, extensionOverview, busy, filter, onFilterChange, text, onOpen, onInstall, onAgent }: Props) {
+export default function AppsLauncher({ embedded = false, catalog, extensionOverview, busy, filter, onFilterChange, text, onOpen, onInstall, onAgent }: Props) {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const [pinnedPlugins, setPinnedPlugins] = useState(pinnedPluginWorkspaces);
@@ -48,25 +49,45 @@ export default function AppsLauncher({ catalog, extensionOverview, busy, filter,
   const extensionPlugins = (extensionOverview?.plugins ?? []).filter(
     (p) => !p.builtin || (p.views?.length ?? 0) > 0,
   );
+  const craftCatalogPlugins = embedded ? catalog.plugins.filter(app => app.installed) : catalog.plugins;
+  const showFilters = !embedded || craftCatalogPlugins.length + extensionPlugins.length >= 8;
+  const selectedFilter = showFilters ? filter : "all";
   const showExtensionPlugins =
-    extensionPlugins.length > 0 && (filter === "all" || filter === "workflow");
+    extensionPlugins.length > 0 && (selectedFilter === "all" || selectedFilter === "workflow");
   const name = (app: CraftPlugin) => text(app.id);
   const warning = (app: CraftPlugin) => text(app.warning === "cjk_font_coverage" ? "cjkWarningShort" : "fontWarningShort");
   const summary = (app: CraftPlugin) => text(`descriptions.${app.id}`, { defaultValue: app.name });
   // Why an app cannot be started or installed here, shown as a label rather than replacing its description.
   const limit = (app: CraftPlugin) => (canInstall(app) ? "" : text(isBuiltin(app) ? "unavailable" : "native"));
-  const craftCatalogPlugins = catalog.plugins;
-  const visible = craftCatalogPlugins.filter((app) => filter === "all" || app.group === filter);
+  const visible = craftCatalogPlugins.filter((app) => selectedFilter === "all" || app.group === selectedFilter);
   const installed = visible.filter((app) => app.installed);
   const notInstalled = visible.filter((app) => !app.installed);
-  const count = (id: AppsFilter) => craftCatalogPlugins.filter((app) => id === "all" || app.group === id).length;
+  const count = (id: AppsFilter) => craftCatalogPlugins.filter(app => id === "all" || app.group === id).length
+    + (embedded && (id === "all" || id === "workflow") ? extensionPlugins.length : 0);
   const installedTotal = craftCatalogPlugins.filter((app) => app.installed).length;
   // Office apps have their own Agent note when this build carries it; otherwise the general one.
   const info =
     (filter === "all" || filter === "office") && i18n.exists("craft.officeAgentInfo") ? "officeAgentInfo" : "enableInfo";
   return (
     <>
-      <header className="ra-head">
+      {embedded && <style>{`
+        .apps-hub-mine section:has(> [data-embedded-launcher]) {
+          display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr)); gap: 12px;
+        }
+        .apps-hub-mine section:has(> [data-embedded-launcher]) > h2 { grid-column: 1 / -1; margin: 0; }
+        .apps-hub-mine section:has(> [data-embedded-launcher]) > .apps-hub-grid,
+        .craft-center[data-embedded-launcher], [data-embedded-launcher] .ra-section,
+        [data-embedded-launcher] .ra-grid4 { display: contents; }
+        .craft-center[data-embedded-launcher]::before { content: none; }
+        [data-embedded-launcher] > :not(.ra-section) { grid-column: 1 / -1; }
+        [data-embedded-launcher] .apps-hub-card .ra-top { align-items: center; }
+        [data-embedded-launcher] .apps-hub-card .ra-glyph { width: 34px; height: 34px; flex: none; }
+        [data-embedded-launcher] .ra-top h3 { flex: 1; }
+        [data-embedded-launcher] .ra-foot { flex-wrap: wrap; justify-content: start; padding: 0; }
+        [data-embedded-launcher] .ra-slot { min-height: 0; }
+        [data-embedded-launcher] .ra-slot:empty { display: none; }
+      `}</style>}
+      {!embedded && <header className="ra-head">
         <div>
           <h1>{text("title")}</h1>
           <p>{text("subtitle")}</p>
@@ -82,20 +103,20 @@ export default function AppsLauncher({ catalog, extensionOverview, busy, filter,
           {text("manage")}
           <ArrowUpRight size={15} aria-hidden="true" />
         </Link>
-      </header>
-      <nav className="ra-filters" aria-label={text("title")}>
+      </header>}
+      {showFilters && <nav className="ra-filters" aria-label={text("title")}>
         {(["all", ...groups] as const).map((id) => (
           <button key={id} type="button" aria-pressed={filter === id} className={filter === id ? "on" : ""} onClick={() => onFilterChange(id)}>
             {id === "all" ? t("personal.all") : text(id)}
             <em aria-hidden="true">{count(id)}</em>
           </button>
         ))}
-      </nav>
+      </nav>}
       {(installed.length > 0 || showExtensionPlugins) && (
         <section className="ra-section" aria-label={text("installed")}>
-          <h2>
+          {!embedded && <h2>
             {text("installed")} <span>({installed.length + (showExtensionPlugins ? extensionPlugins.length : 0)})</span>
-          </h2>
+          </h2>}
           <div className="ra-grid4">
             {showExtensionPlugins &&
               extensionPlugins.map((plugin) => {
@@ -107,7 +128,7 @@ export default function AppsLauncher({ catalog, extensionOverview, busy, filter,
                 return (
                   <article
                     key={`ext-${plugin.id}`}
-                    className={`ra-card ra-t-teal${plugin.enabled ? "" : " off"}`}
+                    className={`${embedded ? "apps-hub-card" : "ra-card"} ra-t-teal${plugin.enabled ? "" : " off"}`}
                     data-extension-plugin={plugin.id}
                   >
                     <div className="ra-top">
@@ -120,6 +141,7 @@ export default function AppsLauncher({ catalog, extensionOverview, busy, filter,
                       >
                         <Building2 size={22} color="#fff" />
                       </button>
+                      {embedded && <h3>{plugin.title}</h3>}
                       {!plugin.enabled && <span className="ra-chip">{text("disabled")}</span>}
                       <button type="button" className="ra-btn ghost sm" aria-pressed={pinned}
                         title={pinned ? tx("取消固定", "Unpin") : tx("固定到侧栏", "Pin to sidebar")}
@@ -128,12 +150,12 @@ export default function AppsLauncher({ catalog, extensionOverview, busy, filter,
                         {pinned ? <PinOff size={16} aria-hidden="true" /> : <Pin size={16} aria-hidden="true" />}
                       </button>
                     </div>
-                    <div>
+                    {!embedded && <div>
                       <h3>{plugin.title}</h3>
                       <p>
                         {plugin.description}
                       </p>
-                    </div>
+                    </div>}
                     <div className="ra-slot">
                       {isLoggedIn ? (
                         <span className="ra-chip ok">
@@ -179,7 +201,7 @@ export default function AppsLauncher({ catalog, extensionOverview, busy, filter,
                 );
               })}
             {installed.map((app) => (
-              <article className={`ra-card ra-t-${appTone(app.id)}${app.enabled ? "" : " off"}`} key={app.id} data-tool={app.id}>
+              <article className={`${embedded ? "apps-hub-card" : "ra-card"} ra-t-${appTone(app.id)}${app.enabled ? "" : " off"}`} key={app.id} data-tool={app.id}>
                 <div className="ra-top">
                   <button
                     type="button"
@@ -190,12 +212,13 @@ export default function AppsLauncher({ catalog, extensionOverview, busy, filter,
                   >
                     <AppIcon id={app.id} name={name(app)} />
                   </button>
+                  {embedded && <h3>{name(app)}</h3>}
                   {(limit(app) || !app.enabled) && <span className="ra-chip">{limit(app) || text("disabled")}</span>}
                 </div>
-                <div>
+                {!embedded && <div>
                   <h3>{name(app)}</h3>
                   <p>{summary(app)}</p>
-                </div>
+                </div>}
                 <div className="ra-slot">
                   {app.warning && (
                     <span className="ra-chip warn">
@@ -259,7 +282,7 @@ export default function AppsLauncher({ catalog, extensionOverview, busy, filter,
           </div>
         </section>
       )}
-      <section className="ra-info">
+      {!embedded && <section className="ra-info">
         <span className="ra-info-icon">
           <Bot size={20} aria-hidden="true" />
         </span>
@@ -271,7 +294,7 @@ export default function AppsLauncher({ catalog, extensionOverview, busy, filter,
           {text("legacy")}
           <ArrowUpRight size={14} aria-hidden="true" />
         </Link>
-      </section>
+      </section>}
     </>
   );
 }

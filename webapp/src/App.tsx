@@ -61,6 +61,7 @@ import NodeApps from "./screens/NodeApps";
 import NodeSites from "./screens/NodeSites";
 import NodeSiteWindow from "./screens/NodeSiteWindow";
 import ExtensionWebApp from "./screens/ExtensionWebApp";
+import { EmbeddedAppsHub } from "./screens/CraftApps";
 import AppsHub from "./screens/AppsHub";
 import PluginWorkspace from "./screens/PluginWorkspace";
 import { KeptPluginPages, KeptPluginPagesProvider } from "./screens/KeptPluginPages";
@@ -410,7 +411,7 @@ export function AppRoutes() {
           <Route path="agent" element={<RynAgent />} />
           <Route path="agent/extensions" element={<AgentExtensions />} />
           <Route path="agent/extensions/:section" element={<AgentExtensions />} />
-          <Route path="apps" element={<AppsHub />} />
+          <Route path="apps" element={<EmbeddedAppsHub.Provider value><AppsHub /></EmbeddedAppsHub.Provider>} />
           <Route path="apps/plugins/:pluginId" element={<PluginWorkspace />} />
           <Route path="apps/extensions/:pluginId" element={<ExtensionWebApp />} />
           <Route path="apps/workspaces" element={<NodeApps />} />
