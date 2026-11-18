@@ -69,10 +69,12 @@ def crop_safe_area(width: int, height: int) -> str | None:
         band, margins, axis = "竖条", "左侧和右侧", "宽度"
     else:
         return None
-    return (f"把整张 banner 画在画面正中一条宽高比 {ratio} 的{band}里，"
-            f"{band}{margins}是纯背景色的空白，不放任何东西；"
+    return (f"成品只保留画面正中一条宽高比 {ratio} 的{band}：商品和文字全部放在这条{band}的范围里，"
+            f"{band}{margins}只有背景，不放任何东西；"
             f"商品整体缩小到{band}{axis}的 80% 以内，"
-            "商品的完整轮廓和所有文字都留在条内。")
+            "商品的完整轮廓和所有文字都留在条内。"
+            f"背景铺满整张画面，颜色和质感连续一致；这条{band}只是构图用的范围，"
+            "不要把它画出来，不要边框、色块或分界线。")
 
 
 def fit(raw: bytes, width: int, height: int) -> bytes:

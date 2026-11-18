@@ -113,7 +113,8 @@ def test_extreme_brief_requests_a_centered_band_and_exact_output(studio, width, 
     job = submit(site, purpose="custom", width=width, height=height)[0]
     brief = compose_brief(store.job(None, job["id"]))
     assert band in brief
-    assert "纯背景色的空白，不放任何东西" in brief
+    assert "只有背景，不放任何东西" in brief
+    assert "不要把它画出来" in brief
     assert "80% 以内" in brief
     assert dims(sizes.fit(png(800, 400), width, height)) == (width, height)
 
