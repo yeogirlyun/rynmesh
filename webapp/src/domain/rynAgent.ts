@@ -195,6 +195,7 @@ export interface AgentConnectionRecovery {
   diagnostics?: { network_reason?: string; network_phase?: string; http_status?: number; retry_after_seconds?: number; reset_at?: number; upstream_request_id?: string; stream_max_retries?: number; overloaded?: boolean };
 }
 export interface AgentTaskSummary {
+  context_usage?: { request_bytes?: number; capacity_bytes?: number; bytes_per_token?: number; step?: number; context_epoch?: number };
   fork?: { source_task_id: string; source_title: string; message_count: number; shared_workspace: boolean; awaiting_instruction: boolean };
   connection_recovery?: AgentConnectionRecovery;
   conversation_revision?: number;
@@ -358,7 +359,7 @@ export interface AgentTask extends AgentTaskSummary {
   events: AgentEvent[];
   limits: Partial<AgentSettings>;
 }
-export type AgentAction = "pause" | "resume" | "stop" | "cancel" | "approve" | "deny";
+export type AgentAction = "pause" | "resume" | "stop" | "cancel" | "approve" | "deny" | "compact";
 
 export class AgentAPIError extends Error {
   constructor(
@@ -560,6 +561,8 @@ export const rynAgent = {
     ...(action === "approve" && remember ? { remember } : {}),
     ...((action === "approve" || action === "deny") && task.pending_approval ? { approval_id: task.pending_approval.id } : {}),
   }),
+  compact: (task: AgentTask) => request<AgentTask>(`/tasks/${encodeURIComponent(task.id)}/compact`, "POST", task.allowed_actions
+    ? agentActionBody(task, "compact") : { action: "compact", expected_revision: task.revision }),
   answer: (task: AgentTask, answers: Record<string, string>, client_request_id: string) => request<AgentTask>(`/tasks/${encodeURIComponent(task.id)}/actions`, "POST", {
     action: "answer", pending_input_id: task.pending_input?.id, expected_goal_revision: task.pending_input?.goal_revision,
     expected_control_revision: task.control_revision, answers, client_request_id,

@@ -448,6 +448,10 @@ def install_agent(app: Any, *, store: Any, home: str | Path, workers: Any,
     async def action(task_id: str, request: Request):
         return await call("action", task_id, await body(request))
 
+    @app.post("/api/local/agent/tasks/{task_id}/compact")
+    async def compact(task_id: str, request: Request):
+        return await call("action", task_id, {**await body(request), "action": "compact"})
+
     @app.get("/api/local/agent/tasks/{task_id}/queue")
     async def get_queued(task_id: str, request: Request):
         local_control(request)

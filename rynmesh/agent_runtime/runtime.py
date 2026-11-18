@@ -56,6 +56,7 @@ from .control import (
     ambiguous,
     check_version,
     close_queue,
+    has_compactable_history,
     reconciliation_active,
     recoverable_read_in_flight,
     remember_request,
@@ -169,6 +170,10 @@ def public_task(row: dict, *, summary: bool = False, settings: dict | None = Non
     result.setdefault("queued_messages_paused_reason", None)
     result["skills"] = [{key: value for key, value in skill.items() if key != "content"} for skill in row.get("skills", [])]
     result["budget"] = budget.public(row)
+    if isinstance(row.get("context_usage"), dict):
+        result["context_usage"] = {key: value for key, value in row["context_usage"].items()
+                                   if key in {"request_bytes", "capacity_bytes", "bytes_per_token", "step", "context_epoch"}
+                                   and type(value) in (int, float) and math.isfinite(value)}
     result["run_timing"] = timing.snapshot(row, active_run=active_run, monotonic_now=monotonic_now)
     if "_subagents_projection" in row:
         result["subagents"] = copy.deepcopy(row["_subagents_projection"])
@@ -201,6 +206,8 @@ def detached(row: dict, *, summary: bool = False, data: dict | None = None) -> d
     # still omit both events and messages from the public deep copy.
     shallow = {key: value for key, value in row.items()
                if not (summary and "budget" in row and key == "messages")}
+    if summary:
+        shallow["_has_compactable_history"] = has_compactable_history(row)
     if "outcome" in shallow:
         shallow["outcome"] = copy.deepcopy(shallow["outcome"])
     if data is not None and row.get("subagent_ids"):
@@ -3813,6 +3820,15 @@ class AgentRuntime(AgentLoop):
                 settle(row, event, data=data)
                 subagents.on_subagent_settled_in_tx(data, row)
                 subagents.cascade_stop_subagents_in_tx(data, row, reason="owner_pause", close=False)
+            elif action == "compact":
+                if not allowed_actions(row, data["settings"])["compact"]["enabled"]:
+                    raise AgentError("agent_invalid_transition")
+                row["manual_compaction"] = {"return_status": row["status"]}
+                row.update(status="queued", error=None)
+                row["control_revision"] += 1
+                if row.get("pending_input"):
+                    row["pending_input"]["control_revision"] = row["control_revision"]
+                event(row, "manual_compaction_requested")
             elif action == "set_permission":
                 if not allowed_actions(row, data["settings"])["set_permission"]["enabled"]:
                     raise AgentError("agent_invalid_transition")
@@ -5151,7 +5167,7 @@ class AgentRuntime(AgentLoop):
                     "pending_control": bool(row.get("pending_control")),
                     "kind": (row.get("in_flight") or {}).get("kind")}
                     for key, row in data["tasks"].items()},
-                "queued": any(row["status"] == "queued" and retry_policy.ready(row) and subagents.wait_ready(data, row) for row in data["tasks"].values()),
+                "queued": any(row["status"] == "queued" and retry_policy.ready(row) and (row.get("manual_compaction") or subagents.wait_ready(data, row)) for row in data["tasks"].values()),
                 "waiting": any(row["status"] == "waiting_approval" and row.get("queue") for row in data["tasks"].values()),
                 "unresolved": next((row["id"] for row in data["tasks"].values()
                                     if ambiguous(row) and row.get("reconciliation", {}).get("state") == "pending"), None)})
@@ -5163,7 +5179,7 @@ class AgentRuntime(AgentLoop):
                 if peek["waiting"]:
                     self._refresh_waiting_reads(self._waiting_policy_snapshot())
                     # A released dialog is claimable in this same tick.
-                    peek["queued"] = self.store.inspect(lambda data: any(row["status"] == "queued" and retry_policy.ready(row) and subagents.wait_ready(data, row) for row in data["tasks"].values()))
+                    peek["queued"] = self.store.inspect(lambda data: any(row["status"] == "queued" and retry_policy.ready(row) and (row.get("manual_compaction") or subagents.wait_ready(data, row)) for row in data["tasks"].values()))
                 unresolved = task(self.store.read(), peek["unresolved"]) if peek["unresolved"] else None
                 if unresolved:
                     self._run_lock.release()
@@ -5179,13 +5195,17 @@ class AgentRuntime(AgentLoop):
                         if row["status"] == "queued":
                             row["status"] = "paused"
                         continue
-                    if row["status"] != "queued" or not retry_policy.ready(row) or not subagents.wait_ready(data, row):
+                    if row["status"] != "queued" or not retry_policy.ready(row) or (not row.get("manual_compaction") and not subagents.wait_ready(data, row)):
                         continue
                     if row.get("subagent_wait") and (not row["queue"] or row["queue"][0]["call_id"] != row["subagent_wait"]["call_id"]):
                         row.pop("subagent_wait")
                     retry_policy.charge_wait(row)
                     if budget.time_remaining(row) <= 0:
-                        budget.stop_for_limit(row, "agent_time_budget_exhausted")
+                        if row.get("manual_compaction"):
+                            row["status"] = row.pop("manual_compaction")["return_status"]
+                            event(row, "context_compaction_rejected", source="manual", error="agent_time_budget_exhausted")
+                        else:
+                            budget.stop_for_limit(row, "agent_time_budget_exhausted")
                         subagents.on_subagent_settled_in_tx(data, row)
                         continue
                     if row.get("model_retry_count", 0) and row.get("model_retry_authority") != model_retry_authority(data["settings"]):
@@ -5204,6 +5224,10 @@ class AgentRuntime(AgentLoop):
                         boundary = budget.segment_boundary(row)
                     if boundary:
                         code = "agent_time_limit" if boundary == "max_seconds" else "agent_step_limit"
+                        if row.get("manual_compaction"):
+                            row["status"] = row.pop("manual_compaction")["return_status"]
+                            event(row, "context_compaction_rejected", source="manual", error=code)
+                            continue
                         if row.get("verification"):
                             verification.finish(row, error=code)
                             event(row, "verification_finished", outcome=row["outcome"]["status"], error=code)
@@ -5214,7 +5238,7 @@ class AgentRuntime(AgentLoop):
                         subagents.on_subagent_settled_in_tx(data, row)
                         continue
                     row["status"] = "running"
-                    row["in_flight"] = {"kind": "verification" if row.get("verification") else "tool" if row["queue"] else "model", "dispatched": False,
+                    row["in_flight"] = {"kind": "model" if row.get("manual_compaction") else "verification" if row.get("verification") else "tool" if row["queue"] else "model", "dispatched": False,
                                         "goal_revision": row["goal"]["revision"], "control_revision": row["control_revision"], "scope_revision": row["scope_revision"]}
                     queued_at = self._queued_since.pop(row["id"], None)
                     scheduler_wait_seconds = max(0.0, claim_started - queued_at) if queued_at is not None else 0.0
@@ -5272,7 +5296,9 @@ class AgentRuntime(AgentLoop):
                 cancelled.reason = reason
                 return reason is not None
 
-            if selected.get("verification"):
+            if selected.get("manual_compaction"):
+                self._model(selected, cancelled, started)
+            elif selected.get("verification"):
                 self._verify(selected, cancelled, started)
             elif selected["queue"]:
                 self._tool(selected, cancelled, started)

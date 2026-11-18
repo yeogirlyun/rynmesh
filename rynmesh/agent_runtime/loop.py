@@ -258,6 +258,9 @@ class AgentLoop:
         claim_persistence_seconds = float(selected.get("_claim_persistence_seconds", 0.0))
         prep_persistence_seconds = 0.0
         with diagnostic_log.context_scope(step=int(selected.get("steps", 0)) + 1, request_id=request_id):
+            if selected.get("manual_compaction"):
+                self._manual_compaction_turn(selected, cancelled, started)
+                return
             t0 = time.monotonic()
             self._reserve_output(selected)
             prep_persistence_seconds += max(0.0, time.monotonic() - t0)
@@ -1702,6 +1705,38 @@ class AgentLoop:
                 return ""
         return ""
 
+    def _manual_compaction_turn(self, selected: dict, cancelled, started: float) -> None:
+        error = None
+        try:
+            self._reserve_output(selected)
+            limit = self._context_limit(selected)
+            pressure = self._compaction_pressure(selected, limit,
+                self._request_context_bytes(selected), self._specs(selected))
+            self._compact({**selected, "_compaction_pressure": {**pressure, "compact": True, "reason": "manual"}}, cancelled, started)
+        except Exception as exc:
+            error = str(exc) if isinstance(exc, AgentError) else "agent_compaction_failed"
+        finally:
+            def finish(data):
+                row = task(data, selected["id"])
+                manual = row.pop("manual_compaction", None)
+                if manual is None:
+                    return
+                # A later owner stop/cancel takes precedence over the saved state.
+                if row["status"] == "running" and row["control_revision"] == selected["_run_control_revision"]:
+                    row.update(status=manual["return_status"], in_flight=None)
+                    row["elapsed_seconds"] += time.monotonic() - started
+                    if error and not any(item["type"] == "context_compaction_rejected" and item.get("error") == error
+                                         for item in row["events"][len(selected["events"]):]):
+                        event(row, "context_compaction_rejected", source="manual", error=error)
+                    event(row, "manual_compaction_finished", source="manual")
+                else:
+                    if (row.get("in_flight") or {}).get("stage") == "compaction":
+                        row["in_flight"] = None
+                        row["elapsed_seconds"] += time.monotonic() - started
+                    from .control import settle
+                    settle(row, event, data=data)
+            self.store.transaction(finish)
+
     def _compact(self, selected: dict, cancelled, started: float) -> bool:
         """Summarize a closed prefix; never split tool calls from their results.
 
@@ -1889,6 +1924,10 @@ class AgentLoop:
         for key in ("request_bytes", "step_bytes", "bytes_per_token"):
             if pressure and key in pressure:
                 metrics[key] = pressure[key]
+        if "request_bytes" not in metrics:
+            metrics["request_bytes"] = self._request_context_bytes(selected, specs=active_specs)
+        if (pressure or {}).get("reason") == "manual":
+            metrics["source"] = "manual"
         if plan:
             metrics["fixed_bytes"] = plan["fixed_bytes"]
 
@@ -1956,7 +1995,8 @@ class AgentLoop:
             **({"references_dropped": dropped_total} if dropped_total > 0 else {}),
         }
         projected = {**selected, "context_checkpoint": checkpoint}
-        if self._request_context_bytes(projected, specs=active_specs) > capacity:
+        after_bytes = self._request_context_bytes(projected, specs=active_specs)
+        if after_bytes > capacity:
             raise AgentError("agent_context_limit")
 
         def save(data):
@@ -1972,13 +2012,20 @@ class AgentLoop:
             row["context_checkpoint"] = checkpoint
             results.prune(self.store, row)
             row["context_notice_level"] = 0
-            row.pop("context_usage", None)
+            if metrics.get("source") == "manual":
+                row["context_usage"] = {"request_bytes": after_bytes, "capacity_bytes": capacity,
+                                        "bytes_per_token": metrics.get("bytes_per_token", 4),
+                                        "step": row["steps"], "context_epoch": row.get("context_epoch", 0)}
+            else:
+                row.pop("context_usage", None)
             row["model_retry_count"] = 0
             row.pop("model_retry_authority", None)
             # The summary is settled; the pending main request has not been
             # sent yet, so it must not be recorded or recovered as compaction.
             row["in_flight"] = self._main_flight(selected.get("in_flight")) or row.get("in_flight")
-            event(row, "context_compacted", through=cut, source_sha256=checkpoint["source_sha256"])
+            event(row, "context_compacted", through=cut, source_sha256=checkpoint["source_sha256"],
+                  request_bytes_before=metrics["request_bytes"], after_bytes=after_bytes,
+                  **({"source": "manual"} if metrics.get("source") == "manual" else {}))
             event_compaction.compact_in_turn(row)
             return True
         return self.store.transaction(save)

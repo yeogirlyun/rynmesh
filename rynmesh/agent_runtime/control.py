@@ -134,6 +134,16 @@ def owner_removable(row, current=None):
             and status in {"completed", "failed", "cancelled", "paused", "interrupted"})
 
 
+def has_compactable_history(row):
+    if "_has_compactable_history" in row:
+        return row["_has_compactable_history"]
+    from .loop import AgentLoop, _is_owner_user_message
+    messages = row.get("messages", [])
+    through = int((row.get("context_checkpoint") or {}).get("through", 0))
+    return any(any(not _is_owner_user_message(message) for message in messages[through:cut])
+               for cut in AgentLoop._closed_boundaries(messages, through))
+
+
 def allowed_actions(row, settings):
     status, flight = row["status"], row.get("in_flight")
     enabled = settings.get("enabled", False)
@@ -159,6 +169,9 @@ def allowed_actions(row, settings):
     removable = owner_removable(row)
     possible.update(rename=True, archive=removable and not row.get("archived"), restore=bool(row.get("archived")), delete=removable)
     possible["budget"] = safe_lifecycle and status in {"paused", "completed", "failed"}
+    possible["compact"] = (enabled and status in {"paused", "completed", "waiting_input"}
+                           and not flight and not uncertain and not row.get("pending_control")
+                           and has_compactable_history(row))
     possible["set_permission"] = (not flight and not uncertain and not row.get("pending_control")
                                   and status in {"paused", "waiting_input", "waiting_approval", "completed", "failed", "cancelled", "interrupted"})
     possible["source_credential"] = enabled and not flight and not uncertain and status in {"queued", "waiting_input", "paused", "completed", "failed"}
