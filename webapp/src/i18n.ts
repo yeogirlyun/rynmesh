@@ -11,6 +11,8 @@ import dropEn from "./locales/drop.en.json";
 import dropZh from "./locales/drop.zh-CN.json";
 import craftEn from "./locales/craft.en.json";
 import craftZh from "./locales/craft.zh-CN.json";
+import appsEn from "./locales/apps.en.json";
+import appsZh from "./locales/apps.zh-CN.json";
 import sitesEn from "./locales/sites.en.json";
 import sitesZh from "./locales/sites.zh-CN.json";
 
@@ -136,7 +138,7 @@ const zh = {
 };
 
 void i18n.use(initReactI18next).init({
-  resources: { en: { translation: en, ui: uiEn }, "zh-CN": { translation: zh, ui: uiZh } },
+  resources: { en: { translation: en, ui: uiEn, apps: appsEn }, "zh-CN": { translation: zh, ui: uiZh, apps: appsZh } },
   lng: resolveLanguage(readLanguagePreference()),
   fallbackLng: "en",
   supportedLngs: ["en", "zh-CN"],
