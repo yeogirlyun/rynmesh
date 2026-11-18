@@ -764,13 +764,13 @@ export default function RynAgent() {
       await rynAgent.task(task.id).then(acceptTask).catch(() => undefined);
     } finally { mutationRef.current = false; setBusy(false); }
   };
-  const action = async (kind: AgentAction, remember?: "task" | "always") => {
+  const action = async (kind: AgentAction, remember?: "task" | "always" | "prefix") => {
     if (!task || mutationRef.current || (controlUncertain && !["pause", "stop", "cancel"].includes(kind)) || !canUseAgentAction(task, kind, true) || (resourceErrors.settings && !task.allowed_actions && !["pause", "stop", "cancel", "deny"].includes(kind))) return;
     if (kind === "compact" && !window.confirm(i18n.language.startsWith("zh") ? "压缩会向当前模型发送一次付费请求，生成历史摘要。继续？" : "Compacting sends one paid model request to summarize this history. Continue?")) return;
     mutationRef.current = true; setBusy(true); setError("");
     try {
       acceptTask(task.allowed_actions && !controlUncertain ? await submitControl({ task_id: task.id, route: "actions", body: agentActionBody(task, kind, remember) }) : await rynAgent.action(task, kind, remember));
-      if (kind === "approve" && remember === "always") setSettings(await rynAgent.settings());
+      if (kind === "approve" && (remember === "always" || remember === "prefix")) setSettings(await rynAgent.settings());
     }
     catch (reason) {
       setError(mutationErrorKey(reason));
@@ -1378,7 +1378,7 @@ function record(value: unknown): Record<string, unknown> {
 
 function ApprovalCard({ approval, controlled, enabled, canDeny, busy, waiting, onAction }: {
   approval: AgentApproval; controlled: boolean; enabled: boolean; canDeny: boolean; busy: boolean; waiting: boolean;
-  onAction: (action: AgentAction, remember?: "task" | "always") => Promise<void>;
+  onAction: (action: AgentAction, remember?: "task" | "always" | "prefix") => Promise<void>;
 }) {
   const { t, i18n } = useTranslation("rynAgent");
   const preview = record(approval.preview);
@@ -1394,6 +1394,7 @@ function ApprovalCard({ approval, controlled, enabled, canDeny, busy, waiting, o
   const localFile = approval.tool.startsWith("ryn_file_") && typeof preview.path === "string";
   const shell = approval.tool === "ryn_shell_execute";
   const shellArgs = approval.arguments;
+  const prefixRule = Array.isArray(approval.remember_prefix_candidate) ? undefined : approval.remember_prefix_candidate;
   const dangerLabels = {
     forced_rm: tr("Forced removal"), force_delete: tr("Forced deletion"),
     open_url: tr("Opens an external URL"), wrapper_depth: tr("Command nesting exceeds inspection depth"),
@@ -1488,6 +1489,7 @@ function ApprovalCard({ approval, controlled, enabled, canDeny, busy, waiting, o
     <div className="ra-approval-actions">
       <button disabled={busy || !canDeny || !waiting} onClick={() => void onAction("deny")}><X size={15} />{t("deny")}</button>
       <button className="ra-primary" disabled={busy || !enabled || !waiting} onClick={() => void onAction("approve")}><Check size={15} />{t("approve")}</button>
+      {shell && prefixRule ? <button disabled={busy || !enabled || !waiting} onClick={() => void onAction("approve", "prefix")}>{i18n.language.startsWith("zh") ? "以后此类命令都允许：" : "Allow similar commands in future: "}{prefixRule.prefix.join(" ")}{prefixRule.options.length ? ` (${i18n.language.startsWith("zh") ? "选项" : "options"}: ${prefixRule.options.join(" ")})` : ""}</button> : null}
       <button disabled={busy || !enabled || !waiting} onClick={() => void onAction("approve", "always")}>{i18n.language.startsWith("zh") ? "永久允许" : "Always allow"}</button>
     </div>
   </section>;
@@ -1501,6 +1503,8 @@ function AgentSettingsDialog({ settings, projects, currentProject, busy, onClose
   const [desktopAccess, setDesktopAccess] = useState(settings.desktop_access || false);
   const [allowed, setAllowed] = useState(settings.allowed_write_tools || []);
   const [denied, setDenied] = useState(settings.denied_tools || []);
+  const [prefixes, setPrefixes] = useState(settings.shell_allow_prefixes || []);
+  const prefixChange = JSON.stringify(prefixes) === JSON.stringify(settings.shell_allow_prefixes || []) ? {} : { shell_allow_prefixes: prefixes };
   const ruleLabel = (rule: string) => rule.startsWith("mcp:") ? (JSON.parse(rule.slice(4)) as string[]).join(" / ") : rule;
   const rulesChange = JSON.stringify([allowed, denied]) === JSON.stringify([settings.allowed_write_tools || [], settings.denied_tools || []])
     ? {} : { allowed_write_tools: allowed, denied_tools: denied };
@@ -1534,7 +1538,13 @@ function AgentSettingsDialog({ settings, projects, currentProject, busy, onClose
       {group.rules.map(rule => <div className="ra-setting" key={rule}><span>{ruleLabel(rule)}</span>
         <button disabled={busy} aria-label={`${zh ? "移除" : "Remove"} ${ruleLabel(rule)}`} onClick={() => group.update(group.rules.filter(item => item !== rule))}>{zh ? "移除" : "Remove"}</button></div>)}
     </section>)}
-    <div className="ra-settings-save"><button className="ra-primary" disabled={busy || !contextValid} onClick={() => void onSave({ enabled, workspace_root: workspace.trim(), desktop_access: desktopAccess, ...contextChange, ...rulesChange })}>{t(busy ? "saving" : "save")}</button></div></section></div>;
+    <section aria-label={zh ? "已允许的命令前缀" : "Allowed command prefixes"}>
+      <h4>{zh ? "已允许的命令前缀" : "Allowed command prefixes"}</h4>
+      {prefixes.length === 0 && <p>{zh ? "暂无" : "None"}</p>}
+      {prefixes.map((rule, index) => <div className="ra-setting" key={JSON.stringify(rule.prefix)}><code>{rule.prefix.join(" ")}</code><small>{zh ? "选项" : "Options"}: {rule.options.length ? rule.options.join(" ") : zh ? "无" : "None"}</small>
+        <button disabled={busy} aria-label={`${zh ? "移除前缀" : "Remove prefix"} ${rule.prefix.join(" ")}`} onClick={() => setPrefixes(prefixes.filter((_, item) => item !== index))}>{zh ? "移除" : "Remove"}</button></div>)}
+    </section>
+    <div className="ra-settings-save"><button className="ra-primary" disabled={busy || !contextValid} onClick={() => void onSave({ enabled, workspace_root: workspace.trim(), desktop_access: desktopAccess, ...contextChange, ...rulesChange, ...prefixChange })}>{t(busy ? "saving" : "save")}</button></div></section></div>;
 }
 
 function WorkspaceSetup({initial, busy, onBind}: {initial: string; busy: boolean; onBind: (path: string) => Promise<void>}) {

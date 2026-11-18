@@ -2265,9 +2265,10 @@ class AgentLoop:
                     raise AgentError("agent_preview_limit")
 
             authorized_classification = None
+            prefix_notice = None
 
             def authorize(data):
-                nonlocal authorized_classification
+                nonlocal authorized_classification, prefix_notice
                 row = task(data, selected["id"])
                 authorization = "read"
                 grant_proof = None
@@ -2386,7 +2387,13 @@ class AgentLoop:
                             raise _unattended_approval_rejection(decision.basis)
                         approval = {"id": "approval_" + uuid.uuid4().hex, "tool": call["name"], "arguments": sanitized(call["arguments"]),
                                     "call_id": call["call_id"], "arguments_sha256": digest(call["arguments"]), "preview": preview,
-                                    "preview_sha256": digest(bound_preview(preview)), "title": str(meta.get("title", call["name"]))}
+                                    "preview_sha256": digest(bound_preview(preview)), "title": str(meta.get("title", call["name"])),
+                                    "approval_basis": decision.basis}
+                        if call["name"] == "ryn_shell_execute" and decision.basis == "confirm_changes":
+                            from .execution_policy import shell_prefix_candidate
+                            candidate = shell_prefix_candidate(call["arguments"])
+                            if candidate:
+                                approval["remember_prefix_candidate"] = candidate
                         if decision.basis == "dangerous_command":
                             from .dangerous_commands import dangerous_shell
                             approval.update(reason="dangerous_command", dangerous_reason=dangerous_shell(call["arguments"]))
@@ -2408,6 +2415,17 @@ class AgentLoop:
                         event(row, "task_grant_authorized", tool=call["name"], **grant_proof)
                     authorization = "approved" if approved else decision.basis
                 usage_reservation = budget.reserve(row, "tool", call["name"])
+                matched_prefix = None
+                if authorization == "prefix_allow":
+                    from .execution_policy import matching_shell_prefix
+                    matched_rule = matching_shell_prefix(call["arguments"], data["settings"])
+                    matched_prefix = matched_rule["prefix"]
+                    pending_notices = data.get("pending_shell_prefix_notices", [])
+                    if matched_prefix in pending_notices:
+                        pending_notices.remove(matched_prefix)
+                        prefix_notice = "已按您允许的命令前缀放行：" + " ".join(matched_prefix)
+                        if matched_rule["options"]:
+                            prefix_notice += "（选项：" + " ".join(matched_rule["options"]) + "）"
                 authorized_classification = classification
                 row["in_flight"] = {**call, "kind": "tool", "dispatched": True, "authorization": authorization,
                                     "workstation_permission_tool": meta.get("workstation_permission_tool"),
@@ -2421,6 +2439,7 @@ class AgentLoop:
                     "scope_revision": row["scope_revision"], "context_epoch": row.get("context_epoch", 0),
                     "control_revision": row["control_revision"],
                     **({"approval_id": approved["id"]} if authorization == "approved" else {}),
+                    **({"shell_prefix": matched_prefix, "shell_prefix_options": matched_rule["options"]} if matched_prefix else {}),
                     **(grant_proof or {})}
                 verification.record(row, call, "intent", now(), flight=row["in_flight"])
                 row["approved"] = None  # One-shot capability, consumed durably before execution.
@@ -2458,6 +2477,8 @@ class AgentLoop:
             preparation_seconds = max(0.0, (exec_started - preparation_started) - prep_persistence_seconds)
             try:
                 result = sanitized_tool_result(self._execute_business_tool(selected, call["name"], copy.deepcopy(call["arguments"]), **execute_options))
+                if prefix_notice:
+                    result["permission_notice"] = prefix_notice
                 if call.get("intercepted_from"):
                     result["intercepted_from"] = call["intercepted_from"]
                 tool_execution_seconds = max(0.0, time.monotonic() - exec_started)

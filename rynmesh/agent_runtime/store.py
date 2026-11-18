@@ -39,6 +39,7 @@ _BLOB_NAME = re.compile(r"[a-f0-9]{24}\.json")
 MAX_BYTES = sys.maxsize
 DEFAULT_SETTINGS = {
     "enabled": False, "model_id": "", "permission_mode": "workspace", "allowed_write_tools": [], "denied_tools": [],
+    "shell_allow_prefixes": [],
     "workspace_root": "", "desktop_access": False, "verify_text_responses": False,
     "web_search_mode": "", "web_allowed_domains": [],
     "interrupt_message_enabled": True,
