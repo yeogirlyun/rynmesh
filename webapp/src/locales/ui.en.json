@@ -30,7 +30,7 @@
   "Proxy URL": "Proxy URL",
   "http:// or https:// CONNECT proxy": "http:// or https:// CONNECT proxy",
   "Save proxy": "Save proxy",
-  "有 {{count}} 个进行中的问答稍后再清": "Cleanup deferred for {{count}} active conversations.",
+  "有 {{count}} 个进行中的问答稍后再清": "Cleanup deferred for active conversations ({{count}}).",
   "Command": "Command",
   "Working directory": "Working directory",
   "Shell": "Shell",

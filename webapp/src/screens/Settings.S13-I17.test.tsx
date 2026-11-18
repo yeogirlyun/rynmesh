@@ -1,13 +1,15 @@
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { makeFixtureNodeClient } from "../domain/fixtureNodeClient";
+import i18n from "../i18n";
 import { PrivacySection } from "./Settings";
 import { conversationCleanup } from "../domain/conversationCleanup";
 import ConversationCleanupPanel from "./components/ConversationCleanupPanel";
 
 const { confirm } = vi.hoisted(() => ({ confirm: vi.fn() }));
 vi.mock("../appContext", () => ({ useAppContext: () => ({ confirm }) }));
+beforeEach(async () => { await i18n.changeLanguage("zh-CN"); });
 afterEach(() => { vi.restoreAllMocks(); confirm.mockReset(); });
 
 it("T1 confirms each Agent scope and preserves credential/plugin disclosure", async () => {
@@ -34,4 +36,6 @@ it("T2 displays active answers skipped by real cleanup response", async () => {
   render(<ConversationCleanupPanel />);
   expect(await screen.findByText("有 1 个进行中的问答稍后再清")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /Continue cleanup/ })).toBeInTheDocument();
+  await act(() => i18n.changeLanguage("en"));
+  expect(screen.getByText("Cleanup deferred for active conversations (1).")).toBeInTheDocument();
 });
