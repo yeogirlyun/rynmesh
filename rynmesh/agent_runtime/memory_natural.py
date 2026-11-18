@@ -244,7 +244,7 @@ def build_navigation_and_summary(
             str(entry.get("id") or ""),
         ),
     )
-    profile_budget = min(512, max_bytes // 3)
+    profile_budget = max_bytes // 4
     index_budget = max_bytes - profile_budget
     navigation_index: list[dict[str, Any]] = []
     indexed_entries: list[dict[str, Any]] = []

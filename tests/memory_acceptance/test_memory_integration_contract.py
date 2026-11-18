@@ -240,7 +240,8 @@ def test_ordinary_task_memory_reaches_actual_bound_low_priority_request(integrat
     request = front_requests(env)[-1]
     assert request["options"].get("expected_destination") == env.catalog.destination(env.catalog.row)
     blocks = [message for message in request["messages"] if MARKER in packed(message)]
-    assert blocks and all(message["role"] == "assistant" for message in blocks)
+    assert blocks and all(message["role"] == "user" for message in blocks)
+    assert all(message["content"].startswith("<memory_context>") for message in blocks)
     assert "lower priority" in packed(blocks)
     assert len(store_module.encoded(request["messages"])) + len(store_module.encoded(request["tool_specs"])) <= 12000
     assert MARKER not in packed(done["messages"]), "Context injection cannot fabricate a saved owner/user turn"

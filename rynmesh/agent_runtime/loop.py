@@ -1446,39 +1446,41 @@ class AgentLoop:
         # Optional memory must fit the same effective capacity as dispatch.
         context_limit = self._effective_capacity(row)[0]
         active_specs = self._specs({**row, "_exclude_optional_memory": True})
-        candidate = build(memory_msgs)
-        if self._request_context_bytes(row, candidate, active_specs) <= context_limit:
-            return tag(candidate, has_memory=True)
+        baseline = build([])
+        remaining = context_limit - self._request_context_bytes(row, baseline, active_specs)
+        # Inserting a list into an existing nonempty messages array drops its
+        # two brackets and adds one comma. Avoid losing a fitting prefix by a byte.
+        def memory_bytes(msgs):
+            return len(encoded(msgs)) - 1 if msgs else 0
+
         selected_items = list((memory_selection or {}).get("selected") or [])
-        if (memory_selection or {}).get("navigation_index") or (memory_selection or {}).get("profile_summary"):
-            no_nav_selection = {
-                **(memory_selection or {}),
-                "include_navigation": False,
-                "navigation_index": [],
-                "profile_summary": "",
-            }
-            no_nav_msgs = memory_runtime.format_memory_context_messages(no_nav_selection)
-            if no_nav_msgs:
-                candidate = build(no_nav_msgs)
-                if self._request_context_bytes(row, candidate, active_specs) <= context_limit:
-                    return tag(candidate, has_memory=True)
-        while len(selected_items) > 1:
-            selected_items.pop()
-            trimmed_msgs = memory_runtime.format_memory_context_messages(
-                {
-                    **(memory_selection or {}),
-                    "selected": selected_items,
-                    "include_navigation": False,
-                    "navigation_index": [],
-                    "profile_summary": "",
-                }
-            )
-            if not trimmed_msgs:
-                break
-            candidate = build(trimmed_msgs)
+        no_nav = {**(memory_selection or {}), "include_navigation": False, "navigation_index": [], "profile_summary": []}
+        kept = len(selected_items)
+        if memory_bytes(memory_msgs) > remaining:
+            # Search only rendered memory prefixes; never rebuild the history
+            # for each entry that has to be removed.
+            low, high, kept, memory_msgs = 0, len(selected_items), 0, []
+            while low <= high:
+                count = (low + high) // 2
+                trial = memory_runtime.format_memory_context_messages({**no_nav, "selected": selected_items[:count]})
+                if memory_bytes(trial) <= remaining:
+                    kept, memory_msgs = count, trial
+                    low = count + 1
+                else:
+                    high = count - 1
+        if memory_msgs:
+            candidate = build(memory_msgs)
             if self._request_context_bytes(row, candidate, active_specs) <= context_limit:
                 return tag(candidate, has_memory=True)
-        return tag(build([]), has_memory=False)
+            # Provider projections may cost more than the cheap estimate. One
+            # halved retry is enough; remaining capacity is checked again.
+            kept //= 2
+            retry = memory_runtime.format_memory_context_messages({**no_nav, "selected": selected_items[:kept]})
+            if retry:
+                candidate = build(retry)
+                if self._request_context_bytes(row, candidate, active_specs) <= context_limit:
+                    return tag(candidate, has_memory=True)
+        return tag(baseline, has_memory=False)
 
     @staticmethod
     def _main_flight(flight) -> dict | None:
