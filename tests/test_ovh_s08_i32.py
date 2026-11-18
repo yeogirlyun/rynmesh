@@ -68,7 +68,8 @@ def test_plugin_context_note_and_unavailable_sanitize_markdown_and_newlines(tmp_
     assert "###" not in note
     assert "##" not in note
     assert "```" not in note
-    assert "Skills: wecom skill (Send chat Inject heading sh rm -rf /)" in plugin_line
+    assert "Skills: wecom skill." in plugin_line
+    assert "Inject heading" not in plugin_line
 
     # Description body before unavailable suffix is capped at PLUGIN_INDEX_LINE_CHARS
     for row_line in lines[1:]:
