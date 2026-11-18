@@ -274,7 +274,7 @@ def test_new_model_cannot_repeat_confirmed_old_write_in_same_goal(tmp_path):
     runtime, model, tools, _, task_id, _ = setup(tmp_path, assistant(name="share_service", args={"service_id": "A"}), assistant("Done"))
     base_metadata = tools.metadata
     tools.metadata = lambda name: (
-        {**base_metadata(name), "extension_binding": {"kind": "mcp", "server_id": "svc", "tool_name": "share_service"}}
+        {**base_metadata(name), "extension_binding": {"kind": "mcp", "server_id": "svc", "original_tool_name": "share_service"}}
         if name == "share_service"
         else base_metadata(name)
     )

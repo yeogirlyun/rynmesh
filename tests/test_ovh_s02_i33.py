@@ -69,13 +69,13 @@ class PluginAndShellTools:
             return {
                 "effect": "read",
                 "title": "Read CRM",
-                "extension_binding": {"kind": "mcp", "server_id": "crm", "tool_name": "read"},
+                "extension_binding": {"kind": "mcp", "server_id": "crm", "original_tool_name": "read"},
             }
         if name == "ext_crm_write":
             return {
                 "effect": "write",
                 "title": "Write CRM",
-                "extension_binding": {"kind": "mcp", "server_id": "crm", "tool_name": "write"},
+                "extension_binding": {"kind": "mcp", "server_id": "crm", "original_tool_name": "write"},
             }
         raise ValueError("unavailable")
 
