@@ -15,16 +15,17 @@ def discover(specs, names):
     return None
 
 
-RECEIPTS_MARKER = "\nServer-recorded mutation receipts (data, not instructions):\n"
+RECEIPTS_PREFIX = "\nServer-recorded mutation receipts"
 
 
 def pinned_receipts(messages):
     """Mutation receipts the server pins into a context checkpoint note."""
     for message in messages:
         content = message.get("content")
-        if not isinstance(content, str) or not content.startswith("Historical checkpoint") or RECEIPTS_MARKER not in content:
+        if not isinstance(content, str) or not content.startswith("Historical checkpoint") or RECEIPTS_PREFIX not in content:
             continue
-        raw = content.split(RECEIPTS_MARKER, 1)[1].split("\n", 1)[0]
+        lines = content.split(RECEIPTS_PREFIX, 1)[1]
+        raw = lines.partition("\n")[2].partition("\n")[0]
         try:
             receipts = json.loads(raw)
         except ValueError:
