@@ -23,6 +23,7 @@ MAX_ACTIVE_PER_CALLER = 20
 MAX_BRIEF = 2000
 MAX_WORDS = 200
 MAX_REFERENCES = 5
+MAX_DERIVED_SIZES = 6
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024
 UPLOAD_TTL_S = 24 * 3600
 RETENTION_S = 90 * 24 * 3600
@@ -38,7 +39,8 @@ CREATE TABLE IF NOT EXISTS jobs (
   brief TEXT NOT NULL, words TEXT NOT NULL, refs TEXT NOT NULL, source_job TEXT,
   state TEXT NOT NULL, failure TEXT, failure_detail TEXT, priority INTEGER NOT NULL DEFAULT 0, attempt INTEGER NOT NULL DEFAULT 0,
   created_at REAL NOT NULL, started_at REAL, finished_at REAL, seconds REAL, model TEXT,
-  scene TEXT, style TEXT, copy_json TEXT NOT NULL DEFAULT '{}'
+  scene TEXT, style TEXT, copy_json TEXT NOT NULL DEFAULT '{}',
+  derived_from TEXT, edit TEXT, transparent INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS jobs_caller ON jobs(caller, created_at);
 CREATE INDEX IF NOT EXISTS jobs_state ON jobs(state, priority, created_at);
@@ -81,7 +83,9 @@ class JobStore:
         self._db.executescript(SCHEMA)
         columns = {row["name"] for row in self._db.execute("PRAGMA table_info(jobs)")}
         for name, definition in (("scene", "TEXT"), ("style", "TEXT"),
-                                 ("copy_json", "TEXT NOT NULL DEFAULT '{}'"), ("failure_detail", "TEXT")):
+                                 ("copy_json", "TEXT NOT NULL DEFAULT '{}'"), ("failure_detail", "TEXT"),
+                                 ("derived_from", "TEXT"), ("edit", "TEXT"),
+                                 ("transparent", "INTEGER NOT NULL DEFAULT 0")):
             if name not in columns:
                 self._db.execute(f"ALTER TABLE jobs ADD COLUMN {name} {definition}")
         self.assets = AssetStore(self.root / "assets", self._db, self._lock, clock)
@@ -136,7 +140,8 @@ class JobStore:
     # ---- submitting -------------------------------------------------------------------
     def submit(self, caller: str, caller_name: str, caller_peer: str, body: Any) -> list[dict[str, Any]]:
         if not isinstance(body, dict) or set(body) - {"purpose", "width", "height", "brief", "words", "count",
-                                                       "references", "source_job", "scene", "style", "copy"}:
+                                                       "references", "source_job", "scene", "style", "copy",
+                                                       "edit", "transparent"}:
             raise JobError("image_bad_request")
         scene, style = body.get("scene"), body.get("style")
         if scene is not None and (not isinstance(scene, str) or scene not in templates.SCENES):
@@ -169,6 +174,12 @@ class JobStore:
             raise JobError("image_bad_count")
         references = body.get("references", [])
         source = body.get("source_job")
+        edit = body.get("edit")
+        if "edit" in body and (not isinstance(edit, str) or edit not in prompts.EDIT_INSTRUCTIONS or source is None):
+            raise JobError("image_bad_edit")
+        transparent = body.get("transparent", False)
+        if not isinstance(transparent, bool):
+            raise JobError("image_bad_transparent")
         if not isinstance(references, list) or len(references) + (source is not None) > MAX_REFERENCES:
             raise JobError("image_bad_references")
         # A brief is optional once copy or images say what to make.
@@ -186,26 +197,71 @@ class JobStore:
                 raise JobError("image_bad_references")
             self.upload_bytes(caller, ref["id"])  # must exist and belong to this caller
             refs.append(ref)
-        if source is not None:
-            src = self._one("SELECT * FROM jobs WHERE id=? AND caller=?", (source, caller)) if isinstance(source, str) else None
-            if src is None or src["state"] != "succeeded":
-                raise JobError(REFERENCE_MISSING, 404)
-        active = self._one("SELECT COUNT(*) n FROM jobs WHERE caller=? AND state IN ('queued','running')", (caller,))
-        if active["n"] + count > MAX_ACTIVE_PER_CALLER:
-            raise JobError("image_too_many_active", 429)
+        job = {
+            "purpose": purpose, "width": width, "height": height, "brief": brief.strip(), "words": words.strip(),
+            "refs": json.dumps(refs), "source_job": source, "scene": scene, "style": style, "copy_json": copy_json,
+            "derived_from": None, "edit": edit, "transparent": transparent,
+        }
+        return self._enqueue(caller, caller_name, caller_peer, [job] * count)
+
+    def derive(self, caller: str, caller_name: str, caller_peer: str, job_id: str, body: Any) -> list[dict[str, Any]]:
+        original = self.job(caller, job_id)
+        if original["state"] != "succeeded":
+            raise JobError("image_not_ready", 409)
+        requested = body.get("sizes") if isinstance(body, dict) and set(body) == {"sizes"} else None
+        if not isinstance(requested, list) or not 1 <= len(requested) <= MAX_DERIVED_SIZES:
+            raise JobError("image_bad_derive_sizes")
+
+        jobs = []
+        for spec in requested:
+            if not isinstance(spec, dict):
+                raise JobError("image_bad_derive_sizes")
+            try:
+                if spec.keys() == {"purpose"} and isinstance(spec["purpose"], str):
+                    purpose, width, height = sizes.resolve(spec["purpose"])
+                elif spec.keys() == {"width", "height"}:
+                    purpose, width, height = sizes.resolve("custom", spec["width"], spec["height"])
+                else:
+                    raise JobError("image_bad_derive_sizes")
+            except sizes.SizeError as exc:
+                raise JobError(str(exc)) from None
+            jobs.append({
+                "purpose": purpose, "width": width, "height": height, "brief": "", "words": "",
+                "refs": "[]", "source_job": job_id, "scene": original["scene"], "style": original["style"],
+                "copy_json": "{}", "derived_from": job_id, "edit": None, "transparent": original["transparent"],
+            })
+        return self._enqueue(caller, caller_name, caller_peer, jobs)
+
+    def _enqueue(self, caller: str, caller_name: str, caller_peer: str,
+                 jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        source = jobs[0]["source_job"]
         batch, now = secrets.token_hex(8), self.clock()
-        ids = []
+        ids = [secrets.token_hex(12) for _ in jobs]
         with self.changed:
-            for index in range(count):
-                job_id = secrets.token_hex(12)
-                self._exec("""INSERT INTO jobs(id, caller, caller_name, caller_peer, batch, purpose, width, height, brief,
-                              words, refs, source_job, scene, style, copy_json, state, created_at)
-                              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'queued', ?)""",
-                           (job_id, caller, caller_name[:80], caller_peer, batch, purpose, width, height, brief.strip(),
-                            words.strip(), json.dumps(refs), source, scene, style, copy_json, now + index * 1e-6))
-                ids.append(job_id)
+            self._db.execute("BEGIN IMMEDIATE")
+            with self._db:
+                if source is not None:
+                    src = (self._one("SELECT state FROM jobs WHERE id=? AND caller=?", (source, caller))
+                           if isinstance(source, str) else None)
+                    if src is None or src["state"] != "succeeded":
+                        raise JobError(REFERENCE_MISSING, 404)
+                active = self._one(
+                    "SELECT COUNT(*) n FROM jobs WHERE caller=? AND state IN ('queued','running')", (caller,)
+                )
+                if active["n"] + len(jobs) > MAX_ACTIVE_PER_CALLER:
+                    raise JobError("image_too_many_active", 429)
+                self._db.executemany("""
+                    INSERT INTO jobs(id, caller, caller_name, caller_peer, batch, purpose, width, height, brief,
+                                     words, refs, source_job, scene, style, copy_json, derived_from, edit,
+                                     transparent, state, created_at)
+                    VALUES (:id, :caller, :caller_name, :caller_peer, :batch, :purpose, :width, :height, :brief,
+                            :words, :refs, :source_job, :scene, :style, :copy_json, :derived_from, :edit,
+                            :transparent, 'queued', :created_at)
+                """, [{**job, "id": job_id, "caller": caller, "caller_name": caller_name[:80],
+                       "caller_peer": caller_peer, "batch": batch, "created_at": now + index * 1e-6}
+                      for index, (job_id, job) in enumerate(zip(ids, jobs))])
             self.changed.notify_all()
-        return [self.view(self.job(caller, job_id)) for job_id in ids]
+            return [self.view(self.job(caller, job_id)) for job_id in ids]
 
     def _asset_reference(self, caller: str, ref: dict[str, Any]) -> dict[str, str]:
         asset_id = ref["asset"]
@@ -249,7 +305,8 @@ class JobStore:
                "created_at": row["created_at"], "started_at": row["started_at"], "finished_at": row["finished_at"],
                "seconds": row["seconds"], "references": len(roles), "reference_roles": roles,
                "source_job": row["source_job"], "scene": templates.job_scene(row), "style": row["style"],
-               "copy": templates.job_copy(row)}
+               "copy": templates.job_copy(row), "derived_from": row["derived_from"],
+               "edit": row["edit"], "transparent": bool(row["transparent"])}
         if row["state"] == "queued":
             queue = self.queue() if queue is None else queue
             average = self.average_seconds() if average is None else average
@@ -358,12 +415,16 @@ class JobStore:
     def prune(self) -> int:
         """Drop jobs and files past retention, and uploads nobody used within a day."""
         now = self.clock()
-        old = self._rows("SELECT * FROM jobs WHERE created_at < ? AND state NOT IN ('queued','running')",
-                         (now - RETENTION_S,))
-        for row in old:
-            for kind in ("png", "jpg"):
-                self.image_path(row, kind).unlink(missing_ok=True)
-            self._exec("DELETE FROM jobs WHERE id=?", (row["id"],))
+        with self._lock:
+            old = self._rows("""SELECT * FROM jobs
+                WHERE created_at < ? AND state NOT IN ('queued','running')
+                AND id NOT IN (SELECT source_job FROM jobs
+                               WHERE state IN ('queued','running') AND source_job IS NOT NULL)
+                """, (now - RETENTION_S,))
+            for row in old:
+                for kind in ("png", "jpg"):
+                    self.image_path(row, kind).unlink(missing_ok=True)
+                self._exec("DELETE FROM jobs WHERE id=?", (row["id"],))
         live = {ref["id"] for r in self._rows("SELECT refs FROM jobs WHERE state IN ('queued','running')")
                 for ref in prompts.read_references(r["refs"]) if "id" in ref}
         for up in self._rows("SELECT * FROM uploads WHERE created_at < ?", (now - UPLOAD_TTL_S,)):
@@ -428,7 +489,9 @@ class Worker:
         def cancelled():
             return self._stop.is_set() or self.store.cancel_requested(job["id"])
         try:
-            raw, info = self.generate(compose_brief(job), references=self.store.references(job), cancelled=cancelled)
+            options = {"transparent": True} if job["transparent"] else {}
+            raw, info = self.generate(compose_brief(job), references=self.store.references(job),
+                                      cancelled=cancelled, **options)
             png = sizes.fit(raw, job["width"], job["height"])
             if self.store.cancel_requested(job["id"]):
                 self.store.finish(job["id"], failure="cancelled")

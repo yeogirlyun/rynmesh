@@ -13,6 +13,14 @@ REFERENCE_INSTRUCTIONS = {
     "source": "上一版成品，在它的基础上修改，没提到的部分保持不变。",
 }
 
+EDIT_INSTRUCTIONS = {
+    "background": "只换背景，商品和文字保持不变。",
+    "text": "只改文字为新文案，其他内容保持不变。",
+    "angle": "换一个角度展示商品，文案和风格保持不变。",
+}
+DERIVE_INSTRUCTION = ("保持和附图同一个设计：同样的商品、文案、配色和风格；"
+                      "按新的宽高比重新排版；不要增加或减少文字。")
+
 
 def read_references(raw: str) -> list[dict[str, str]]:
     return [{"id": ref, "role": "material"} if isinstance(ref, str) else ref
@@ -27,11 +35,12 @@ def reference_roles(row: dict[str, Any]) -> list[str]:
 
 def compose(row: dict[str, Any]) -> str:
     parts = [f"一张{sizes.ratio_phrase(row['width'], row['height'])}的图片。", row["brief"].strip()]
+    derived, edit = row.get("derived_from"), row.get("edit")
     scene = templates.job_scene(row)
-    if scene:
+    if scene and not (derived or edit):
         parts.append(f"场景构图：{templates.SCENES[scene]['composition']}")
     style = row.get("style")
-    if style:
+    if style and not (derived or edit):
         preset = templates.STYLES[style]
         parts.append(f"风格（{preset['label']}）：{preset['description']}")
     copy = templates.job_copy(row)
@@ -39,8 +48,14 @@ def compose(row: dict[str, Any]) -> str:
                   if copy.get(field)]
     if copy_lines:
         parts.append("；".join(copy_lines) + "。这些文字要一字不差，画面里不要出现其它文字。")
+    if edit == "text" and row.get("words") and not copy_lines:
+        parts.append(f"新文案：「{row['words']}」")
     for index, role in enumerate(reference_roles(row), 1):
         parts.append(f"第 {index} 张图是{REFERENCE_INSTRUCTIONS[role]}")
+    if derived:
+        parts.append(DERIVE_INSTRUCTION)
+    if edit:
+        parts.append(EDIT_INSTRUCTIONS[edit])
     crop = sizes.crop_safe_area(row["width"], row["height"])
     if crop:
         parts.append(crop)

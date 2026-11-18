@@ -93,7 +93,7 @@ def fit(raw: bytes, width: int, height: int) -> bytes:
             crop_h = round(src_w / target)
             top = (src_h - crop_h) // 2
             box = (0, top, src_w, top + crop_h)
-        mode = "RGBA" if img.mode in ("RGBA", "LA", "P") else "RGB"
+        mode = "RGBA" if img.mode in ("RGBA", "LA", "P") or "transparency" in img.info else "RGB"
         out = img.convert(mode).crop(box).resize((width, height), Image.LANCZOS)
         buffer = io.BytesIO()
         out.save(buffer, format="PNG", optimize=True)
