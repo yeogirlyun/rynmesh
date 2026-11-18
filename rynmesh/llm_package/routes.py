@@ -808,7 +808,7 @@ class ProviderService:
                     if chat:
                         if not hasattr(self.adapter, "chat"):
                             raise AdapterError("structured_chat_not_supported")
-                        if chat.get("stream") and on_event is None:
+                        if chat.get("stream") and on_event is None and on_delta is None:
                             raise AdapterError("stream_transport_not_supported")
                         sequence = 0
 
@@ -817,6 +817,14 @@ class ProviderService:
                             check_external_output()
                             if (self.task_store.get(task_id) or {}).get("state") == "cancelled":
                                 raise AdapterError("task_cancelled")
+                            if on_delta is not None:
+                                # Signed stream-v1/v2 carries text. Structured SSE
+                                # callers still receive the authenticated chat events.
+                                for choice in chunk.get("choices", []):
+                                    text = (choice.get("delta") or {}).get("content")
+                                    if choice.get("index", 0) == 0 and isinstance(text, str) and text:
+                                        on_delta(text)
+                                return
                             envelope = seal_task(
                                 body={"task_id": task_id, "service_id": self.manifest.package_id,
                                       "sequence": sequence, "chunk": chunk},
