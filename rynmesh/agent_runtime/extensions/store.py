@@ -550,6 +550,7 @@ class ExtensionStore:
                     "updated_at": now,
                 }
             },
+            "skills_catalog_in_context": True,
             "skills": {},
             "mcp_servers": {
                 COMPUTER_USE_SERVER_ID: cu_server,
@@ -672,6 +673,7 @@ class ExtensionStore:
                 COMPUTER_USE_PLUGIN_ID
             ]["description"]
         state.setdefault("skills", {})
+        state.setdefault("skills_catalog_in_context", True)
         for skill in state["skills"].values():
             skill.setdefault("instance_id", uuid.uuid4().hex)
             skill.setdefault("install_generation", 1)
@@ -1299,6 +1301,7 @@ class ExtensionStore:
                 "desktop_access": bool(desktop_access),
                 "windows_supported": os.name == "nt",
                 "skill_roots": skill_roots,
+                "skills_catalog_in_context": state["skills_catalog_in_context"],
                 "plugins": plugins,
                 "skills": skills,
                 "mcp_servers": servers,
@@ -1340,12 +1343,14 @@ class ExtensionStore:
     ) -> list[dict[str, Any]]:
         """Return enabled built-in and workspace-visible imported skills matching knowledge.catalog() shape."""
         with file_transaction(self.lock):
-            state = self._read()
+            state = self._read(borrow=True)
             builtin_enabled = state.get("builtin_skills_enabled", {})
             out: list[dict[str, Any]] = []
             for skill_id, skill in BUILTIN_SKILLS.items():
                 if builtin_enabled.get(skill_id, True):
-                    out.append({key: value for key, value in skill.items() if key != "content"})
+                    out.append({**{key: value for key, value in skill.items() if key != "content"},
+                                "scope": "system", "plugin_id": None,
+                                "policy": {"allow_implicit_invocation": True}})
             for skill in state["skills"].values():
                 if self._is_skill_effectively_enabled(skill, state) and self._is_skill_visible_in_workspace(
                     skill, workspace_root
@@ -1357,9 +1362,26 @@ class ExtensionStore:
                             "version": str(skill.get("version", "1")),
                             "title": skill.get("title") or skill.get("name") or skill["id"],
                             "description": str(skill.get("description") or skill.get("summary") or ""),
+                            "scope": str(skill.get("scope") or ("plugin" if skill.get("plugin_id") else "user")),
+                            "plugin_id": skill.get("plugin_id"),
+                            "policy": {"allow_implicit_invocation": bool((skill.get("policy") or {}).get("allow_implicit_invocation", True))},
                         }
                     )
             return out
+
+    def skills_settings(self) -> dict[str, bool]:
+        with file_transaction(self.lock):
+            return {"skills_catalog_in_context": self._read(borrow=True)["skills_catalog_in_context"]}
+
+    def update_skills_settings(self, payload: dict[str, Any]) -> dict[str, bool]:
+        value = payload.get("skills_catalog_in_context")
+        if type(value) is not bool:
+            raise AgentError("agent_invalid_skill_settings")
+        with file_transaction(self.lock):
+            state = self._read()
+            state["skills_catalog_in_context"] = value
+            self._write(state)
+        return {"skills_catalog_in_context": value}
 
     def missing_skill_ids(self) -> set[str]:
         """Names that must be rejected even when explicitly mentioned with $id."""

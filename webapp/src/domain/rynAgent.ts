@@ -508,6 +508,7 @@ async function fileContent(taskID: string, file: Pick<AgentFileArtifact, "id" | 
 
 /** Mutations are sent once. An uncertain response is reconciled by reading server state. */
 export interface AgentQueuedMessage {
+  skill_ids?: string[];
   id: string;
   seq: number;
   message: string;
@@ -551,9 +552,9 @@ export const rynAgent = {
     .then(value => mergeUnchangedTask(cached, value)),
   create: (message: string, model_id: string, client_request_id: string, scope?: AgentScopeSelection, expected_destination_revision?: string, skill_ids?: string[], response_language?: "zh-CN" | "en", project_id?: string, reasoning_effort?: string, attachments?: AgentAttachmentInput[]) => request<AgentTask>("/tasks", "POST", { message, model_id, client_request_id, ...(attachments?.length ? { attachments } : {}), ...(project_id ? { project_id } : {}), ...(response_language ? { response_language } : {}), ...(scope ? { scope, expected_destination_revision } : {}), ...(skill_ids?.length ? { skill_ids } : {}), ...(reasoning_effort ? { reasoning_effort } : {}) }),
   control: (id: string, route: "messages" | "actions" | "scope" | "workspace", body: Record<string, unknown>) => request<AgentTask>(`/tasks/${encodeURIComponent(id)}/${route}`, route === "scope" ? "PUT" : "POST", body),
-  message: (task: AgentTask, message: string, intent: AgentMessageIntent = "information", client_request_id: string = crypto.randomUUID(), reasoning_effort?: string, attachments?: AgentAttachmentInput[]) => request<AgentTask>(`/tasks/${encodeURIComponent(task.id)}/messages`, "POST", task.allowed_actions ? {
-    message, intent, expected_goal_revision: task.goal?.revision, expected_control_revision: task.control_revision, client_request_id, ...(reasoning_effort ? { reasoning_effort } : {}), ...(attachments?.length ? { attachments } : {}),
-  } : { message, expected_revision: task.revision, ...(reasoning_effort ? { reasoning_effort } : {}), ...(attachments?.length ? { attachments } : {}) }),
+  message: (task: AgentTask, message: string, intent: AgentMessageIntent = "information", client_request_id: string = crypto.randomUUID(), reasoning_effort?: string, attachments?: AgentAttachmentInput[], skill_ids?: string[]) => request<AgentTask>(`/tasks/${encodeURIComponent(task.id)}/messages`, "POST", task.allowed_actions ? {
+    message, intent, expected_goal_revision: task.goal?.revision, expected_control_revision: task.control_revision, client_request_id, ...(reasoning_effort ? { reasoning_effort } : {}), ...(attachments?.length ? { attachments } : {}), ...(skill_ids?.length ? { skill_ids } : {}),
+  } : { message, expected_revision: task.revision, ...(reasoning_effort ? { reasoning_effort } : {}), ...(attachments?.length ? { attachments } : {}), ...(skill_ids?.length ? { skill_ids } : {}) }),
   action: (task: AgentTask, action: AgentAction, remember?: "task" | "always") => request<AgentTask>(`/tasks/${encodeURIComponent(task.id)}/actions`, "POST", {
     action, ...(task.allowed_actions ? { expected_control_revision: task.control_revision, client_request_id: crypto.randomUUID() } : { expected_revision: task.revision }),
     ...(action === "approve" && remember ? { remember } : {}),
@@ -583,8 +584,8 @@ export const rynAgent = {
   }),
 };
 
-export function agentMessageBody(task: AgentTask, message: string, intent: AgentMessageIntent, reasoning_effort?: string, attachments?: AgentAttachmentInput[]): Record<string, unknown> {
-  return { message, intent, expected_goal_revision: task.goal?.revision, expected_control_revision: task.control_revision, client_request_id: crypto.randomUUID(), ...(reasoning_effort ? { reasoning_effort } : {}), ...(attachments?.length ? { attachments } : {}) };
+export function agentMessageBody(task: AgentTask, message: string, intent: AgentMessageIntent, reasoning_effort?: string, attachments?: AgentAttachmentInput[], skill_ids?: string[]): Record<string, unknown> {
+  return { message, intent, expected_goal_revision: task.goal?.revision, expected_control_revision: task.control_revision, client_request_id: crypto.randomUUID(), ...(reasoning_effort ? { reasoning_effort } : {}), ...(attachments?.length ? { attachments } : {}), ...(skill_ids?.length ? { skill_ids } : {}) };
 }
 export function agentActionBody(task: AgentTask, action: AgentAction, remember?: "task" | "always"): Record<string, unknown> {
   return { action, expected_control_revision: task.control_revision, client_request_id: crypto.randomUUID(),

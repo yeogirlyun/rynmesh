@@ -17,7 +17,7 @@ export function TaskSkills({ skills }: { skills?: AgentSkill[] }) {
   const text = useText();
   if (!skills?.length) return null;
   return <details className="ra-task-context"><summary>{text("本任务技能", "Skills for this task")} · {skills.length}</summary>
-    <p>{text("使用创建任务时选定的技能版本。技能不增加权限；新任务可重新选择。", "Uses the skill versions selected when this task was created. Skills grant no permissions; choose again for a new task.")}</p>
+    <p>{text("选中技能的版本在加入时固定；技能不增加权限", "Skill versions are fixed when added; skills grant no permissions.")}</p>
     <ul>{skills.map(skill => <li key={skill.id}>{labels[skill.id] ? text(...labels[skill.id]) : skill.title} · v{skill.version}</li>)}</ul>
   </details>;
 }
@@ -35,9 +35,10 @@ export function SkillSelection({ value, onChange, disabled }: { value: string[];
   const manageLabel = text("管理技能", "Manage skills");
   return <div className="ra-guidance">
     <button className="ra-link" aria-expanded={open} onClick={() => { setOpen(!open); if (!open && !skills) void load(); }}>{text("技能", "Skills")}{value.length ? ` · ${value.length}` : ` · ${text("可选", "optional")}`}</button>
-    {open && <fieldset className="ra-tool-permissions"><legend>{text("为新任务选择技能", "Choose skills for the new task")}</legend>
-      <p>{text("技能提供处理步骤，不会增加工具权限。只对新任务生效。", "Skills offer workflow guidance without granting tool access. They apply to the new task only.")}</p>
-      {error ? <button className="ra-link" onClick={() => void load()}>{text("加载失败，重试", "Load failed — retry")}</button> : skills === null ? <p role="status">{text("正在加载…", "Loading…")}</p> : skills.map(skill => <label key={skill.id}><input type="checkbox" checked={value.includes(skill.id)} disabled={disabled} onChange={event => onChange(event.target.checked ? [...value, skill.id] : value.filter(id => id !== skill.id))} /><span>{labels[skill.id] ? text(...labels[skill.id]) : skill.title}<small>v{skill.version}</small></span></label>)}
+    {open && <fieldset className="ra-tool-permissions"><legend>{text("选择或追加技能", "Choose or add skills")}</legend>
+      <p>{text("已启用的技能都可用；这里选中的会优先放进上下文，任务进行中也可追加（最多 8 个）", "All enabled skills are available; selected skills enter context first. Add skills during a task (up to 8).")}</p>
+      <p>{text("任意一轮都可在输入框用 $技能名 点名技能。", "Mention $skill-name in the input on any turn to select a skill.")}</p>
+      {error ? <button className="ra-link" onClick={() => void load()}>{text("加载失败，重试", "Load failed — retry")}</button> : skills === null ? <p role="status">{text("正在加载…", "Loading…")}</p> : skills.map(skill => <label key={skill.id}><input type="checkbox" checked={value.includes(skill.id)} disabled={disabled || (value.length >= 8 && !value.includes(skill.id))} onChange={event => onChange(event.target.checked ? [...value, skill.id] : value.filter(id => id !== skill.id))} /><span>{labels[skill.id] ? text(...labels[skill.id]) : skill.title}<small>v{skill.version}</small></span></label>)}
       <div className="ra-skill-manage-row">
         {inRouter ? <Link className="ra-link" to="/settings/extensions/skills">{manageLabel}</Link> : <a className="ra-link" href="/settings/extensions/skills">{manageLabel}</a>}
       </div>

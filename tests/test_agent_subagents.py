@@ -804,6 +804,9 @@ def test_s07_i1_t1_ten_unread_notifications_summarized_and_persisted(tmp_path: P
         def plugin_context_note(self, _ctx, *, selected_skill_ids=()):
             return ""
 
+        def skills_context_note(self, _ctx, *, budget_bytes, selected_skill_ids):
+            return ""
+
     orig_extensions = getattr(runtime, "extensions", None)
     runtime.extensions = _SpyExtensions()
     try:

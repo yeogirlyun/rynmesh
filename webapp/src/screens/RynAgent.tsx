@@ -275,6 +275,7 @@ export default function RynAgent() {
   const navigationRef = useRef(navigationRevision);
   const initialNavigationRef = useRef(navigationRevision - (pluginEntry ? 1 : 0));
   const navigate = () => {
+    setSkillIDs([]);
     const revision = ++navigationRef.current;
     setNavigationRevision(revision); save(NAVIGATION_KEY, String(revision));
     setShowAutomationsView(false);
@@ -330,9 +331,7 @@ export default function RynAgent() {
     setTask(null);
     const targetKey = pluginDraftKey || newDraftKey(projectID);
     setDrafts(current => ({ ...current, [targetKey]: pendingPrefill.prompt }));
-    if (pendingPrefill.skillId) {
-      setSkillIDs(current => (current.includes(pendingPrefill.skillId!) ? current : [...current, pendingPrefill.skillId!]));
-    }
+    setSkillIDs(pendingPrefill.skillId ? [pendingPrefill.skillId] : []);
     setTimeout(() => input.current?.focus(), 0);
   }, [location.key]);
   const finishAttachments = (key: string, ids: string[], nextKey?: string) => setAttachmentsByDraft(current => {
@@ -435,6 +434,7 @@ export default function RynAgent() {
       if (confirmedCreateRequests.current.size > 32) confirmedCreateRequests.current.delete(confirmedCreateRequests.current.values().next().value!);
       const optimistic = readPendingMessage()?.requestID === pendingID;
       const ownsDraft = (originNavigation ?? initialNavigationRef.current) === navigationRef.current;
+      if (ownsDraft) setSkillIDs([]);
       if (ownsDraft && !selectedRef.current) { selectedRef.current = recovered.id; setSelected(recovered.id); }
       finishAttachments(pendingDraftKey || newDraftKey(pendingProject), pendingAttachmentIDs, ownsDraft ? recovered.id : undefined);
       save(PENDING_KEY, ""); setUncertain(false);
@@ -693,7 +693,7 @@ export default function RynAgent() {
     forgetAgentTask(id);
     setTasks(current => current.filter(item => item.id !== id)); setRecordsRevision(current => current + 1);
     setDrafts(current => { const next = { ...current }; delete next[id]; return next; });
-    if (selectedRef.current === id) { selectedRef.current = ""; setSelected(""); setTask(null); setResourceErrors(current => ({ ...current, detail: "" })); }
+    if (selectedRef.current === id) { setSkillIDs([]); selectedRef.current = ""; setSelected(""); setTask(null); setResourceErrors(current => ({ ...current, detail: "" })); }
   };
   const chooseGeneralProject = () => {
     chooseProject("");
@@ -839,9 +839,11 @@ export default function RynAgent() {
     if ((!draft.trim() && !draftAttachments.length) || attachmentsBusy || mutationRef.current || uncertain || controlUncertain || (!selected && !newScopeReady)) return;
     if (selected ? !currentTask || (currentTask.allowed_actions ? !canUseAgentAction(currentTask, effectiveIntent) : !legacyReady || !canContinueAgentTask(currentTask)) : !legacyReady) return;
     if (currentTask && selectedExecuting && (modeOverride ?? followUpQueueMode) === "queue") {
+      const originNavigation = navigationRef.current;
       mutationRef.current = true; setBusy(true); setError("");
       const attachmentIDs = draftAttachments.map(file => file.id);
       const body = { message: draft.trim() || t("attachmentOnlyMessage"), intent: effectiveIntent,
+        ...(skillIDs.length ? { skill_ids: skillIDs } : {}),
         ...(selectedModel?.supported_reasoning_efforts?.includes(effectiveEffort) ? { reasoning_effort: effectiveEffort } : {}),
         attachments: agentAttachmentInputs(draftAttachments) };
       const key = JSON.stringify([currentTask.id, body]);
@@ -850,6 +852,7 @@ export default function RynAgent() {
         const next = await rynAgent.queueMessage(currentTask.id, { ...body, client_request_id: queueRequest.current.id });
         queueRequest.current = null;
         acceptTask(next);
+        if (originNavigation === navigationRef.current) setSkillIDs([]);
         setDrafts(current => current[draftKey] === draft ? { ...current, [draftKey]: "" } : current);
         finishAttachments(draftKey, attachmentIDs);
       } catch (reason) { setError(mutationErrorKey(reason)); }
@@ -875,7 +878,7 @@ export default function RynAgent() {
       save(PENDING_KEY, JSON.stringify({ client_request_id: requestID, message: submittedMessage, draft_key: draftKey, model_id: model, response_language: responseLanguage, navigation_revision: originNavigation, ...(projectID ? { project_id: projectID } : {}), ...(newScope ? { scope: newScope, expected_destination_revision: destinationRevision } : {}), ...(skillIDs.length ? { skill_ids: skillIDs } : {}), ...(submittedEffort ? { reasoning_effort: submittedEffort } : {}), ...(submittedAttachments.length ? { attachments: submittedAttachments, attachment_ids: submittedAttachmentIDs } : {}), at: Date.now() }));
     }
     try {
-      const next = currentTask ? currentTask.allowed_actions ? await submitControl({ task_id: currentTask.id, route: "messages", attachment_ids: submittedAttachmentIDs, body: agentMessageBody(currentTask, submittedMessage, effectiveIntent, submittedEffort, submittedAttachments) }) : await rynAgent.message(currentTask, submittedMessage, effectiveIntent, requestID, submittedEffort, ...attachmentArgs) : await rynAgent.create(submittedMessage, model, requestID, newScope, destinationRevision, skillIDs, responseLanguage, projectID || undefined, submittedEffort, ...attachmentArgs);
+      const next = currentTask ? currentTask.allowed_actions ? await submitControl({ task_id: currentTask.id, route: "messages", attachment_ids: submittedAttachmentIDs, body: agentMessageBody(currentTask, submittedMessage, effectiveIntent, submittedEffort, submittedAttachments, skillIDs) }) : await rynAgent.message(currentTask, submittedMessage, effectiveIntent, requestID, submittedEffort, submittedAttachments, skillIDs) : await rynAgent.create(submittedMessage, model, requestID, newScope, destinationRevision, skillIDs, responseLanguage, projectID || undefined, submittedEffort, ...attachmentArgs);
       const ownsDraft = originNavigation === navigationRef.current;
       if (!currentTask && ownsDraft && !selectedRef.current) { selectedRef.current = next.id; setSelected(next.id); }
       if (!currentTask) recordMutationRevision.current++;
@@ -891,7 +894,8 @@ export default function RynAgent() {
       });
       setPendingMessage(current => current?.requestID === requestID ? null : current);
       save(PENDING_KEY, ""); setUncertain(false);
-      if (!currentTask && ownsDraft) { setScopeDraft(null); setSkillIDs([]); }
+      if (ownsDraft) setSkillIDs([]);
+      if (!currentTask && ownsDraft) setScopeDraft(null);
     } catch (reason) {
       // A polled server record is a receipt even if the original HTTP response fails later.
       if (!currentTask && confirmedCreateRequests.current.has(requestID)) return;
@@ -1252,7 +1256,7 @@ export default function RynAgent() {
       </aside>
       <div className="ra-chat">
         <RynAgentNodeRecoveryBanner />
-        {showSkillsView ? <CodexSkillsView embeddedInAgent onTrySkillPrompt={(prefillPrompt, skillId) => { setShowSkillsView(false); setShowAutomationsView(false); selectedRef.current = ""; setSelected(""); setTask(null); const targetKey = pluginDraftKey || newDraftKey(projectID); setDrafts(current => ({ ...current, [targetKey]: prefillPrompt })); if (skillId) { setSkillIDs(current => (current.includes(skillId) ? current : [...current, skillId])); } setTimeout(() => input.current?.focus(), 0); }} /> : showAutomationsView ? <AutomationsPanel automations={automationsList} runs={automationRuns} tasks={tasks} activeTaskId={selected} zh={i18n.language.startsWith("zh")} onRefresh={refreshAutomations} onCreateNew={() => { setEditingAutomation({ kind: selected ? "heartbeat" : "cron", target_task_id: selected || "", repeat: "daily", time: "09:00", status: "ACTIVE" }); setAutomationDialogOpen(true); }} onEdit={item => { setEditingAutomation(item); setAutomationDialogOpen(true); }} onSelectTask={id => { setShowAutomationsView(false); chooseTask(id); }} /> : <>
+        {showSkillsView ? <CodexSkillsView embeddedInAgent onTrySkillPrompt={(prefillPrompt, skillId) => { setShowSkillsView(false); setShowAutomationsView(false); selectedRef.current = ""; setSelected(""); setTask(null); const targetKey = pluginDraftKey || newDraftKey(projectID); setDrafts(current => ({ ...current, [targetKey]: prefillPrompt })); setSkillIDs(skillId ? [skillId] : []); setTimeout(() => input.current?.focus(), 0); }} /> : showAutomationsView ? <AutomationsPanel automations={automationsList} runs={automationRuns} tasks={tasks} activeTaskId={selected} zh={i18n.language.startsWith("zh")} onRefresh={refreshAutomations} onCreateNew={() => { setEditingAutomation({ kind: selected ? "heartbeat" : "cron", target_task_id: selected || "", repeat: "daily", time: "09:00", status: "ACTIVE" }); setAutomationDialogOpen(true); }} onEdit={item => { setEditingAutomation(item); setAutomationDialogOpen(true); }} onSelectTask={id => { setShowAutomationsView(false); chooseTask(id); }} /> : <>
 
         {settingsReady && !enabled && task && <div className="ra-disabled-banner"><span>{t("historyDisabled")}</span><button disabled={busy} onClick={() => void updateSettings({ enabled: true, ...(model ? { model_id: model } : {}) })}>{t("enable")}</button></div>}
         {!detailLoading && task && <RynAgentTurnRail turns={turnRailItems} scrollRef={scroll} />}
@@ -1309,7 +1313,7 @@ export default function RynAgent() {
             catch (reason) { setError(mutationErrorKey(reason)); }
             finally { mutationRef.current = false; setBusy(false); }
           }} />}
-          <RynAgentComposer key={`composer/${draftKey}`} topSlot={<>{task?.subagents && task.subagents.length > 0 && <SubagentComposerBar subagents={task.subagents} onSelectSubagent={subId => { setSelectedSubagentId(subId); setSubagentsDrawerOpen(true); }} onMentionSubagent={nickname => { changeDraft((draft ? `${draft.trimEnd()} ` : "") + `@${nickname} `); input.current?.focus(); }} onStopAll={() => { if (task) void rynAgent.stopAllSubagents(task).then(acceptTask).catch(() => undefined); }} />}{queuedListNode}</>} placeholder={task?.subagents && task.subagents.length > 0 ? `交代任务，或输入 ${(task.subagents.filter(s => !s.closed).length ? task.subagents.filter(s => !s.closed) : task.subagents).slice(0, 2).map(s => `@${s.nickname}`).join(" ")} 直接向子智能体发指令...` : undefined} attachments={draftAttachments.filter(file => !visiblePending?.attachments?.some(sent => sent.id === file.id))} imageWarning={imageWarning} onAttachmentsChange={attachments => setAttachmentsByDraft(current => ({ ...current, [draftKey]: [...(current[draftKey] || []).filter(file => visiblePending?.attachments?.some(sent => sent.id === file.id)), ...attachments] }))} onAttachmentsBusyChange={setAttachmentsBusy} project={currentProject} workspace={settings?.workspace_root} value={draft} inputRef={input} inputDisabled={(!task?.allowed_actions && !enabled) || detailLoading} busy={busy} onChange={changeDraft} onSend={() => void send()} onAlternateSend={handleAlternateSend} onProject={() => { setTasksCollapsed(false); save("ryn.agent.tasks", "open"); }} onSettings={() => setSettingsOpen(true)} settingsDisabled={!settingsReady} permissionMode={task ? task.permission_mode || "unknown" : settings?.permission_mode || "automatic"} permissionLocked={Boolean(selected) && (!task || !canUseAgentAction(task, "set_permission"))} onPermission={permission_mode => void (task ? changeTaskPermission(permission_mode) : updateSettings({ permission_mode }))} modelPicker={modelSelect()} options={<><ExtensionModelAvailability modelID={task?.model_id || model} />          {!selected && enabled && <RynAgentScope key="new-scope" task={null} modelID={model} modelName={selectedModel?.name || model} destinationRevision={selectedModel?.destination_revision} sourceName={selectedModel?.source_name} sourceID={selectedModel?.source_id} providerID={selectedModel?.peer_id} initialSelection={scopeDraft?.scope} busy={busy || uncertain || controlUncertain} onSelect={(scope, model_id, destination_revision) => setScopeDraft({ scope, model_id, destination_revision })} />}{!selected && <SkillSelection value={skillIDs} onChange={setSkillIDs} disabled={busy || uncertain} />}<p className="ra-model-context">{task ? t("taskModel") : t("newTaskModel")}: {selectedModel?.name || task?.model_id || model || t("chooseModel")}{settings && <span> · {t("defaultModel")}: {models.find(item => item.id === settings.model_id)?.name || settings.model_id || t("chooseModel")}</span>}</p>{messageIntents.length > 1 && <select aria-label={t("messageIntent")} value={effectiveIntent} disabled={busy} onChange={event => setMessageIntent(event.target.value as AgentMessageIntent)}><option value="steer">{t("intentSteer")}</option><option value="information">{t("intentInformation")}</option></select>}{selectedExecuting && <select aria-label={t("followUpModeQueue")} value={followUpQueueMode} disabled={busy} onChange={event => setFollowUpQueueMode(event.target.value as FollowUpQueueMode)}><option value="steer">{t("followUpModeSteer")}</option><option value="queue">{t("followUpModeQueue")}</option></select>}{task?.allowed_actions && messageIntents.length > 0 && <p className="ra-model-context">{t(effectiveIntent === "steer" ? "steerHelp" : "informationHelp")}</p>}</>} sendButton={<>{stopButton}{selectedExecuting && Boolean(draft.trim() || draftAttachments.length) && <button type="button" className="ra-queue-send" aria-label={t("queueFollowUp")} title={t("queueFollowUpTitle")} disabled={!canSend} onClick={() => void send("queue")}><CornerDownRight size={14} /><span>{t("queueShort")}</span></button>}{(!stopButton || Boolean(draft.trim() || draftAttachments.length)) && <button type="button" className="ra-primary ra-send" aria-label={t(sendLabel)} disabled={!canSend} onClick={() => void send(selectedExecuting ? "steer" : undefined)}>{visiblePending?.phase === "sending" ? <LoaderCircle size={18} className="ra-spinner" /> : <ArrowUp size={18} />}</button>}</>} />
+          <RynAgentComposer key={`composer/${draftKey}`} topSlot={<>{task?.subagents && task.subagents.length > 0 && <SubagentComposerBar subagents={task.subagents} onSelectSubagent={subId => { setSelectedSubagentId(subId); setSubagentsDrawerOpen(true); }} onMentionSubagent={nickname => { changeDraft((draft ? `${draft.trimEnd()} ` : "") + `@${nickname} `); input.current?.focus(); }} onStopAll={() => { if (task) void rynAgent.stopAllSubagents(task).then(acceptTask).catch(() => undefined); }} />}{queuedListNode}</>} placeholder={task?.subagents && task.subagents.length > 0 ? `交代任务，或输入 ${(task.subagents.filter(s => !s.closed).length ? task.subagents.filter(s => !s.closed) : task.subagents).slice(0, 2).map(s => `@${s.nickname}`).join(" ")} 直接向子智能体发指令...` : undefined} attachments={draftAttachments.filter(file => !visiblePending?.attachments?.some(sent => sent.id === file.id))} imageWarning={imageWarning} onAttachmentsChange={attachments => setAttachmentsByDraft(current => ({ ...current, [draftKey]: [...(current[draftKey] || []).filter(file => visiblePending?.attachments?.some(sent => sent.id === file.id)), ...attachments] }))} onAttachmentsBusyChange={setAttachmentsBusy} project={currentProject} workspace={settings?.workspace_root} value={draft} inputRef={input} inputDisabled={(!task?.allowed_actions && !enabled) || detailLoading} busy={busy} onChange={changeDraft} onSend={() => void send()} onAlternateSend={handleAlternateSend} onProject={() => { setTasksCollapsed(false); save("ryn.agent.tasks", "open"); }} onSettings={() => setSettingsOpen(true)} settingsDisabled={!settingsReady} permissionMode={task ? task.permission_mode || "unknown" : settings?.permission_mode || "automatic"} permissionLocked={Boolean(selected) && (!task || !canUseAgentAction(task, "set_permission"))} onPermission={permission_mode => void (task ? changeTaskPermission(permission_mode) : updateSettings({ permission_mode }))} modelPicker={modelSelect()} options={<><ExtensionModelAvailability modelID={task?.model_id || model} />          {!selected && enabled && <RynAgentScope key="new-scope" task={null} modelID={model} modelName={selectedModel?.name || model} destinationRevision={selectedModel?.destination_revision} sourceName={selectedModel?.source_name} sourceID={selectedModel?.source_id} providerID={selectedModel?.peer_id} initialSelection={scopeDraft?.scope} busy={busy || uncertain || controlUncertain} onSelect={(scope, model_id, destination_revision) => setScopeDraft({ scope, model_id, destination_revision })} />}<SkillSelection value={skillIDs} onChange={setSkillIDs} disabled={busy || uncertain} /><p className="ra-model-context">{task ? t("taskModel") : t("newTaskModel")}: {selectedModel?.name || task?.model_id || model || t("chooseModel")}{settings && <span> · {t("defaultModel")}: {models.find(item => item.id === settings.model_id)?.name || settings.model_id || t("chooseModel")}</span>}</p>{messageIntents.length > 1 && <select aria-label={t("messageIntent")} value={effectiveIntent} disabled={busy} onChange={event => setMessageIntent(event.target.value as AgentMessageIntent)}><option value="steer">{t("intentSteer")}</option><option value="information">{t("intentInformation")}</option></select>}{selectedExecuting && <select aria-label={t("followUpModeQueue")} value={followUpQueueMode} disabled={busy} onChange={event => setFollowUpQueueMode(event.target.value as FollowUpQueueMode)}><option value="steer">{t("followUpModeSteer")}</option><option value="queue">{t("followUpModeQueue")}</option></select>}{task?.allowed_actions && messageIntents.length > 0 && <p className="ra-model-context">{t(effectiveIntent === "steer" ? "steerHelp" : "informationHelp")}</p>}</>} sendButton={<>{stopButton}{selectedExecuting && Boolean(draft.trim() || draftAttachments.length) && <button type="button" className="ra-queue-send" aria-label={t("queueFollowUp")} title={t("queueFollowUpTitle")} disabled={!canSend} onClick={() => void send("queue")}><CornerDownRight size={14} /><span>{t("queueShort")}</span></button>}{(!stopButton || Boolean(draft.trim() || draftAttachments.length)) && <button type="button" className="ra-primary ra-send" aria-label={t(sendLabel)} disabled={!canSend} onClick={() => void send(selectedExecuting ? "steer" : undefined)}>{visiblePending?.phase === "sending" ? <LoaderCircle size={18} className="ra-spinner" /> : <ArrowUp size={18} />}</button>}</>} />
 
         </div>}</>}
       </div>

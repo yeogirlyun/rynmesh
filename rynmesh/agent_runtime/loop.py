@@ -1137,6 +1137,20 @@ class AgentLoop:
         selected = [skill.get("id") for skill in row.get("skills") or [] if isinstance(skill, dict)]
         return extensions.plugin_context_note(self._execution_context(row), selected_skill_ids=selected)
 
+    def _skills_note(self, row: dict) -> str:
+        extensions = getattr(self, "extensions", None)
+        if extensions is None:
+            return ""
+        capacity = self._effective_capacity(row, row.get("_max_context_bytes_override"))[0]
+        if capacity <= tool_menu.SMALL_WINDOW_BYTES:
+            return ""
+        policy = self._context_policy(row)
+        size = min(40000, int(capacity * .02))
+        if not policy.get("context_window_known"):
+            size = min(8000, size)
+        return extensions.skills_context_note(self._execution_context(row), budget_bytes=size,
+            selected_skill_ids=[skill["id"] for skill in row.get("skills") or []])
+
     def _pending_output_limit_retry_cap(self, row: dict) -> int | None:
         if int(row.get("model_retry_count", 0) or 0) < 1:
             return None
@@ -1218,7 +1232,8 @@ class AgentLoop:
         capture_note = memory_integration.current_automatic_memory_capture_note(self)
         auto_note = automations.automation_developer_instructions(self.store, row)
         plugin_note = self._plugin_note(row)
-        host_memory_note = "\n".join(note for note in (host_memory_note, capture_note, auto_note, plugin_note) if note) or None
+        skills_note = self._skills_note(row)
+        host_memory_note = "\n".join(note for note in (host_memory_note, capture_note, auto_note, plugin_note, skills_note) if note) or None
         model_notes = profile["instructions"]
         instructions = instruction_layers(prefix_row, persisted_base=row.get("base_instructions"),
                                           model_notes=model_notes,
