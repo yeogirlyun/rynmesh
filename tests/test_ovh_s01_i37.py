@@ -106,9 +106,17 @@ def test_t2_tool_probe_missing_id_uses_normalize_call_id_and_wraps_errors():
 def test_t3_explicit_4096_max_output_tokens_preserved_and_prepare_dedup(tmp_path):
     """T3: prepare 显式传 max_output_tokens=4096 时写 max_output_tokens_explicit=True，defaults 保留 4096 不被厂商表 16384 覆盖；未显式传时用厂商表。"""
     store = SourceStore(tmp_path, b"unit-test-key")
-    explicit_rec = store.prepare(_source_payload(models=["gpt-4o"], max_output_tokens=4096))
+    explicit_rec = store.prepare(_source_payload(models=["gpt-4o"], max_output_tokens=4096,
+                                                 max_output_tokens_explicit=True))
     assert explicit_rec["max_output_tokens_explicit"] is True
     assert model_settings.defaults(explicit_rec, "gpt-4o")["max_output_tokens"] == 4096
+
+    # The settings form always sends its 4096 draft default; that alone is not an owner choice.
+    form_rec = store.prepare(_source_payload(models=["gpt-4o"], max_output_tokens=4096))
+    assert form_rec["max_output_tokens_explicit"] is False
+    assert model_settings.defaults(form_rec, "gpt-4o")["max_output_tokens"] == 16384
+    custom_rec = store.prepare(_source_payload(models=["gpt-4o"], max_output_tokens=8000))
+    assert custom_rec["max_output_tokens_explicit"] is True
 
     implicit_payload = _source_payload(models=["gpt-4o"])
     implicit_payload.pop("max_output_tokens", None)

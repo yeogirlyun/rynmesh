@@ -87,8 +87,10 @@ def test_capacity_registration_merges_instead_of_clobbering(tmp_path):
     """The LLM 30s republish used to wipe every other advertised capability."""
     store = RynmeshStore(home=tmp_path / "node", network_dir=tmp_path / "net")
     store.register_job_capacity(capabilities=["signal50.veo_motion.v1"], network_id="net",
+                                owner="signal50",
                                 metadata={"veo": {"kind": "video"}})
     second = store.register_job_capacity(capabilities=["rynmesh.llm.private.v1"], network_id="net",
+                                         owner="rynmesh.llm.private.v1",
                                          metadata={"llm_service": {"online": True}})
     caps = set(second["record"]["capabilities"])
     assert {"signal50.veo_motion.v1", "rynmesh.llm.private.v1"} <= caps

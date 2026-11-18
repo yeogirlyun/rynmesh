@@ -42,19 +42,27 @@ class ServiceWorker:
     ) -> None:
         store = store or RynmeshStore()
         network_id = network_id or os.environ.get("RYNMESH_NETWORK_ID", "rynmesh-main")
-        store.register_job_capacity(network_id=network_id, capabilities=[self.capability])
+        store.register_job_capacity(owner=self.capability, network_id=network_id, capabilities=[self.capability])
+        next_refresh = time.monotonic() + 30
         print(
             f"[{self.capability}] registered on network_id={network_id}; "
             f"polling every {poll_interval_s}s"
         )
-        while True:
-            try:
-                self.serve_once(store, network_id=network_id)
-            except KeyboardInterrupt:
-                raise
-            except Exception as exc:  # noqa: BLE001 - never let the loop die
-                print(f"[{self.capability}] loop error: {exc}")
-            time.sleep(poll_interval_s)
+        try:
+            while True:
+                try:
+                    if time.monotonic() >= next_refresh:
+                        store.register_job_capacity(owner=self.capability, network_id=network_id,
+                                                    capabilities=[self.capability])
+                        next_refresh = time.monotonic() + 30
+                    self.serve_once(store, network_id=network_id)
+                except KeyboardInterrupt:
+                    raise
+                except Exception as exc:  # noqa: BLE001 - never let the loop die
+                    print(f"[{self.capability}] loop error: {exc}")
+                time.sleep(poll_interval_s)
+        finally:
+            store.withdraw_job_capacity(self.capability, network_id)
 
     def serve_once(self, store: RynmeshStore, *, network_id: str) -> int:
         """One polling pass. Returns the number of orders processed."""

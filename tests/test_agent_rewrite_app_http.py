@@ -80,7 +80,7 @@ def test_task_http_discovers_writes_real_desk_and_retries_without_duplicate(node
     with TestClient(app) as client:
         assert client.post("/api/local/agent/tasks", json={"message": "not authorized"}).status_code == 401
         response = client.put("/api/local/agent/settings", headers=headers, json={
-            "enabled": True, "model_id": "local:test", "permission_mode": "automatic",
+            "enabled": True, "model_id": "local:test", "permission_mode": "confirm_changes",
             "allowed_write_tools": [ACTION], "desktop_access": False})
         assert response.status_code == 200
         settings_before = client.get("/api/local/agent/settings", headers=headers).json()

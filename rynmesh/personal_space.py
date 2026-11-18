@@ -19,6 +19,7 @@ import urllib.request
 import uuid
 from pathlib import Path
 
+from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
@@ -49,8 +50,12 @@ class SpaceError(ValueError):
 def _name(value):
     value = str(value or "").strip()
     if not value or len(value) > 32:
-        raise SpaceError("Use a name between 1 and 32 characters.")
+        raise SpaceError("space_name_invalid")
     return value
+
+
+def _clip_name(value):
+    return str(value or "").strip()[:32]
 
 
 def _encode(value):
@@ -113,7 +118,9 @@ class PersonalSpace:
             raise SpaceError("Space authority does not match the invitation.")
         if space_id and p.get("id") != space_id:
             raise SpaceError("Space identity does not match.")
-        if not isinstance(p.get("members"), dict) or len(p["members"]) > 64:
+        if not isinstance(p.get("members"), dict) or sum(
+            not member.get("removed") for member in p["members"].values()
+        ) > 64:
             raise SpaceError("Invalid member list.")
         if "access_revision" in p and (type(p["access_revision"]) is not int
                 or not 1 <= p["access_revision"] <= p["revision"]):
@@ -136,11 +143,18 @@ class PersonalSpace:
 
     def _sign(self, snapshot):
         snapshot = copy.deepcopy(snapshot)
+        issued_at = self.clock()
+        # Legacy tombstones have no removal time; retain them for one lease.
+        snapshot["members"] = {
+            peer: member for peer, member in snapshot["members"].items()
+            if not member.get("removed")
+            or member.setdefault("removed_at", issued_at) > issued_at - LEASE_SECONDS
+        }
         previous = self._snapshot()
         def authority_state(value):
             return (value.get("id"), value.get("authority"), {
                 peer: {key: member.get(key) for key in ("role", "removed")}
-                for peer, member in value.get("members", {}).items()})
+                for peer, member in value.get("members", {}).items() if not member.get("removed")})
         # Lease renewals and display-name syncs are not authorization changes.
         # Keep a signed monotonic access revision, including remove/rejoin ABA.
         access_revision = previous.get("access_revision", previous.get("revision", 0))
@@ -148,15 +162,36 @@ class PersonalSpace:
             access_revision += 1
         snapshot["access_revision"] = access_revision
         snapshot["revision"] = snapshot.get("revision", 0) + 1
-        issued_at = self.clock()
         snapshot["issued_at"] = issued_at
         snapshot["valid_until"] = issued_at + LEASE_SECONDS
         self.data["snapshot"] = sign_payload(
             snapshot, private_key_bytes=self.store.private_key_bytes
         ).to_dict()
 
+    def _clear_invalid_invitation(self):
+        if "last_invitation" not in self.data and "last_invitation_id" not in self.data:
+            return False
+        invitation = self.data.get("invites", {}).get(self.data.get("last_invitation_id"))
+        if invitation and invitation["expires_at"] > self.clock() and not (
+            invitation.get("revoked") or invitation.get("used_by")
+        ):
+            return False
+        self.data.pop("last_invitation", None)
+        self.data.pop("last_invitation_id", None)
+        return True
+
+    def _remember_invitation(self, result):
+        if "invites" in result:
+            self.data["invites"] = result["invites"]
+        if result.get("invitation"):
+            self.data["last_invitation"] = result["invitation"]
+            self.data["last_invitation_id"] = result["invitation_id"]
+        self._clear_invalid_invitation()
+
     def status(self):
         with self.lock:
+            if self._clear_invalid_invitation():
+                self._save()
             p = self._snapshot()
             member = p.get("members", {}).get(self.store.peer_id, {})
             fresh = bool(p) and p["valid_until"] > self.clock()
@@ -185,6 +220,7 @@ class PersonalSpace:
                     if value["action"] != "sync"
                 ],
                 "last_error": self.last_error or self.data.get("operation_error", ""),
+                "name_rejected": bool(self.data.get("name_rejected")),
                 "invitation": self.data.get("last_invitation", ""),
                 "invites": [
                     {
@@ -212,7 +248,7 @@ class PersonalSpace:
                     "box": public_key_b64(self.box),
                     "members": {
                         self.store.peer_id: {
-                            "name": _name(self.store.node_name),
+                            "name": _name(_clip_name(self.store.node_name)),
                             "role": "manager",
                             "removed": False,
                         }
@@ -243,17 +279,18 @@ class PersonalSpace:
                 raise SpaceError(
                     "This invitation has expired, was cancelled, or has already been used."
                 )
-            if len(p["members"]) >= 64 and sender not in p["members"]:
-                raise SpaceError("This space has reached its device limit.")
             # Ordinary invitations never promote an existing device.
             if sender in p["members"] and not p["members"][sender].get("removed"):
                 raise SpaceError("This device is already a member.")
+            if sum(not member.get("removed") for member in p["members"].values()) >= 64:
+                raise SpaceError("This space has reached its device limit.")
             p["members"][sender] = {
                 "name": _name(args.get("name")),
                 "role": "device",
                 "removed": False,
             }
             invitation["used_by"] = sender
+            self._clear_invalid_invitation()
             self._sign(p)
             return {}
         if action == "sync":
@@ -265,11 +302,15 @@ class PersonalSpace:
                 and args.get("name")
                 and args["name"] != p["members"][sender]["name"]
             )
+            result = {}
             if changed_name:
-                p["members"][sender]["name"] = _name(args["name"])
+                try:
+                    p["members"][sender]["name"] = _name(args["name"])
+                except SpaceError:
+                    result["name_rejected"] = True
             if changed_name or self.clock() - p["issued_at"] > 3600:
                 self._sign(p)
-            return {}
+            return result
         self._manager(sender)
         if action == "invite":
             hours = int(args.get("hours", 24))
@@ -298,12 +339,13 @@ class PersonalSpace:
                 "expires_at": expires,
             }
             signed = sign_payload(payload, private_key_bytes=self.store.private_key_bytes).to_dict()
-            return {"invitation": INVITE_PREFIX + _encode(signed)}
+            return {"invitation": INVITE_PREFIX + _encode(signed), "invitation_id": key}
         if action == "cancel_invite":
             invitation = self.data.get("invites", {}).get(str(args.get("id")))
             if not invitation:
                 raise SpaceError("Invitation not found.")
             invitation["revoked"] = True
+            self._clear_invalid_invitation()
             return {}
         target = str(args.get("peer_id", ""))
         if target == p["authority"]:
@@ -314,6 +356,7 @@ class PersonalSpace:
             raise SpaceError("Device not found.")
         if action == "remove":
             p["members"][target]["removed"] = True
+            p["members"][target]["removed_at"] = self.clock()
             # Previously issued invitations cannot outlive the authority of their issuer.
             for invite in self.data.get("invites", {}).values():
                 if invite.get("issuer") == target:
@@ -337,8 +380,7 @@ class PersonalSpace:
             if self._authority():
                 result = self._apply(action, args, self.store.peer_id)
                 self.data["operation_error"] = ""
-                if "invitation" in result:
-                    self.data["last_invitation"] = result["invitation"]
+                self._remember_invitation(result)
                 self._save()
                 return self.status()
             self._queue(action, args, self._snapshot())
@@ -458,6 +500,11 @@ class PersonalSpace:
                         body["action"], body.get("args", {}), order.requester_peer_id
                     )
                     result["snapshot"] = self.data["snapshot"]
+                    member = self._snapshot()["members"].get(order.requester_peer_id, {})
+                    # Signed, encrypted replies keep delegated managers' invite caches current.
+                    result["invites"] = self.data.get("invites", {}) if (
+                        member.get("role") == "manager" and not member.get("removed")
+                    ) else {}
                 except (SpaceError, ValueError, KeyError) as exc:
                     self.data = before
                     result = {"error": str(exc)}
@@ -539,16 +586,27 @@ class PersonalSpace:
             with self.lock:
                 p = copy.deepcopy(self._snapshot())
                 authority = self._authority()
-                if authority and self.clock() - p["issued_at"] > 3600:
-                    self._sign(p)
-                    self._save()
+                if authority:
+                    changed = False
+                    if self.clock() - p["issued_at"] > 3600:
+                        self._sign(p)
+                        changed = True
+                    for key, expiry_field in (("invites", "expires_at"), ("replies", "expires")):
+                        records = self.data.get(key, {})
+                        live = {k: v for k, v in records.items() if v[expiry_field] > self.clock()}
+                        if live != records:
+                            self.data[key] = live
+                            changed = True
+                    changed = self._clear_invalid_invitation() or changed
+                    if changed:
+                        self._save()
                 if (
                     p
                     and not authority
                     and not self.data.get("pending")
                     and self.clock() - self.last_poll >= 30
                 ):
-                    self._queue("sync", {"name": self.store.node_name}, p)
+                    self._queue("sync", {"name": _clip_name(self.store.node_name)}, p)
                     self.last_poll = self.clock()
                 pending = copy.deepcopy(self.data.get("pending", {}))
             if authority:
@@ -620,8 +678,9 @@ class PersonalSpace:
                                         {"node_name": name}
                                     )
                                     self.store.node_name = name
-                            if body.get("invitation"):
-                                self.data["last_invitation"] = body["invitation"]
+                            self._remember_invitation(body)
+                            if request["action"] == "sync":
+                                self.data["name_rejected"] = bool(body.get("name_rejected"))
                             self.data["operation_error"] = str(body.get("error", ""))
                             self.data["pending"].pop(request_id, None)
                             self._save()
@@ -731,26 +790,32 @@ def restore_backup(bundle, password, destination):
     root = Path(destination)
     if root.exists() and any(root.iterdir()):
         raise SpaceError("Recovery requires an empty directory and a stopped node.")
-    if bundle.get("version") != 1 or len(str(bundle.get("ciphertext", ""))) > 200000:
-        raise SpaceError("Invalid recovery file.")
-    salt = base64.b64decode(bundle["salt"], validate=True)
-    key = Scrypt(salt=salt, length=32, n=2**15, r=8, p=1).derive(password.encode())
-    raw = AESGCM(key).decrypt(
-        base64.b64decode(bundle["nonce"]),
-        base64.b64decode(bundle["ciphertext"]),
-        b"ryn.space.recovery.v1",
-    )
-    payload = json.loads(raw)
-    from .crypto import public_key_from_private
+    try:
+        if bundle["version"] != 1 or len(bundle["ciphertext"]) > 200000:
+            raise ValueError("Invalid recovery file")
+        salt = base64.b64decode(bundle["salt"], validate=True)
+        key = Scrypt(salt=salt, length=32, n=2**15, r=8, p=1).derive(password.encode())
+        raw = AESGCM(key).decrypt(
+            base64.b64decode(bundle["nonce"], validate=True),
+            base64.b64decode(bundle["ciphertext"], validate=True),
+            b"ryn.space.recovery.v1",
+        )
+        payload = json.loads(raw)
+        from .crypto import public_key_from_private
+        from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
-    identity = base64.b64decode(payload["identity"], validate=True)
-    signed = SignedPayload.from_dict(payload["state"]["snapshot"])
-    verify_signed_payload(signed)
-    if signed.public_key != public_key_from_private(identity):
-        raise SpaceError("Recovery identity mismatch.")
+        identity = base64.b64decode(payload["identity"], validate=True)
+        box = base64.b64decode(payload["box"], validate=True)
+        X25519PrivateKey.from_private_bytes(box)
+        signed = SignedPayload.from_dict(payload["state"]["snapshot"])
+        verify_signed_payload(signed)
+        if signed.public_key != public_key_from_private(identity):
+            raise ValueError("Recovery identity mismatch")
+    except (KeyError, ValueError, TypeError, InvalidTag) as exc:
+        raise SpaceError("恢复文件无效或密码错误") from exc
     root.mkdir(parents=True, exist_ok=True)
     atomic_write_bytes(root / "identity.ed25519", (payload["identity"] + "\n").encode("utf-8"))
-    atomic_write_bytes(root / "space-messaging.key", base64.b64decode(payload["box"], validate=True))
+    atomic_write_bytes(root / "space-messaging.key", box)
     atomic_write_bytes(
         root / "personal-space.json",
         (json.dumps(payload["state"], indent=2, sort_keys=True, ensure_ascii=False) + "\n").encode("utf-8"),
@@ -760,6 +825,7 @@ def restore_backup(bundle, password, destination):
 def main():
     import argparse
     import getpass
+    import sys
 
     parser = argparse.ArgumentParser(
         description="Restore a personal-space coordinator into a fresh node home. Stop the old coordinator first."
@@ -767,11 +833,15 @@ def main():
     parser.add_argument("backup", type=Path)
     parser.add_argument("destination", type=Path)
     args = parser.parse_args()
-    restore_backup(
-        json.loads(args.backup.read_text()),
-        getpass.getpass("Recovery password: "),
-        args.destination,
-    )
+    try:
+        try:
+            bundle = json.loads(args.backup.read_text())
+        except ValueError as exc:
+            raise SpaceError("恢复文件无效或密码错误") from exc
+        restore_backup(bundle, getpass.getpass("Recovery password: "), args.destination)
+    except SpaceError as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(2) from None
     print(
         "Recovered. Start Ryn with RYNMESH_HOME pointing to the destination. Never run the old coordinator at the same time."
     )

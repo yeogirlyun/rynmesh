@@ -151,7 +151,7 @@ def test_owner_messages_that_outgrow_the_model_context_continue_in_a_new_convers
     # Compacted earlier owner messages stay bounded, so normal turns continue in place;
     # when the pinned floor plus a large new owner message outgrows the window while
     # still fitting a fresh summary-seeded task, the conversation continues in a new one.
-    continued = send(runtime, tid, "Final large batch: " + "detail " * 8500)
+    continued = send(runtime, tid, "Final large batch: " + "detail " * 7100)
     assert continued["id"] != tid and continued["continued_from"] == row["id"]
     assert runtime.get(row["id"])["continued_to"] == continued["id"]
     advance(runtime)

@@ -293,8 +293,12 @@ def test_tool_interruption_never_claims_uncertain_path(env, monkeypatch):
         write(e, "uncertain", "bytes did get written")
     monkeypatch.setattr(FileReview, "save", original)
     assert (e.workspace / "uncertain").read_bytes() == b"bytes did get written"
-    assert get(e)["files"][0]["problem"] == "interrupted_file_operation"
-    assert not preview(e)["can_undo"]
+    # S05-I33: a durable writing intent whose after hash matches is now verified.
+    entry = get(e)["files"][0]
+    assert entry["problem"] is None and entry["state"] == "applied"
+    assert preview(e)["can_undo"]
+    assert undo(e)["status"] == "completed"
+    assert not (e.workspace / "uncertain").exists()
 
 
 @pytest.mark.parametrize("path", ["../outside", ".git/config", ".git/objects/evil"])

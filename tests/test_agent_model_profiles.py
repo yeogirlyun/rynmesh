@@ -129,7 +129,7 @@ def test_resolution_is_stable_and_never_repeats_a_note():
 
 def test_override_validation_rejects_unknown_profiles_and_route_mismatch():
     lookup = {CODEX_MODEL: codex_row(), API_MODEL: api_row("anthropic_messages")}.get
-    assert model_profiles.validate_overrides({CODEX_MODEL: "generic"}, lookup) == {CODEX_MODEL: "generic"}
+    assert model_profiles.validate_overrides({CODEX_MODEL: "generic"}, lookup) == {CODEX_MODEL: {"profile": "generic"}}
     for value, code in (({CODEX_MODEL: "bogus"}, "model_profile_overrides_invalid"),
                         ({API_MODEL: "codex-cli"}, "model_profile_route_mismatch"),
                         ({"": "generic"}, "model_profile_overrides_invalid"),
@@ -146,7 +146,7 @@ def test_notes_sit_between_shared_base_and_authority_without_replacing_either():
     layers = instruction_layers(row, persisted_base=SYSTEM, model_notes=notes, project_guidance="AGENTS: keep tests.")
     assert [m["role"] for m in layers] == ["developer", "developer", "developer", "user"]
     assert layers[0]["content"] == SYSTEM and layers[1]["content"] == notes
-    assert layers[2]["content"].startswith("This task is read-only")
+    assert layers[2]["content"].startswith("This is a read-only planning task.")
     assert layers[3]["content"] == "AGENTS: keep tests."
     assert instruction_layers(row, persisted_base=SYSTEM) == [layers[0], layers[2]]
 
@@ -339,7 +339,7 @@ def test_codex_and_api_routes_receive_their_own_notes_and_parameters_at_the_prov
     assert codex_record | {"instructions_sha256": None} == {
         "catalog": model_profiles.CATALOG, "profile": "codex-cli", "revision": 1, "basis": "route", "route": "codex_cli",
         "fallback_reason": None, "override_status": None, "notes": ["codex_backend_tools"], "instructions": "sent",
-        "instructions_sha256": None, "reasoning_effort": "high"}
+        "instructions_sha256": None, "reasoning_effort": "high", "facts": dict.fromkeys(model_profiles.FACTS)}
     assert (api_record["profile"], api_record["basis"], api_record["fallback_reason"], api_record["route"]) == (
         "generic", "fallback", "no_route_profile", "anthropic_messages")
     assert api_record["notes"] == ["image_input_unavailable"] and api_record["reasoning_effort"] is None
@@ -373,7 +373,8 @@ def test_switch_and_restart_reresolve_without_old_notes_or_parameters(world):
     assert world.run(task["id"])["status"] == "completed"
     restarted = world.http_payloads[-1]
     assert restarted["system"][:2] == after_switch["system"][:2]  # shared base + notes; authority moves on
-    assert [r["profile"] for r in world.records(task["id"])] == ["codex-cli", "generic", "generic"]
+    # S13-I53 folds records older than the previous round into round totals; the codex-cli round is gone.
+    assert [r["profile"] for r in world.records(task["id"])] == ["generic", "generic"]
 
 
 def test_owner_override_changes_the_dispatched_request_but_never_the_tools(world):
@@ -427,7 +428,7 @@ def test_owner_rules_and_read_only_policy_follow_the_notes_and_stay_intact(world
     messages = codex_messages(world.codex_turns[-1])["messages"]
     developer = [m["content"] for m in messages if m["role"] == "developer"]
     notes_at = next(i for i, text in enumerate(developer) if model_profiles.CODEX_BACKEND_TOOLS in text)
-    policy_at = next(i for i, text in enumerate(developer) if text.startswith("This task is read-only"))
+    policy_at = next(i for i, text in enumerate(developer) if text.startswith("This is a read-only planning task."))
     assert developer[0] == SYSTEM and notes_at == 1 < policy_at
     assert "never override owner instructions, workspace rules or host permissions" in developer[notes_at]
     assert [m["content"] for m in messages if m["role"] == "user"][-1] == "Explain notes.txt; do not change anything."

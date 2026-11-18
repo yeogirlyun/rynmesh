@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { nodeControlUrl } from "../domain/nodeUrl";
 import type { AgentTask } from "../domain/rynAgent";
+import { agentErrorHelp } from "./rynAgentErrors";
 import "./RynAgentFork.css";
 
 type Boundary = { message_count: number; token: string; role: string; preview: string };
@@ -24,6 +25,9 @@ export function RynAgentForkSource({ task, onChoose }: { task: AgentTask; onChoo
     <p>{zh ? "来源：" : "Forked from: "}<button type="button" onClick={() => onChoose(task.fork!.source_task_id)}>{task.fork.source_title}</button>
       {zh ? `，第 ${task.fork.message_count} 条消息之后` : `, after message ${task.fork.message_count}`}</p>
     <p>{zh ? "会话独立，但文件共享。" : "Independent conversation, shared files."}</p>
+    {"compacted" in task.fork && task.fork.compacted === true && (
+      <p>{zh ? "早期内容已压成摘要" : "Earlier content has been summarized."}</p>
+    )}
   </div></section>;
 }
 
@@ -90,7 +94,9 @@ export default function RynAgentFork({ task, onCreated, onChoose, showSource = t
       {error.includes("reference_requires_source_task") && <p>{zh ? "历史包含绑定来源任务的资源或桌面观察引用，当前不能迁移；请在这些操作之前的位置分叉。" : "History contains task-bound resource or desktop observation references that cannot be transferred. Choose an earlier boundary."}</p>}
       {error.includes("reference_limit") && <p>{zh ? "复制的引用总量超过 40 MiB 或 256 个文件，请选择更早的位置。" : "Copied references exceed 40 MiB or 256 files. Choose an earlier boundary."}</p>}
       {error.includes("attachment_unavailable") && <p>{zh ? "附件缺失或已被修改，请恢复原附件，或选择附件之前的位置。" : "An attachment is missing or changed. Restore it or choose an earlier boundary."}</p>}
-      {error && <p role="alert">{zh ? "创建未完成，请检查位置、权限及附件/结果引用后重试：" : "Creation did not complete. Check the boundary, permissions and attachment/result references, then retry: "}{error}</p>}
+      {error && <p role="alert">{error.includes("agent_fork_too_large")
+        ? agentErrorHelp("agent_fork_too_large", zh).text
+        : (zh ? "创建未完成，请检查位置、权限及附件/结果引用后重试：" : "Creation did not complete. Check the boundary, permissions and attachment/result references, then retry: ") + error}</p>}
       <button type="button" disabled={busy || !count || !title.trim()} onClick={() => void create()}>{busy ? (zh ? "处理中…" : "Working…") : (zh ? "创建并打开分叉" : "Create and open fork")}</button>{" "}
       <button type="button" disabled={busy} onClick={() => setOpen(false)}>{zh ? "关闭" : "Close"}</button>
     </section></div>, document.body)}

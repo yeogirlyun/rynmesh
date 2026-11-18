@@ -34,7 +34,7 @@ it("keeps new UI copy translated without regressing inherited upstream English c
   // Product names, protocol acronyms, commands, paths and example IDs are literal.
   const literals = new Set([
     "ChatGPT", "Ryn", "R", "NAS", "CLI ·", "Ollama", "Token", "Token ·", "API Key", "· v", "v", "ms",
-    "https://example.com/v1", "qwen", "20260518__casefile__example-tt-deep-veo",
+    "https://example.com/v1", "http://127.0.0.1:7890", "qwen", "20260518__casefile__example-tt-deep-veo",
     "ollama.com/download", "ollama pull gemma3:4b", "ollama pull", "ANTHROPIC_API_KEY",
     "~/.rynmesh/control_token", "net.egress", "https://nas.example.com:5006", "Work/Reports", "ryn-invite-v1:…",
   ]);

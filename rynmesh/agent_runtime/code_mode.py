@@ -40,9 +40,31 @@ from .chrome_runtime import PACKAGE_ROOT as CHROME_RUNTIME_DIR
 from .js_runtime.manager import sanitized_worker_env
 from .local_browser import find_browser
 from .output_policy import MAX_RAW_RESPONSE_BYTES, MAX_TOOL_CALL_ARGUMENT_BYTES
-from .protocol import sanitized
+from .protocol import sanitized, sanitized_tool_result
 from .store import AgentToolRejected, encoded
 from .tool_dispatch import MAX_PARALLEL_TOOLS, ToolDispatchGate, supports_parallel
+
+
+_NODE_AVAILABILITY_CACHE = (0.0, None)
+_NODE_AVAILABILITY_LOCK = threading.Lock()
+
+
+def node_available() -> str | None:
+    """Cache the current runtime path (including absence) for sixty seconds."""
+    global _NODE_AVAILABILITY_CACHE
+    with _NODE_AVAILABILITY_LOCK:
+        now = time.monotonic()
+        expires, path = _NODE_AVAILABILITY_CACHE
+        if now < expires:
+            return path
+        try:
+            path = _resolve_node_binary()
+        except AgentToolRejected as exc:
+            if str(exc) != "agent_code_exec_node_unavailable":
+                raise
+            path = None
+        _NODE_AVAILABILITY_CACHE = (now + 60, path)
+        return path
 
 
 def _resolve_node_binary() -> str:
@@ -1473,11 +1495,17 @@ class CodeModeRunner:
                 "values": copy.deepcopy(values),
             }
 
+    def _desktop_access(self, context: dict[str, Any] | None) -> bool:
+        local = getattr(self.parent_tools, "local", None)
+        if local is not None and context:
+            return bool(local.policy(context or {})["desktop_access"])
+        return bool(((context or {}).get("local_execution") or {}).get("desktop_access"))
+
     def _read_only_catalog(self, context: dict[str, Any] | None) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]], list[dict[str, str]]]:
         specs_by_name: dict[str, dict[str, Any]] = {}
         meta_by_name: dict[str, dict[str, Any]] = {}
         enabled_tools: list[dict[str, str]] = []
-        desktop_enabled = bool(((context or {}).get("local_execution") or {}).get("desktop_access"))
+        desktop_enabled = self._desktop_access(context)
 
         specs = (self.parent_tools.specs(context=context)
                  if getattr(self.parent_tools, "supports_model_context", False) is True else self.parent_tools.specs())
@@ -1527,7 +1555,7 @@ class CodeModeRunner:
         task_id = str(ctx.get("task_id") or "")
         epoch = int(ctx.get("context_epoch", 0))
         scope_revision = int(ctx.get("scope_revision", 1))
-        desktop_enabled = bool(((ctx.get("local_execution") or {}) if isinstance(ctx.get("local_execution"), dict) else {}).get("desktop_access"))
+        desktop_enabled = self._desktop_access(ctx)
 
         stored_values = self._get_stored_values(task_id, epoch, scope_revision, reset=reset)
         specs_by_name, meta_by_name, enabled_tools = self._read_only_catalog(ctx)
@@ -1623,12 +1651,13 @@ class CodeModeRunner:
             try:
                 dispatch = ctx.get("_dispatch_child_tool")
                 if callable(dispatch):
-                    res = sanitized(dispatch(raw_name, copy.deepcopy(raw_args), **exec_kwargs))
+                    res = sanitized_tool_result(dispatch(raw_name, copy.deepcopy(raw_args), **exec_kwargs))
                 else:
                     # Standalone tool hosts retain the same admission policy.
-                    with self._dispatch_gate.enter(task_id, parallel=supports_parallel(raw_name, meta),
+                    with self._dispatch_gate.enter(task_id, parallel=supports_parallel(raw_name, meta, raw_args,
+                                                       workspace_root=(ctx.get("local_execution") or {}).get("workspace_root")),
                                                    cancelled=child_cancelled):
-                        res = sanitized(self.parent_tools.execute(raw_name, copy.deepcopy(raw_args), **exec_kwargs))
+                        res = sanitized_tool_result(self.parent_tools.execute(raw_name, copy.deepcopy(raw_args), **exec_kwargs))
                 if child_ctx is not None and isinstance(child_ctx.get("_deferred_observed_files"), dict):
                     parent_deferred = ctx.get("_deferred_observed_files")
                     if isinstance(parent_deferred, dict):

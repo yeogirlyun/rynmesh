@@ -216,7 +216,8 @@ def test_writing_emoji_to_gbk_file_rejected_with_char_and_line(local_env):
     assert gbk_path.read_bytes() == initial_bytes
 
 
-def test_file_search_matches_gbk_and_utf16_files(local_env):
+def test_file_search_matches_gbk_and_utf16_files(local_env, monkeypatch):
+    monkeypatch.setattr(local_tools, "resolve_rg_executable", lambda: None)
     tools, context, workspace = local_env
     (workspace / "app_gbk.log").write_bytes("2026-11-15 警告\r\n2026-11-15 错误：数据库连接超时\r\n".encode("gbk"))
     (workspace / "cfg_u16.ini").write_bytes(b"\xff\xfe" + "说明=数据库连接池配置\r\n".encode("utf-16-le"))
@@ -228,7 +229,8 @@ def test_file_search_matches_gbk_and_utf16_files(local_env):
     assert result["too_large_files"] == 0
 
 
-def test_file_search_reports_non_text_files_and_too_large_files(local_env):
+def test_file_search_reports_non_text_files_and_too_large_files(local_env, monkeypatch):
+    monkeypatch.setattr(local_tools, "resolve_rg_executable", lambda: None)
     tools, context, workspace = local_env
     (workspace / "valid.txt").write_text("target needle line\n", encoding="utf-8")
 

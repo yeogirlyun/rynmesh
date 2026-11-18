@@ -1,5 +1,7 @@
 """Project grants, restart/revocation and real file tools through the Agent loop."""
 import json
+import os
+import shutil
 import threading
 import uuid
 from types import SimpleNamespace
@@ -139,7 +141,7 @@ def test_slow_task_does_not_block_other_task_or_duplicate_dispatch(tmp_path):
     entered, release = threading.Event(), threading.Event()
     calls = []
     def complete(_id, messages, *_args):
-        content = next(m["content"] for m in messages if m["role"] == "user")
+        content = next(m["content"] for m in messages if m["role"] == "user" and m["content"] in {"slow", "fast"})
         calls.append(content)
         if content == "slow":
             entered.set()
@@ -441,10 +443,12 @@ def _make_agents_md_bytes(target_bytes: int) -> bytes:
 def _legacy_untruncated_guidance(row: dict, full_text: str) -> str:
     project = row["project"]
     path = project.get("path") or ""
+    shell = ("pwsh" if shutil.which("pwsh") else "powershell") if os.name == "nt" else "sh"
     info = {key: project[key] for key in ("name", "path", "entry_files", "manifests", "directories") if key in project}
     env_block = (
         "<environment_context>\n"
         f"  <cwd>{path}</cwd>\n"
+        f"  <shell>{shell}</shell>\n"
         f"  <project>{json.dumps(info, ensure_ascii=False, separators=(',', ':'))}</project>\n"
         "</environment_context>"
     )
@@ -504,7 +508,8 @@ def test_agents_md_32kib_budget_truncation_marker_and_task_event(tmp_path, size_
 
     instructions = row["project"]["instructions"]
     assert instructions["bytes"] == target_bytes
-    assert instructions["sha256"] == hashlib.sha256(raw_bytes).hexdigest()
+    assert instructions["sha256"] == hashlib.sha256(raw_bytes[:64 * 1024]).hexdigest()
+    assert instructions["sha256_scope"] == ("read_prefix" if expect_incomplete else "full_file")
     assert instructions["incomplete"] is expect_incomplete
 
     rendered = projects.guidance(row)
@@ -512,7 +517,11 @@ def test_agents_md_32kib_budget_truncation_marker_and_task_event(tmp_path, size_
 
     if not expect_truncated:
         assert "[AGENTS.md truncated:" not in rendered
-        assert rendered == _legacy_untruncated_guidance(row, raw_bytes.decode("utf-8"))
+        expected = _legacy_untruncated_guidance(row, raw_bytes.decode("utf-8")).replace(
+            "</environment_context>",
+            "</environment_context>\n\nReview: list problems the change introduced, most serious first, each with [P0-P3], "
+            "file:line and the triggering input; then open questions. Say so if none.", 1)
+        assert rendered == expected
         assert trunc_events == []
     else:
         inner = rendered.split("<INSTRUCTIONS>\n", 1)[1].rsplit("\n</INSTRUCTIONS>", 1)[0]
@@ -589,10 +598,12 @@ def test_s03_i4_project_guidance_git_non_git_and_no_project(tmp_path):
 
     runtime, _, _, _ = project_runtime(tmp_path / "state")
 
-    # 1. No project -> empty guidance and rules never injected
+    # 1. No project -> environment only; project rules are never injected.
     no_proj_task = runtime.create({"message": "Plain task"})
     no_proj_row = runtime.store.read()["tasks"][no_proj_task["id"]]
-    assert projects.guidance(no_proj_row) == ""
+    plain_guidance = projects.guidance(no_proj_row)
+    assert "<environment_context>" in plain_guidance and "<shell>" in plain_guidance
+    assert f'<cwd>{no_proj_row["local_execution"]["workspace_root"]}</cwd>' in plain_guidance
     no_proj_ctx = json.dumps(runtime._context(no_proj_row))
     assert git_rule not in no_proj_ctx
     assert eng_rule not in no_proj_ctx

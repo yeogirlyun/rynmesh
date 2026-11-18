@@ -1,8 +1,12 @@
 import * as legacy from "./llmConversationStore";
 import type { LLMConversation } from "./llmConversationStore";
+import type { LLMOrderChat } from "./nodeClient";
 import { nodeControlUrl } from "./nodeUrl";
 
 const errors: Record<string, string> = {
+  ask_output_reserve_too_large: "输出预留过大，降低输出预留后仍无法容纳输入。请选择更大上下文的模型。",
+  ask_summary_too_large: "被省略的历史超过当前模型的摘要输入预算。请选择更大上下文的模型或手动整理摘要。原对话已保留。",
+  ask_summary_not_needed: "当前没有被省略的历史，请重新预览。",
   ask_cli_model_unavailable: "This model selection is only available for this device's Codex CLI. Review the service and model before sending.",
   sync_recovery_not_deleted: "This conversation is still in history. Delete it there before discarding its recovery.",
   sync_recovery_busy: "The original task is still being checked. Wait for its outcome, then refresh recovery.",
@@ -38,6 +42,9 @@ export interface AskSource {
   source_number?: number; included_bytes?: number; budget_truncated?: boolean; text?: string;
 }
 export interface AskPreview {
+  chat?: LLMOrderChat;
+  prompt_format?: string;
+  output_reserve_warning?: string;
   cli_model?: string;
   service_review: { token: string; model_alias: string; pricing: { input_per_1k: number; output_per_1k: number; minimum: number; maximum_per_task: number; currency: string } };
   ai_permission?: { relationship_id: string; revision: number };
@@ -136,6 +143,7 @@ export const askHistory = {
   prepareNas: (source_id: string, path: string) => request<AskSource>("/contexts/nas", "POST", { source_id, path }),
   context: (libraryId: string) => request<AskSource>(`/contexts/${encodeURIComponent(libraryId)}`),
   preview: (conversation: LLMConversation, question: string) => request<AskPreview>("/preview", "POST", { conversation_id: conversation.id, expected_revision: conversation.revision, question }),
+  summaryPreview: (conversation: LLMConversation, question: string) => request<AskPreview>("/summary-preview", "POST", { conversation_id: conversation.id, expected_revision: conversation.revision, question }),
   draft: () => request<{ text: string; revision: number }>("/draft"),
   saveDraft: (text: string, revision: number) => request<{ text: string; revision: number }>("/draft", "PUT", { text, expected_revision: revision }),
   list: async (serviceKey?: string) => (await request<{ conversations: LLMConversation[] }>(`/conversations${serviceKey ? `?service_key=${encodeURIComponent(serviceKey)}` : ""}`)).conversations,

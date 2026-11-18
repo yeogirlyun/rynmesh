@@ -100,7 +100,7 @@ export function writeAgentWorkspace(settings: AgentSettings | null, models: Agen
   try {
     const publicSettings = settings ? {
       enabled: settings.enabled, model_id: settings.model_id, permission_mode: settings.permission_mode,
-      allowed_write_tools: settings.allowed_write_tools, workspace_root: settings.workspace_root, desktop_access: settings.desktop_access,
+      allowed_write_tools: settings.allowed_write_tools, denied_tools: settings.denied_tools, workspace_root: settings.workspace_root, desktop_access: settings.desktop_access,
       max_steps: settings.max_steps, max_seconds: settings.max_seconds,
       max_context_chars: settings.max_context_chars, max_output_chars: settings.max_output_chars,
     } : null;

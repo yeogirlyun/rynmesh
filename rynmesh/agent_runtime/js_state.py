@@ -11,6 +11,7 @@ import json
 import math
 import re
 from typing import Any
+from .output_policy import MAX_TOOL_CALL_ARGUMENT_BYTES
 
 from .js_runtime.protocol import (
     MAX_CODE_BYTES,
@@ -24,9 +25,9 @@ from .js_runtime.protocol import (
 JS_STATE_VERSION = 1
 CONTAINER_TOOL_NAME = "ryn_js_execute"
 
-# Preserve router's smaller 96 KiB tool-call argument limit for parent code/calls.
-ROUTER_MAX_ARGUMENT_BYTES = 96 * 1024
-MAX_PARENT_CODE_BYTES = min(MAX_CODE_BYTES, ROUTER_MAX_ARGUMENT_BYTES)
+# Child calls share the router budget; parent JavaScript retains its own cap.
+ROUTER_MAX_ARGUMENT_BYTES = MAX_TOOL_CALL_ARGUMENT_BYTES
+MAX_PARENT_CODE_BYTES = min(MAX_CODE_BYTES, 96 * 1024)
 MAX_JS_STATE_BYTES = 1024 * 1024
 MAX_OUTBOX_PAYLOAD_BYTES = MAX_RESULT_BYTES
 MAX_ADMITTED_CALLBACKS = 64
@@ -316,14 +317,13 @@ OUTBOX_ITEM_KEYS = frozenset({
     "outcome",
     "not_executed",
     "result_ref",
-    "payload",
     "payload_sha256",
     "delivery_state",
     "recorded_at",
 })
 
 OUTBOX_ITEM_ALLOWED_KEYS = OUTBOX_ITEM_KEYS | frozenset({
-    "result_ref_sha256",
+    "result_ref_sha256", "payload",
 })
 
 FATAL_FENCE_ALLOWED_KEYS = frozenset({
@@ -867,6 +867,14 @@ def _validate_admitted_callbacks(
     return validated
 
 
+def validate_outbox_payload(payload):
+    _validate_bounded_json_tree(payload, depth=1, max_depth=MAX_STATE_DEPTH - 2, forbid_inline_media=True)
+    payload_bytes = _canonical_bytes(payload)
+    if len(payload_bytes) > MAX_OUTBOX_PAYLOAD_BYTES:
+        raise JsStateValidationError("agent_js_state_limit", "Outbox payload exceeds MAX_OUTBOX_PAYLOAD_BYTES")
+    return payload_bytes
+
+
 def _validate_delivery_outbox(
     raw: Any,
     *,
@@ -945,14 +953,14 @@ def _validate_delivery_outbox(
                 _require_sha256(item["result_ref_sha256"], "outbox.result_ref_sha256")
         elif item.get("result_ref_sha256") is not None:
             raise JsStateValidationError("agent_invalid_js_state", "outbox.result_ref_sha256 requires a non-null result_ref")
-        payload = item["payload"]
-        _validate_bounded_json_tree(payload, depth=1, max_depth=MAX_STATE_DEPTH - 2, forbid_inline_media=True)
-        payload_bytes = _canonical_bytes(payload)
-        if len(payload_bytes) > MAX_OUTBOX_PAYLOAD_BYTES:
-            raise JsStateValidationError("agent_js_state_limit", "Outbox payload exceeds MAX_OUTBOX_PAYLOAD_BYTES")
         payload_sha = _require_sha256(item["payload_sha256"], "outbox.payload_sha256")
-        if hashlib.sha256(payload_bytes).hexdigest() != payload_sha:
-            raise JsStateValidationError("agent_invalid_js_state", "Outbox payload_sha256 mismatch")
+        if "payload" in item:
+            payload = item["payload"]
+            payload_bytes = validate_outbox_payload(payload)
+            if hashlib.sha256(payload_bytes).hexdigest() != payload_sha:
+                raise JsStateValidationError("agent_invalid_js_state", "Outbox payload_sha256 mismatch")
+        elif item["receipt_id"] is None:
+            raise JsStateValidationError("agent_invalid_js_state", "Outbox without payload requires a receipt")
         if item["delivery_state"] not in DELIVERY_STATES:
             raise JsStateValidationError("agent_invalid_js_state", f"Invalid delivery_state: {item['delivery_state']!r}")
         if not isinstance(item["recorded_at"], str) or not item["recorded_at"].strip() or len(item["recorded_at"]) > 64:

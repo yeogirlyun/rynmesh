@@ -12,7 +12,7 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from test_agent_runtime import Tools, advance, make_runtime
 
 from rynmesh.agent_runtime import diagnostics as agent_diagnostics
-from rynmesh.agent_runtime.bridge import OUTPUT_LIMIT_REACHED_FEEDBACK, AgentModelBridge
+from rynmesh.agent_runtime.bridge import AgentModelBridge
 from rynmesh.agent_runtime.models import ModelCatalog
 from rynmesh.agent_runtime.runtime import AgentRuntime
 from rynmesh.agent_runtime.store import AgentStore
@@ -161,7 +161,9 @@ def test_t2_connect_cli_writes_conservative_windows_32k_output_and_cli_default_b
     rows = {r["id"]: r for r in catalog.list_models()}
     claude_row = rows["local/claude-cli"]
     assert claude_row["context_window"] == 200000
-    assert claude_row["max_output_tokens"] == 32000
+    assert claude_row["max_output_tokens"] == 4096
+    assert claude_row["max_output_tokens_known"] is False
+    assert claude_row["max_output_basis"] == "unknown_fallback"
     assert claude_row["context_window_known"] is False
     assert claude_row["context_window_basis"] == "cli_default"
 
@@ -404,21 +406,15 @@ def test_t5_bridge_retries_once_doubling_max_tokens_capped_at_model_limit_and_fa
     # 1) Doubling: 1024 -> 2048 (<= 4096), reasoning_effort="high" preserved, feedback injected, succeeds on retry
     task1 = runtime.create({"message": "Solve this", "reasoning_effort": "high"})
     runtime.run_once()
-    row1_mid = runtime.store.read()["tasks"][task1["id"]]
-    assert row1_mid["status"] == "queued"
-    assert row1_mid["model_retry_count"] == 1
-    assert len(calls) == 1
-    assert calls[0]["max_tokens"] == 1024
-    assert calls[0]["reasoning_effort"] == "high"
-
-    runtime.run_once()
     done1 = runtime.get(task1["id"])
     assert done1["status"] == "completed"
     assert done1["result"] == "Final concise answer"
-    assert len(calls) == 2
-    assert calls[1]["max_tokens"] == 2048
+    assert [call["max_tokens"] for call in calls] == [1024, 2048]
+    assert calls[0]["reasoning_effort"] == "high"
+    assert any(e["type"] == "output_limit_raised" for e in done1["events"])
+    assert done1["budget"]["lifetime"]["model_calls"] == 2
     assert calls[1]["reasoning_effort"] == "high"
-    assert OUTPUT_LIMIT_REACHED_FEEDBACK in json.dumps(calls[1]["messages"], ensure_ascii=False)
+    assert calls[1]["messages"] == calls[0]["messages"]
 
     # 2) Capped at model max_output_tokens (min(2 * 1024, 1500) == 1500) and fails with Chinese guidance on second empty
     calls.clear()
@@ -426,14 +422,9 @@ def test_t5_bridge_retries_once_doubling_max_tokens_capped_at_model_limit_and_fa
     fail_second[0] = True
     task2 = runtime.create({"message": "Solve harder", "reasoning_effort": "high"})
     runtime.run_once()
-    assert len(calls) == 1
-    assert calls[0]["max_tokens"] == 1024
-
-    runtime.run_once()
     done2 = runtime.get(task2["id"])
     raw2 = runtime.store.read()["tasks"][task2["id"]]
-    assert len(calls) == 2
-    assert calls[1]["max_tokens"] == 1500
+    assert [call["max_tokens"] for call in calls] == [1024, 1500]
     assert calls[1]["reasoning_effort"] == "high"
     assert done2["status"] == "failed"
     assert done2["error"] == "agent_model_output_limit_reached"

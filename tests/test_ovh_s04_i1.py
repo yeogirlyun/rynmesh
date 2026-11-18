@@ -353,7 +353,7 @@ def test_tail_read_mode_and_schema_end_to_end(tmp_path):
 
         assert res["running"] is True
         assert res["output"].strip().endswith("LATEST_RUNNING_TAIL_MARKER")
-        assert len(res["output"]) == PAGE_CHARS
+        assert len(res["output"]) == min(PAGE_CHARS, res["output_length"])
         assert res["next_offset"] is None
 
         via_kw = tools.processes.read(pid, context["task_id"], tail=True, wait_seconds=0)

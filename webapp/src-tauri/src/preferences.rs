@@ -15,12 +15,13 @@ pub struct Preferences {
     pub auto_recover: bool,
     pub keep_awake: bool,
     pub close_notice_seen: bool,
+    pub awake_notice_seen: bool,
 }
 impl Default for Preferences {
     fn default() -> Self {
         Self { background: true, startup: false, startup_supported: cfg!(windows),
             awake_supported: crate::desktop::awake_supported(),
-            silent_start: true, auto_recover: true, keep_awake: false, close_notice_seen: false }
+            silent_start: true, auto_recover: true, keep_awake: false, close_notice_seen: false, awake_notice_seen: false }
     }
 }
 fn settings_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
@@ -86,6 +87,7 @@ pub fn set_desktop_preferences(app: tauri::AppHandle, state: tauri::State<Deskto
     prefs.startup_supported = cfg!(windows);
     prefs.awake_supported = crate::desktop::awake_supported();
     prefs.close_notice_seen = old.close_notice_seen;
+    prefs.awake_notice_seen = old.awake_notice_seen;
     let path = settings_path(&app)?;
     if let Some(parent) = path.parent() { std::fs::create_dir_all(parent).map_err(|e| e.to_string())?; }
     let pending = path.with_extension("tmp");
@@ -99,9 +101,15 @@ pub fn set_desktop_preferences(app: tauri::AppHandle, state: tauri::State<Deskto
     Ok(prefs)
 }
 pub fn acknowledge_close(app: &tauri::AppHandle) {
+    acknowledge_notice(app, |prefs| prefs.close_notice_seen = true);
+}
+pub fn acknowledge_awake_notice(app: &tauri::AppHandle) {
+    acknowledge_notice(app, |prefs| prefs.awake_notice_seen = true);
+}
+fn acknowledge_notice(app: &tauri::AppHandle, update: impl FnOnce(&mut Preferences)) {
     let state = app.state::<DesktopState>();
     let mut prefs = state.prefs.lock().unwrap();
-    prefs.close_notice_seen = true;
+    update(&mut prefs);
     if let Ok(path) = settings_path(app) {
         if let Some(parent) = path.parent() { let _ = std::fs::create_dir_all(parent); }
         let pending = path.with_extension("tmp");

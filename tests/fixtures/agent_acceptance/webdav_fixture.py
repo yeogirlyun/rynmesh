@@ -84,9 +84,9 @@ class FixtureDAV:
             raise ValueError("invalid_fixture_path")
         return relative, path
 
-    def _listing(self, relative, path):
+    def _listing(self, relative, path, *, include_children=True):
         tree = ET.Element("{DAV:}multistatus")
-        for target in [path, *sorted(path.iterdir())]:
+        for target in [path, *(sorted(path.iterdir()) if include_children else [])]:
             if target.name == ".ryn-acceptance-isolated" or target.is_symlink():
                 continue
             child = str(target.relative_to(self.root)).replace("\\", "/")
@@ -100,6 +100,7 @@ class FixtureDAV:
             if target.is_dir():
                 ET.SubElement(kind, "{DAV:}collection")
             ET.SubElement(prop, "{DAV:}getcontentlength").text = str(target.stat().st_size if target.is_file() else 0)
+            ET.SubElement(prop, "{DAV:}getlastmodified").text = str(target.stat().st_mtime_ns)
             ET.SubElement(propstat, "{DAV:}status").text = "HTTP/1.1 200 OK"
         return ET.tostring(tree, encoding="utf-8", xml_declaration=True)
 
@@ -128,12 +129,13 @@ class FixtureDAV:
                         else:
                             body, status = path.read_bytes(), 200
                     elif request.command == "PROPFIND":
-                        if request.headers.get("Depth") != "1":
+                        depth = request.headers.get("Depth")
+                        if depth not in {"0", "1"}:
                             status = 400
-                        elif not path.is_dir():
+                        elif not path.exists() or (depth == "1" and not path.is_dir()):
                             status = 404
                         else:
-                            body, status = self._listing(relative, path), 207
+                            body, status = self._listing(relative, path, include_children=depth == "1"), 207
                     elif request.command == "PUT":
                         size = int(request.headers.get("Content-Length", "-1"))
                         if not 0 <= size <= MAX_BODY:

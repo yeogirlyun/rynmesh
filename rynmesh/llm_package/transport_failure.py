@@ -7,6 +7,7 @@ import socket
 import ssl
 import time
 from email.utils import parsedate_to_datetime
+from datetime import datetime
 from urllib.error import HTTPError
 
 REASONS = {
@@ -25,6 +26,7 @@ REASONS = {
     "request_rejected",
     "auth_rejected",
     "context_overflow",
+    "region_blocked",
 }
 
 _MAX_ERROR_BODY_BYTES = 64 * 1024
@@ -63,6 +65,7 @@ _IMAGE_ERROR_CODES = frozenset({
 _CONTEXT_OVERFLOW_MARKERS = (
     "context_length_exceeded",
     "context_window_exceeded",
+    "contextwindowexceeded",
     "context_exceeded",
     "maximum context length",
     "prompt is too long",
@@ -74,6 +77,12 @@ _QUOTA_CODES = frozenset({
     "insufficient_quota",
     "billing_hard_limit_reached",
     "credit_balance_too_low",
+    "credit_balance_exhausted",
+    "organization_spend_limit_exceeded",
+    "usage_limit_reached",
+    "quota_exceeded",
+    "Arrearage",
+    "insufficient_balance",
 })
 _TRANSIENT_PREFIXES = ("rate_limit", "overloaded")
 _TRANSIENT_CODES = frozenset({
@@ -146,6 +155,8 @@ def _is_client_rejection_token(token: str) -> bool:
 
 def context_overflow(envelope, status=None) -> bool:
     """True when a 4xx/stream error envelope indicates context length overflow. Keeps no text."""
+    if status is not None and not 400 <= status < 500:
+        return False
     if status == 413:
         return True
     if not isinstance(envelope, dict):
@@ -196,6 +207,66 @@ def image_rejection(envelope, status=None):
     return False
 
 
+def _message_retry_after(message):
+    match = re.search(r"try again in (\d+(?:\.\d+)?)\s*(ms|s)", message, re.I)
+    if match:
+        seconds = float(match[1]) / (1000 if match[2].lower() == "ms" else 1)
+        return min(seconds, 86400)
+    return None
+
+
+def _header_retry_after(headers, now):
+    waits = []
+    value = headers.get("retry-after")
+    if value:
+        try:
+            seconds = float(value)
+        except (ValueError, TypeError):
+            try:
+                seconds = parsedate_to_datetime(value).timestamp() - now
+            except (ValueError, TypeError, OverflowError):
+                seconds = -1
+        if math.isfinite(seconds) and seconds >= 0:
+            waits.append(seconds)
+    for kind in ("requests", "tokens"):
+        value = headers.get("x-ratelimit-reset-" + kind, "")
+        if re.fullmatch(r"(?:\d+(?:\.\d+)?(?:ms|h|m|s))+", value):
+            seconds = sum(float(n) * {"h": 3600, "m": 60, "s": 1, "ms": .001}[unit]
+                          for n, unit in re.findall(r"(\d+(?:\.\d+)?)(ms|h|m|s)", value))
+            waits.append(seconds)
+        value = headers.get("anthropic-ratelimit-" + kind + "-reset")
+        if value:
+            try:
+                stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                if stamp.tzinfo is not None:
+                    waits.append(max(0, stamp.timestamp() - now))
+            except (ValueError, OverflowError):
+                pass
+    return min(max(waits), 86400) if waits else None
+
+
+def _model_limit_details(envelope):
+    """Retain only numeric bounds and a closed refusal flag, never provider text."""
+    _, _, param, message = _extract_envelope_fields(envelope)
+    text = message.lower()
+    result = {}
+    if any(name in (param + " " + text).lower() for name in ("max_tokens", "max_completion_tokens", "max_output_tokens")) and any(
+            marker in text for marker in ("at most", "exceed", "too large", "less than", "maximum", "<=", "upper bound")):
+        result["output_tokens_too_large"] = True
+        match = re.search(r"(?:at most|<=|≤|less than(?: or equal to)?|maximum(?: allowed)?(?: value)?(?: is)?|upper bound(?: is)?)\s*[:=]?\s*(\d[\d,]*)", text)
+        if match:
+            value = int(match[1].replace(",", ""))
+            if match[0].startswith("less than") and not match[0].startswith("less than or equal to"):
+                value -= 1
+            if value > 0:
+                result["output_tokens_limit"] = value
+    if context_overflow(envelope):
+        match = re.search(r"(?:max(?:imum)? context (?:length|window)|context (?:length|window)(?: limit)?)\s*(?:is|of|:|=)?\s*(\d[\d,]*)", text)
+        if match and (value := int(match[1].replace(",", ""))) > 0:
+            result["context_window_limit"] = value
+    return result
+
+
 def describe(exc, phase="request", envelope=None):
     if isinstance(exc, HTTPError):
         result = {"network_reason": "http", "network_phase": phase, "http_status": exc.code}
@@ -203,6 +274,12 @@ def describe(exc, phase="request", envelope=None):
         code_l, type_l, msg_l = code.lower(), err_type.lower(), msg.lower()
         tokens = [t for t in (code, err_type) if t]
         tokens_l = [t.lower() for t in tokens]
+        if exc.code in {400, 422} and (param.lower() in {"stream", "body.stream"}
+                or ("stream" in msg_l and any(word in msg_l for word in _REFUSAL_WORDS))):
+            result["streaming_unsupported"] = True
+
+        if exc.code in {400, 413, 422}:
+            result.update(_model_limit_details(envelope))
 
         if (
             exc.code == 529
@@ -217,10 +294,16 @@ def describe(exc, phase="request", envelope=None):
         if 400 <= exc.code < 500 and tools_rejection(envelope, status=exc.code):
             result["tools_unsupported"] = True
 
-        if any(t in _QUOTA_CODES for t in tokens):
-            result["network_reason"] = "quota"
-        elif not result.get("image_rejected") and 400 <= exc.code < 500 and context_overflow(envelope, status=exc.code):
+        headers = {name.lower(): value for name, value in (exc.headers or {}).items()}
+        if exc.code == 413:
             result["network_reason"] = "context_overflow"
+        elif exc.code == 402 or any(t in _QUOTA_CODES for t in tokens):
+            result["network_reason"] = "quota"
+        elif 400 <= exc.code < 500 and context_overflow(envelope, status=exc.code):
+            result["network_reason"] = "context_overflow"
+        elif exc.code == 403 and "blocked" in msg_l and (
+                "cloudflare" in headers.get("server", "").lower() or "cloudflare" in msg_l):
+            result["network_reason"] = "region_blocked"
         elif exc.code in {401, 403}:
             result["network_reason"] = "auth_rejected"
         elif 400 <= exc.code < 500 and not result.get("image_rejected") and not result.get("overloaded"):
@@ -232,19 +315,19 @@ def describe(exc, phase="request", envelope=None):
                 elif exc.code == 422 and isinstance(envelope, dict) and any(k in envelope for k in ("detail", "error", "code", "type")):
                     result["network_reason"] = "request_rejected"
 
-        headers = exc.headers or {}
-        value = headers.get("Retry-After") or headers.get("retry-after")
-        if value:
-            try:
-                seconds = float(value)
-            except (ValueError, TypeError):
-                try:
-                    seconds = parsedate_to_datetime(value).timestamp() - time.time()
-                except (ValueError, TypeError, OverflowError):
-                    seconds = -1
-            if math.isfinite(seconds) and seconds >= 0:
-                # Values beyond a day always exceed the runtime's time budget.
-                result["retry_after_seconds"] = min(seconds, 86400)
+        now = time.time()
+        seconds = _header_retry_after(headers, now)
+        if seconds is None and exc.code == 429:
+            seconds = _message_retry_after(msg)
+        if seconds is not None:
+            result["retry_after_seconds"] = seconds
+            if result["network_reason"] == "quota":
+                result["reset_at"] = int(now + seconds)
+        for name in ("x-request-id", "request-id", "cf-ray"):
+            value = headers.get(name, "")
+            if re.fullmatch(r"[A-Za-z0-9_:\-]+", value):
+                result["upstream_request_id"] = value[:128]
+                break
         return result
     reason = getattr(exc, "reason", None)
     cause = reason if isinstance(reason, BaseException) else exc
@@ -314,11 +397,20 @@ def classify_stream_error(event, phase="read"):
     tokens = [t for t in (code, err_type) if t]
     tokens_l = [t.lower() for t in tokens]
 
+    if any(t.startswith("rate_limit") or t == "too_many_requests" for t in tokens_l):
+        seconds = _message_retry_after(msg)
+        if seconds is not None:
+            diagnostics["retry_after_seconds"] = seconds
+
     if any(t in _QUOTA_CODES for t in tokens):
         diagnostics["network_reason"] = "quota"
         return "upstream_request_rejected", diagnostics
+    diagnostics.update(_model_limit_details(envelope))
     if any(t in {"context_length_exceeded", "context_window_exceeded", "context_exceeded"} for t in tokens_l) or context_overflow(envelope):
         diagnostics["network_reason"] = "context_overflow"
+        return "upstream_context_overflow", diagnostics
+    if diagnostics.get("output_tokens_too_large"):
+        diagnostics["network_reason"] = "request_rejected"
         return "upstream_request_rejected", diagnostics
     if code_l == "generation_cancelled":
         return "inference_failed", diagnostics
@@ -351,12 +443,19 @@ def _fallback_minimal_envelope(raw: bytes):
     msg_match = _MESSAGE_PREFIX_RE.search(head)
     if msg_match:
         extracted["message"] = msg_match.group(1)[:2000]
+    elif "blocked" in head.lower():
+        extracted["message"] = "cloudflare blocked" if "cloudflare" in head.lower() else "blocked"
+    else:
+        seconds = _message_retry_after(head)
+        if seconds is not None:
+            extracted["message"] = f"try again in {seconds}s"
     return {"error": extracted} if extracted else None
 
 
 def read_http_failure(exc, phase="request", *, detail_codes=None):
     """Read a bounded 64 KiB envelope (with 16 KiB regex fallback) to extract closed error flags."""
     envelope = None
+    raw = b""
     matched_detail = None
     try:
         raw = exc.read(_MAX_ERROR_BODY_BYTES + 1)
@@ -377,6 +476,10 @@ def read_http_failure(exc, phase="request", *, detail_codes=None):
     except OSError:
         envelope = None
     diagnostics = describe(exc, phase, envelope)
+    if exc.code == 429 and "retry_after_seconds" not in diagnostics and raw:
+        seconds = _message_retry_after(raw[:_FALLBACK_SCAN_BYTES].decode("utf-8", errors="replace"))
+        if seconds is not None:
+            diagnostics["retry_after_seconds"] = seconds
     if detail_codes is not None:
         return diagnostics, matched_detail
     return diagnostics

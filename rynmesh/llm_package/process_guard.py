@@ -114,14 +114,7 @@ def communicate_bounded(process, data: bytes, *, timeout: float, root):
         process.stdout.close()
 
 
-def _windows_job(
-    process,
-    *,
-    memory_limit=2 * 1024**3,
-    cpu_rate=2500,
-    process_limit=16,
-    before_resume=None,
-):
+def _windows_extended_type():
     import ctypes as c
     from ctypes import wintypes as w
 
@@ -138,6 +131,35 @@ def _windows_job(
     class Extended(c.Structure):
         _fields_ = [("basic", Basic), ("io", IO), ("process_memory", c.c_size_t),
                     ("job_memory", c.c_size_t), ("peak_process", c.c_size_t), ("peak_job", c.c_size_t)]
+
+    return Extended
+
+
+def windows_job_peak_memory(job):
+    """Read the job peak before its handle is closed."""
+    import ctypes as c
+    from ctypes import wintypes as w
+
+    limits = _windows_extended_type()()
+    query = c.WinDLL("kernel32", use_last_error=True).QueryInformationJobObject
+    query.argtypes = [w.HANDLE, c.c_int, c.c_void_p, w.DWORD, c.c_void_p]
+    if not query(job, 9, c.byref(limits), c.sizeof(limits), None):
+        raise OSError("Document memory accounting unavailable")
+    return limits.peak_job
+
+
+def _windows_job(
+    process,
+    *,
+    memory_limit=2 * 1024**3,
+    cpu_rate=2500,
+    process_limit=16,
+    before_resume=None,
+):
+    import ctypes as c
+    from ctypes import wintypes as w
+
+    Extended = _windows_extended_type()
 
     class CPU(c.Structure):
         _fields_ = [("flags", w.DWORD), ("rate", w.DWORD)]

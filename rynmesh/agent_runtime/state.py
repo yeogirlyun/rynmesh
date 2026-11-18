@@ -11,6 +11,7 @@ CONTROL_EVENTS = {"created", "workspace_bound", "message_added", "approval_reque
 CONTROL_EVENTS.add("approval_no_longer_required")
 CONTROL_EVENTS.add("connection_paused")
 CONTROL_EVENTS.update({"message_edit_requested", "message_edited"})
+CONTROL_EVENTS.update({"message_rollback_requested", "message_rolled_back"})
 CONTROL_EVENTS.add("unknown_outcome_acknowledged")
 PUBLIC_STATE_FIELDS = ("schema_version", "goal", "criteria", "plan", "control_revision", "event_cursor",
                        "run_state", "pending_input", "outcome", "scope_revision")
@@ -55,7 +56,8 @@ def synchronize(row: dict) -> None:
     row["run_state"] = ({"completed": "ended", "failed": "ended", "cancelled": "ended",
                          "interrupted": "reconciling" if row.get("error") == "agent_write_outcome_unknown" else "paused"}
                         .get(row["status"], row["status"]))
-    if row.get("pending_control") and row.get("in_flight") and row["status"] != "cancelled":
+    if (row.get("pending_control") and row["pending_control"]["kind"] != "information"
+            and row.get("in_flight") and row["status"] != "cancelled"):
         row["run_state"] = "pausing"
     if row.get("error") == "agent_write_outcome_unknown":
         row["outcome"].update(status="unknown", uncertainties=["A dispatched write has no confirmed outcome."])
@@ -180,6 +182,7 @@ def record_goal_history(row: dict) -> None:
 def owner_update(row: dict, message: dict) -> None:
     """Called only after the authenticated owner entry point validates input."""
     record_goal_history(row)
+    row.pop("task_grants", None)
     goal = row["goal"]
     goal["revision"] += 1
     goal["constraints"].append({"id": "constraint:" + message["message_id"], "text": message["content"], "source": "user",

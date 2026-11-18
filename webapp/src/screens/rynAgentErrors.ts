@@ -1,9 +1,17 @@
 /** Every task error and refused send gets plain words and at least one way forward. */
-export type AgentErrorAction = "continue" | "retry" | "switch_model" | "new_task" | "open_sources";
+export type AgentErrorAction = "continue" | "retry" | "switch_model" | "new_task" | "open_sources" | "open_extensions";
 
 interface ErrorHelp { zh: string; en: string; actions: AgentErrorAction[] }
 
 const HELP: Record<string, ErrorHelp> = {
+  agent_fork_too_large: {
+    zh: "这段对话太长，无法分叉；请从靠后的位置分叉",
+    en: "This conversation is too long to fork. Choose a later point to fork.",
+    actions: ["retry"] },
+  agent_image_too_large: {
+    zh: "图片太大，请压缩后重发。", en: "The image is too large. Compress it and send it again.", actions: ["retry"] },
+  agent_image_count_limit: {
+    zh: "图片太多，单次最多 4 张，请减少图片后重发。", en: "Too many images. Send no more than 4 images at a time.", actions: ["retry"] },
   agent_image_input_unsupported: {
     zh: "这次没能把图片交给当前模型。换一个带图片图标的模型，或者直接继续发文字。",
     en: "The image could not be given to the selected model. Pick a model with the image icon, or continue in text.",
@@ -76,6 +84,10 @@ const HELP: Record<string, ErrorHelp> = {
     zh: "模型因内容安全策略中断或拒答了这次回复。请调整表述后继续，或换一个模型。",
     en: "The model stopped or refused this reply due to its content safety filter. Rephrase your message to continue, or pick another model.",
     actions: ["continue", "switch_model"] },
+  agent_extension_state_limit: {
+    zh: "插件和 MCP 配置太大，请移除不用的插件或服务器",
+    en: "Plugin and MCP configuration is too large. Remove unused plugins or servers.",
+    actions: ["open_extensions"] },
   agent_storage_limit: {
     zh: "保存任务的磁盘可用空间不足。请释放该磁盘的空间后重试，对话已保留。",
     en: "The disk holding your tasks has insufficient free space. Free space on that disk and retry; your conversation is preserved.",
@@ -108,6 +120,7 @@ const LABELS: Record<AgentErrorAction, [string, string]> = {
   switch_model: ["换模型", "Switch model"],
   new_task: ["新对话", "New conversation"],
   open_sources: ["检查模型来源", "Check model sources"],
+  open_extensions: ["打开扩展", "Open extensions"],
 };
 
 export function agentErrorHelp(code: string, zh: boolean): { text: string; actions: AgentErrorAction[] } {

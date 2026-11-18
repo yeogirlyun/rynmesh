@@ -10,8 +10,9 @@ from .store import AgentError, AgentToolRejected, encoded
 from .subagents import SUBAGENT_TOOL_NAMES
 
 NAME = "ryn_discover_tools"
-# Loads accumulate only with at least this much schema space; smaller windows
-# replace the loaded set, because every kept schema crowds out conversation.
+MAX_EXPOSED_TOOLS = 120
+# Larger windows reserve more room for pinned/control schemas. Explicit loads
+# append at every capacity; eviction still enforces the actual window bound.
 ADDITIVE_CAPACITY = 48000
 # Windows up to this many request bytes keep plan/input/result schemas behind
 # discovery and send only the slimmest menu.
@@ -32,6 +33,25 @@ SPEC = {"type": "function", "function": {"name": NAME,
         "load": {"type": "array", "maxItems": 8, "uniqueItems": True, "items": {"type": "string", "minLength": 1, "maxLength": 128}},
         "unload": {"type": "array", "maxItems": 8, "uniqueItems": True, "items": {"type": "string", "minLength": 1, "maxLength": 128}}},
         "additionalProperties": False}}}
+
+
+def dedupe_specs(specs, reserved=()):
+    """Keep the first definition, excluding host-reserved tool names."""
+    seen, unique, dropped = set(reserved), [], []
+    for spec in specs:
+        try:
+            function = spec["function"] if spec.get("type") == "function" else spec
+            name = function["name"]
+            if not isinstance(name, str):
+                raise TypeError("invalid tool name")
+        except (KeyError, TypeError, AttributeError):
+            raise AgentError("agent_tool_definition_changed") from None
+        if name in seen:
+            dropped.append(name)
+        else:
+            seen.add(name)
+            unique.append(spec)
+    return unique, list(dict.fromkeys(dropped))
 
 
 def _tokenize(text: str) -> list[str]:
@@ -136,6 +156,21 @@ def release(state):
             "revision": state["revision"] + 1}
 
 
+def record_usage(row, names, *, epoch):
+    """Keep call recency outside schema state, including across step resets."""
+    if row.get("context_epoch", 0) != epoch:
+        return
+    usage = row.setdefault("tool_menu_usage", {})
+    step = max(row["steps"], max(usage.values(), default=-1) + 1)
+    usage.update({name: step for name in names})
+
+
+def _victim(loaded, requested, usage):
+    candidates = [name for name in reversed(loaded) if name not in requested]
+    unused = next((name for name in candidates if name not in usage), None)
+    return unused if unused is not None else min(candidates, key=lambda name: usage[name], default=None)
+
+
 def project(business_specs, internal_specs, state, *, max_context_bytes, authority_bytes, epoch, goal_revision,
             initial_names=(), pinned_names=()):
     """Return (schemas, durable state), without changing any caller-owned data.
@@ -144,6 +179,8 @@ def project(business_specs, internal_specs, state, *, max_context_bytes, authori
     they fit, so ordinary file/shell work never spends a model step on
     discovery. They are recomputed each projection and never count as loads.
     """
+    internal_specs, _ = dedupe_specs(internal_specs, {NAME})
+    business_specs, _ = dedupe_specs(business_specs, {NAME, *(s["function"]["name"] for s in internal_specs)})
     internal = [
         spec for spec in internal_specs
         if spec["function"]["name"] != NAME
@@ -168,12 +205,12 @@ def project(business_specs, internal_specs, state, *, max_context_bytes, authori
     # picked full mode there and spent kilobytes the history needed.
     small_lazy_base = [directory_spec(all_specs)] if internal and max_context_bytes <= SMALL_WINDOW_BYTES else base
     directory_useful = len(encoded(all_specs)) > len(encoded(small_lazy_base))
-    mode = "directory" if (len(encoded(full_specs)) > limit or
+    mode = "directory" if (len(full_specs) > MAX_EXPOSED_TOOLS or len(encoded(full_specs)) > limit or
                            directory_useful and (len(encoded(full_specs)) > target or prior.get("mode") == "directory")) else "full"
     # In a small window, unused plan/input/result schemas can occupy more
     # space than all usable conversation. Keep them discoverable instead of
     # repeatedly summarizing or unloading necessary business schemas.
-    lazy = bool(internal) and mode == "directory" and (max_context_bytes <= SMALL_WINDOW_BYTES or len(encoded(base)) > limit)
+    lazy = bool(internal) and mode == "directory" and (max_context_bytes <= SMALL_WINDOW_BYTES or len(encoded(base)) > limit or len(base) > MAX_EXPOSED_TOOLS)
     catalog = [*business_specs, *internal] if lazy else business_specs
     revision = catalog_revision(catalog)
     binding = {"catalog_revision": revision, "context_epoch": epoch, "goal_revision": goal_revision, "lazy_controls": lazy}
@@ -183,17 +220,14 @@ def project(business_specs, internal_specs, state, *, max_context_bytes, authori
         and prior.get("lazy_controls") == lazy
     )
     same = same_epoch and prior.get("goal_revision") == goal_revision
-    # Normal/additive windows keep discovered tool schemas across owner follow-ups
+    # Medium/large windows keep discovered tool schemas across owner follow-ups
     # so the tools prefix at token 0 remains KV-cache stable across turns.
-    keep_loaded = same or (same_epoch and max_context_bytes >= ADDITIVE_CAPACITY)
+    keep_loaded = same or (same_epoch and max_context_bytes > SMALL_WINDOW_BYTES)
     if lazy:
         base = [directory_spec(catalog)]
     loaded = list(prior.get("loaded_names", [])) if keep_loaded and mode == "directory" else []
     by_name = {spec["function"]["name"]: spec for spec in catalog}
-    if len(by_name) != len(catalog) or NAME in by_name:
-        raise AgentError("agent_tool_definition_changed")
-    if any(name not in by_name for name in loaded):
-        raise AgentError("agent_tool_definition_changed")
+    loaded = [name for name in loaded if name in by_name]
     requested_pins = [name for name in dict.fromkeys(pinned_names) if name in by_name]
     if "pinned_candidates" in prior:
         prior_candidates = list(prior.get("pinned_candidates") or [])
@@ -226,7 +260,7 @@ def project(business_specs, internal_specs, state, *, max_context_bytes, authori
         if max_context_bytes >= ADDITIVE_CAPACITY
         else min(seed_limit, max_context_bytes // 10)
     )
-    released = bool(same and not pins_changed and prior.get("pins_released"))
+    released = bool(same and not pins_changed and prior.get("pins_released") and not prior.get("degraded"))
     if pins_changed:
         removed_candidates = set(prior_candidates) - set(requested_pins)
         loaded = [name for name in loaded if name not in removed_candidates]
@@ -234,7 +268,7 @@ def project(business_specs, internal_specs, state, *, max_context_bytes, authori
         for name in requested_pins:
             if name not in pinned:
                 candidate = [*base, *(by_name[item] for item in [*pinned, name])]
-                if len(encoded(candidate)) <= pin_limit:
+                if len(candidate) <= MAX_EXPOSED_TOOLS and len(encoded(candidate)) <= pin_limit:
                     pinned.append(name)
         loaded = [name for name in loaded if name not in pinned]
     if mode == "directory" and (not prior.get("mode") or not same or (pins_changed and not released)):
@@ -254,14 +288,29 @@ def project(business_specs, internal_specs, state, *, max_context_bytes, authori
         if mode == "full":
             return full_specs
         return [*base, *(by_name[name] for name in [*pinned, *names])]
-    # Loaded schemas are a reloadable cache: release the least recently loaded
-    # before refusing, as pinned core tools now share the same space.
+    while mode == "directory" and loaded and len(exposure(loaded)) > MAX_EXPOSED_TOOLS:
+        loaded.pop(0)
+    # Trim the tail to retain the longest stable schema prefix. Initial tools
+    # requested for this projection are protected from ordinary cache eviction.
     while mode == "directory" and loaded and len(encoded(exposure(loaded))) > limit:
-        loaded = loaded[1:]
+        victim = next((name for name in reversed(loaded) if name not in initial_names), None)
+        if victim is None:
+            break
+        loaded.remove(victim)
     exposed = exposure(loaded)
+    degraded = None
     if len(encoded(exposed)) > limit:
-        # Never spend a summary request trying to shrink an immutable schema.
-        raise AgentError("agent_tool_schema_limit")
+        # Controls must remain discoverable even when their schemas crowd out
+        # the menu. Release pins too before asking for a larger model.
+        catalog = all_specs
+        binding.update(catalog_revision=catalog_revision(catalog), lazy_controls=True)
+        exposed = [directory_spec(catalog)]
+        loaded, pinned, released = [], [], True
+        degraded = "directory_only"
+        if len(encoded(exposed)) > limit:
+            raise AgentToolRejected("agent_tool_schema_limit", correction="请换更大上下文的模型")
+    elif mode == "directory" and lazy and not loaded and not pinned and len(encoded(full_specs)) > limit:
+        degraded, released = "directory_only", True
     next_state = {**binding, "mode": mode, "loaded_names": loaded,
                   "revision": prior.get("revision", 0)}
     if pinned or prior.get("pinned_names"):
@@ -270,13 +319,22 @@ def project(business_specs, internal_specs, state, *, max_context_bytes, authori
         next_state["pinned_candidates"] = requested_pins
     if released:
         next_state["pins_released"] = True
+    if degraded:
+        next_state.update(degraded=degraded, pinned_names=[])
     if any(prior.get(key) != value for key, value in next_state.items() if key != "revision"):
         next_state["revision"] += 1
     return copy.deepcopy(exposed), next_state
 
 
-def discover(business_specs, internal_specs, metadata, state, args, *, capacity_bytes):
-    """Paged catalog, BM25 query search, and exact load/replace, charged as an ordinary internal tool."""
+def discover(business_specs, internal_specs, metadata, state, args, *, capacity_bytes, usage=None, retain_bytes=None):
+    """Paged catalog, BM25 search and append-only loads within the schema budget.
+
+    ``retain_bytes`` bounds older loads only: past it they are released (unused,
+    then least recently used) while this call's requested schemas stay.
+    """
+    usage = usage or {}
+    internal_specs, _ = dedupe_specs(internal_specs, {NAME})
+    business_specs, _ = dedupe_specs(business_specs, {NAME, *(s["function"]["name"] for s in internal_specs)})
     all_internal = [spec for spec in internal_specs if spec["function"]["name"] != NAME]
     no_subagent_internal = [spec for spec in all_internal if spec["function"]["name"] not in SUBAGENT_TOOL_NAMES]
     if state.get("lazy_controls"):
@@ -297,6 +355,14 @@ def discover(business_specs, internal_specs, metadata, state, args, *, capacity_
     def size(selection):
         return len(encoded([*([] if state.get("lazy_controls") else internal), directory_spec(catalog),
                             *(names[name] for name in [*pinned, *selection])]))
+
+    def retain(loaded, protected):
+        while retain_bytes is not None and size(loaded) > retain_bytes:
+            victim = _victim(loaded, protected, usage)
+            if victim is None:
+                break
+            loaded.remove(victim)
+        return loaded
 
     query_text = args.get("query")
     has_query = isinstance(query_text, str) and bool(query_text.strip())
@@ -319,8 +385,6 @@ def discover(business_specs, internal_specs, metadata, state, args, *, capacity_
             raise AgentToolRejected("agent_unknown_tool")
         if "load" in args and not requested:
             loaded = []  # load [] clears every loaded (not pinned) schema.
-        elif "load" in args and capacity_bytes < ADDITIVE_CAPACITY:
-            loaded = [name for name in requested if name not in pinned]
         else:
             loaded = [name for name in next_state["loaded_names"] if name not in removed and name not in pinned]
             for name in requested:
@@ -329,31 +393,29 @@ def discover(business_specs, internal_specs, metadata, state, args, *, capacity_
         # Adding never silently drops what this call asked for: older loads
         # are released first, and an unloadable request is still refused.
         while size(loaded) > capacity_bytes:
-            victim = next((name for name in loaded if name not in requested), None)
+            victim = _victim(loaded, requested, usage)
             if victim is None:
                 raise AgentToolRejected("agent_tool_schema_limit")
             loaded.remove(victim)
+        loaded = retain(loaded, requested)
         if next_state["loaded_names"] != loaded:
             next_state["loaded_names"] = loaded
             next_state["revision"] += 1
     elif has_query and matched_names:
         # Codex-aligned 1-step tool_search: automatically activate matched tools that fit capacity.
-        loaded = [] if capacity_bytes < ADDITIVE_CAPACITY else [
-            name for name in next_state["loaded_names"] if name not in pinned
-        ]
-        added: list[str] = []
+        loaded = [name for name in next_state["loaded_names"] if name not in pinned]
         for name in matched_names:
             if name in pinned or name in loaded:
                 continue
             candidate_loaded = [*loaded, name]
             while size(candidate_loaded) > capacity_bytes:
-                victim = next((n for n in candidate_loaded if n not in added and n != name), None)
+                victim = _victim(candidate_loaded, matched_names, usage)
                 if victim is None:
                     break
                 candidate_loaded.remove(victim)
             if size(candidate_loaded) <= capacity_bytes:
                 loaded = candidate_loaded
-                added.append(name)
+        loaded = retain(loaded, matched_names)
         if next_state["loaded_names"] != loaded:
             next_state["loaded_names"] = loaded
             next_state["revision"] += 1
@@ -380,6 +442,11 @@ def discover(business_specs, internal_specs, metadata, state, args, *, capacity_
             result["always_available"] = avail
         result["query"] = query_text.strip()
         result["matches"] = matched_names or matched_internal
+        if not result["matches"]:
+            result["hint"] = (
+                "If the owner named a plugin that is not installed, tell them to install it from the Applications page "
+                "instead of substituting another tool."
+            )
     if has_query and not browse:
         page_limit = max(256, capacity_bytes // 12)
         for name in matched_names:

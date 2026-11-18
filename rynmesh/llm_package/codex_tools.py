@@ -278,6 +278,7 @@ def chat(adapter, body, *, task_id, timeout_s, model="", on_event=None, scope=No
 
     choice = body.get("tool_choice", "auto")
     tools = {item["function"]["name"]: item["function"] for item in body.get("tools", [])}
+    offered_names = frozenset(tools)
     if choice == "none":
         tools = {}
     elif isinstance(choice, dict):
@@ -314,7 +315,8 @@ def chat(adapter, body, *, task_id, timeout_s, model="", on_event=None, scope=No
                                        **({"reasoning_effort": body["reasoning_effort"]} if "reasoning_effort" in body else {})},
                               task_id=task_id, timeout_s=timeout_s, model=model, output_schema=output_schema,
                               on_text=ContentStream(emit) if stream else None, conversation=conversation)
-        message = _validated(result, tools, required, restore_omitted=output_schema is not None)
+        message = _validated(result, tools, required, restore_omitted=output_schema is not None,
+                             tool_choice=choice, offered_names=offered_names)
     except BaseException:
         # The provider thread now holds a turn the client never received.
         conversation.abandon()
@@ -325,7 +327,7 @@ def chat(adapter, body, *, task_id, timeout_s, model="", on_event=None, scope=No
     return result
 
 
-def _validated(result, tools, required, *, restore_omitted=False):
+def _validated(result, tools, required, *, restore_omitted=False, tool_choice="auto", offered_names=None):
     reason = "response_json"
     try:
         raw_text = result["text"]
@@ -345,22 +347,30 @@ def _validated(result, tools, required, *, restore_omitted=False):
             raise ValueError()
         proposals = value["tool_calls"]
         reason = "tool_calls"
-        if not isinstance(proposals, list) or len(proposals) > MAX_PROPOSALS or (required and not proposals):
+        if not isinstance(proposals, list) or (required and not proposals) or (tool_choice == "none" and proposals):
             raise ValueError()
+        selected_name = tool_choice["function"]["name"] if isinstance(tool_choice, dict) else None
         calls = []
-        for proposal in proposals:
+        for index, proposal in enumerate(proposals):
             reason = "tool_name"
-            if not isinstance(proposal, dict) or set(proposal) != {"name", "arguments"} or proposal["name"] not in tools:
+            if (not isinstance(proposal, dict) or set(proposal) != {"name", "arguments"}
+                    or not isinstance(proposal["name"], str)):
                 raise ValueError()
+            name = proposal["name"]
             arguments = proposal["arguments"]
-            if restore_omitted and isinstance(arguments, dict):
-                arguments = _restore_omitted(arguments, tools[proposal["name"]].get("parameters", {}))
+            if index >= MAX_PROPOSALS:
+                name, arguments = "ryn_proposal_overflow", "{}"
+            elif (selected_name is not None and name != selected_name
+                  and name in (tools if offered_names is None else offered_names)):
+                raise ValueError()
+            elif restore_omitted and isinstance(arguments, dict) and name in tools:
+                arguments = _restore_omitted(arguments, tools[name].get("parameters", {}))
             # Legacy strings remain paired calls even when malformed. Ryn's
             # request-bound router returns a tool error and lets the model fix
             # that call, without retrying valid siblings or the entire reply.
             encoded = arguments if isinstance(arguments, str) else json.dumps(arguments, ensure_ascii=False, allow_nan=False)
             calls.append({"id": "call_" + uuid.uuid4().hex, "type": "function", "function": {
-                "name": proposal["name"], "arguments": encoded}})
+                "name": name, "arguments": encoded}})
     except (ValueError, TypeError, KeyError) as exc:
         rejected = AdapterError("Codex returned an invalid client tool proposal", code="upstream_response_invalid",
                            reported_usage={k: result.get(k) for k in ("input_tokens", "output_tokens")},

@@ -279,8 +279,10 @@ def test_candidates_not_injected_until_accepted_and_never_overwrite_active(tmp_p
     selection_after = store.inspect(check_accepted)
     assert len(selection_after["selected"]) == 1
     assert selection_after["selected"][0]["text"] == "机身是富士 X-T5"
-    assert selection_after["selected"][0]["sources"][0]["task_id"] == "task-chat-1"
-    assert selection_after["selected"][0]["sources"][0]["message_id"] == "msg-1"
+    assert "sources" not in selection_after["selected"][0]
+    stored_entry = store.inspect(lambda data: memory.read_memory_state(data)["entries"][selection_after["selected"][0]["id"]])
+    assert stored_entry["sources"][0]["task_id"] == "task-chat-1"
+    assert stored_entry["sources"][0]["message_id"] == "msg-1"
 
     # Unrelated SQL task should NOT pull in photography gear
     def check_unrelated_sql(data):

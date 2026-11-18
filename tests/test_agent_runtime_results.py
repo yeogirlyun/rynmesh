@@ -11,7 +11,7 @@ from test_agent_runtime_lifecycle import change
 from test_agent_runtime_retry import failing_model
 
 from rynmesh.agent_runtime import results
-from rynmesh.agent_runtime.store import AgentError
+from rynmesh.agent_runtime.store import AgentError, encoded
 
 
 @pytest.mark.parametrize("count", [1, 2])
@@ -85,7 +85,10 @@ def large_result(tmp_path):
 def test_large_result_reference_has_encrypted_pageable_original(tmp_path):
     runtime, model, row, reference = large_result(tmp_path)
     current = runtime.get(row["id"])
-    assert "PRIVATE_LARGE_RESULT_512" not in json.dumps(current)
+    assert "PRIVATE_LARGE_RESULT_512 " * 300 not in json.dumps(current)
+    shown = next(json.loads(m["content"]) for m in current["messages"] if m["role"] == "tool")
+    assert shown["result_ref"] == reference["id"] and shown["truncated_inline"] is True
+    assert len(encoded(shown)) <= current["limits"]["max_output_chars"]
     assert "PRIVATE_LARGE_RESULT_512" not in results.path(runtime.store, row["id"], reference["id"]).read_text()
     output = ""
     offset = 0

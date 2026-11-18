@@ -2,16 +2,25 @@
 from __future__ import annotations
 
 import copy
+from collections import OrderedDict
 import hashlib
 import json
 import re
 import uuid
+from threading import RLock
+
+from cryptography.exceptions import InvalidTag
 
 from ..atomic_io import atomic_write_json, read_json
 from ..services import peer_box
-from .store import AgentError, encoded
+from . import diagnostic_log
+from .store import AgentError, AgentToolRejected, encoded
 
 MAX_RESULT_BYTES = 2 * 1024 * 1024
+MAX_PAGE_CHARS = 65536
+_TEXT_CACHE = OrderedDict()
+_TEXT_CACHE_LOCK = RLock()
+_TEXT_CACHE_MAX_CHARS = 8 * 1024 * 1024
 CHANNEL = b"rynmesh-agent-result-v1"
 WORKSTATION_INLINE_PREVIEW_FIELDS = {
     "ryn_file_read": "text",
@@ -19,11 +28,19 @@ WORKSTATION_INLINE_PREVIEW_FIELDS = {
     "ryn_process_read": "output",
     "ryn_code_exec": "output",
 }
+MODEL_CATALOG_TOOLS = {"ryn_list_models", "ryn_inspect_services"}
 
 
 def model_projection(tool_name: str, result: object) -> object:
-    """Omit an exact MCP text duplicate only from the model-visible copy."""
-    if not tool_name.startswith("mcp__") or not isinstance(result, dict):
+    """Keep model-visible output compact without changing durable observations."""
+    if not isinstance(result, dict):
+        return result
+    if tool_name in MODEL_CATALOG_TOOLS and isinstance(result.get("models"), list):
+        return {**result, "models": [
+            {key: value for key, value in row.items() if key != "model_settings"}
+            for row in result["models"]
+        ]}
+    if not tool_name.startswith("mcp__"):
         return result
     text, blocks = result.get("text"), result.get("content")
     if not isinstance(text, str) or not text or not isinstance(blocks, list) or not blocks:
@@ -70,6 +87,10 @@ def format_reference_result(
     }
     if reference.get("truncated") is True:
         base["truncated"] = True
+    if tool_name in MODEL_CATALOG_TOOLS and isinstance(result, dict):
+        preview = {**model_projection(tool_name, result), **base}
+        if len(encoded(preview)) <= max_bytes:
+            return preview
     field = WORKSTATION_INLINE_PREVIEW_FIELDS.get(tool_name)
     if field and isinstance(result, dict) and isinstance(result.get(field), str):
         preview = {
@@ -155,6 +176,36 @@ def format_reference_result(
                 char_limit = int(char_limit * 0.75) - 16
         if len(encoded(preview)) <= max_bytes:
             return preview
+        return base
+    if tool_name != "ryn_read_result" and isinstance(result, (dict, list, str)):
+        preview = {}
+        if isinstance(result, dict):
+            preview = {
+                key: value for key, value in result.items()
+                if key == "error" or (
+                    isinstance(value, (str, int, float, bool, type(None)))
+                    and (not isinstance(value, str) or len(value) <= 200)
+                )
+            }
+            remaining = {key: value for key, value in result.items() if key not in preview}
+            raw_preview = encoded(remaining).decode("utf-8")
+            preview_field = "structured_preview"
+        else:
+            raw_preview = result if isinstance(result, str) else encoded(result).decode("utf-8")
+            preview_field = "preview"
+        preview.update(base)
+        preview["truncated_inline"] = True
+        available_bytes = max_bytes - len(encoded({**preview, preview_field: ""})) - 64
+        if available_bytes >= 128:
+            char_limit = min(len(raw_preview), available_bytes)
+            while char_limit >= 64:
+                text = truncate_head_tail(raw_preview, char_limit, reference_id=reference["id"])
+                candidate = {**preview, preview_field: text}
+                if len(encoded(candidate)) <= max_bytes:
+                    return candidate
+                char_limit = int(char_limit * 0.75) - 16
+        if len(encoded(preview)) <= max_bytes:
+            return preview
     return base
 
 
@@ -214,7 +265,8 @@ def _truncate_encoded_result(value: object, raw: bytes, max_bytes: int) -> bytes
     )
 
 
-def save(store, row, call, value):
+def seal(store, row, call, value):
+    """Write immutable ciphertext before the caller's reference transaction."""
     raw = encoded(value)
     was_truncated = False
     original_bytes = len(raw)
@@ -236,6 +288,11 @@ def save(store, row, call, value):
     return reference
 
 
+def save(store, row, call, value):
+    """Compatibility entry point; callers register the returned reference."""
+    return seal(store, row, call, value)
+
+
 def checkpoint_note(row: dict) -> str:
     """List active large result_refs across checkpoints so their IDs remain discoverable."""
     if not isinstance(row, dict) or not row.get("context_checkpoint"):
@@ -248,10 +305,15 @@ def checkpoint_note(row: dict) -> str:
     ]
     if not active:
         return ""
-    return (
+    note = (
         "\nRetained large result references (use ryn_read_result): "
-        + json.dumps(active[:16], ensure_ascii=False, separators=(",", ":"))
+        + json.dumps(active[-16:], ensure_ascii=False, separators=(",", ":"))
     )
+    if len(active) > 16:
+        note += "\n" + json.dumps({"older_result_ids_omitted": len(active) - 16}, separators=(",", ":"))
+        note += "\nUse ryn_history_search with the tool_name filter to recover older result IDs."
+    return note
+
 
 
 def _compacted_history_slice(row: dict) -> list[dict]:
@@ -327,40 +389,142 @@ def _read_compacted_entry(row: dict, result_id: str) -> tuple[object, dict]:
     raise AgentError("agent_result_not_found")
 
 
-def read(store, row, result_id, *, provider=False):
+def _result_text(store, row, result_id, *, provider=False):
     reference = next((ref for ref in row.get("result_refs", []) if ref["id"] == result_id), None)
     if reference is None:
         if provider and isinstance(result_id, str) and row.get("context_checkpoint"):
-            return _read_compacted_entry(row, result_id)
+            value, reference = _read_compacted_entry(row, result_id)
+            return encoded(value).decode(), reference
         raise AgentError("agent_result_not_found")
+    if reference.get("expired"):
+        raise AgentToolRejected("agent_result_expired", correction="This old result expired after the local storage limit was reached. Read the original source again if it is still authorized; this reference cannot be restored by retrying.")
     if provider and reference["context_epoch"] != row.get("context_epoch", 0):
         raise AgentError("agent_result_scope_changed")
+    cache_key = (row["id"], result_id, reference["sha256"])
+    with _TEXT_CACHE_LOCK:
+        cached = _TEXT_CACHE.get(cache_key)
+        if cached is not None:
+            _TEXT_CACHE.move_to_end(cache_key)
+            return cached, reference
     try:
         envelope = read_json(path(store, row["id"], result_id), max_bytes=3 * MAX_RESULT_BYTES)
         raw = peer_box.open_sealed(store.key, store.pub, envelope["nonce"], envelope["ciphertext"], info=CHANNEL)
         if len(raw) > MAX_RESULT_BYTES or hashlib.sha256(raw).hexdigest() != reference["sha256"]:
             raise ValueError
-        return json.loads(raw), reference
-    except Exception:
-        raise AgentError("agent_result_unreadable") from None
+        text = encoded(json.loads(raw)).decode()
+        with _TEXT_CACHE_LOCK:
+            _TEXT_CACHE[cache_key] = text
+            _TEXT_CACHE.move_to_end(cache_key)
+            while len(_TEXT_CACHE) > 4 or sum(map(len, _TEXT_CACHE.values())) > _TEXT_CACHE_MAX_CHARS:
+                _TEXT_CACHE.popitem(last=False)
+        return text, reference
+    except (OSError, InvalidTag, ValueError, KeyError, TypeError) as exc:
+        cause = exc.__cause__ or exc  # read_json wraps filesystem and JSON errors.
+        if isinstance(cause, FileNotFoundError):
+            code = "agent_result_missing"
+        elif isinstance(cause, OSError):
+            code = "agent_result_unreadable"
+        else:
+            code = "agent_result_corrupt"
+        diagnostic_log.failure("result_read", exc, task_id=row["id"])
+        raise AgentError(code) from None
 
 
-def page(store, row, result_id, offset=0, limit=8192, *, provider=False):
-    if type(offset) is not int or offset < 0 or type(limit) is not int or not 64 <= limit <= 16384:
+def read(store, row, result_id, *, provider=False):
+    text, reference = _result_text(store, row, result_id, provider=provider)
+    return json.loads(text), reference
+
+
+def page(store, row, result_id, offset=0, limit=8192, *, provider=False, max_bytes=None, return_reference=False):
+    if type(offset) is not int or offset < 0 or type(limit) is not int or not 64 <= limit <= MAX_PAGE_CHARS:
         raise AgentError("agent_invalid_cursor")
-    value, reference = read(store, row, result_id, provider=provider)
-    text = encoded(value).decode()
+    text, reference = _result_text(store, row, result_id, provider=provider)
     if offset > len(text):
         raise AgentError("agent_invalid_cursor")
-    end = min(len(text), offset + limit)
+    budget = row["limits"]["max_output_chars"] - 512 if max_bytes is None else max_bytes
+    length = min(limit, budget * 3 // 4, len(text) - offset)
     out = {"id": result_id, "sha256": reference["sha256"], "bytes": reference["bytes"], "characters": len(text),
-           "offset": offset, "next_offset": end if end < len(text) else None, "content": text[offset:end]}
+           "offset": offset}
     if reference.get("truncated") is True:
         out["truncated"] = True
-    return out
+    while True:
+        end = offset + length
+        out.update(next_offset=end if end < len(text) else None, content=text[offset:end])
+        if len(encoded(out)) <= budget:
+            return (out, reference) if return_reference else out
+        if not length:
+            raise AgentError("agent_result_page_limit")
+        length = int(length * 0.8)
+
+
+def lines(store, row, result_id, *, pattern=None, context_lines=1, line_start=None, line_count=100,
+          provider=False, max_bytes=None, return_reference=False):
+    if (pattern is not None and line_start is not None
+            or pattern is not None and (not isinstance(pattern, str) or not 1 <= len(pattern) <= 200)
+            or type(context_lines) is not int or not 0 <= context_lines <= 5
+            or type(line_count) is not int or not 1 <= line_count <= 400
+            or line_start is not None and (type(line_start) is not int or line_start < 1)):
+        raise AgentError("agent_invalid_cursor")
+    text, reference = _result_text(store, row, result_id, provider=provider)
+    value = json.loads(text)
+    field = None
+    if isinstance(value, str):
+        text = value
+    elif isinstance(value, dict):
+        field = next((key for key in ("text", "output", "content") if isinstance(value.get(key), str)), None)
+        if field:
+            text = value[field]
+    source = text.split("\n")
+    total = len(source)
+    if pattern is not None:
+        hits = [i for i, line in enumerate(source) if pattern in line]
+        chosen_hits = set(hits[:40])
+        indices = sorted({i for hit in hits[:40]
+                          for i in range(max(0, hit - context_lines), min(total, hit + context_lines + 1))})
+        more = len(hits) > 40
+    else:
+        start = (line_start or 1) - 1
+        if start > total:
+            raise AgentError("agent_invalid_cursor")
+        indices = list(range(start, min(total, start + line_count)))
+        more = bool(indices and indices[-1] + 1 < total)
+        chosen_hits = set()
+    out = {"id": result_id, "sha256": reference["sha256"], "bytes": reference["bytes"],
+           "total_lines": total, "lines": [], "next_line": None}
+    if field:
+        out["field"] = field
+    budget = row["limits"]["max_output_chars"] - 512 if max_bytes is None else max_bytes
+    for index in indices:
+        item = {"line": index + 1, "text": source[index]}
+        if pattern is not None:
+            item["match"] = index in chosen_hits
+        candidate = {**out, "lines": [*out["lines"], item], "next_line": index + 2 if index + 1 < total else None}
+        if len(encoded(candidate)) > budget:
+            if out["lines"]:
+                out["next_line"] = index + 1
+                break
+            item["truncated"] = True
+            length = min(len(item["text"]), budget * 3 // 4)
+            while True:
+                item["text"] = source[index][:length]
+                if len(encoded(candidate)) <= budget:
+                    out = candidate
+                    break
+                if not length:
+                    raise AgentError("agent_result_page_limit")
+                length = int(length * 0.8)
+            break
+        out = candidate
+    else:
+        out["next_line"] = indices[-1] + 2 if more and indices else None
+    return (out, reference) if return_reference else out
 
 
 def purge(store, task_id):
+    with _TEXT_CACHE_LOCK:
+        for key in list(_TEXT_CACHE):
+            if key[0] == task_id:
+                del _TEXT_CACHE[key]
     root = (store.root / "results").resolve()
     directory = root / hashlib.sha256(task_id.encode()).hexdigest()
     if not directory.exists():
@@ -371,3 +535,37 @@ def purge(store, task_id):
     for file in directory.iterdir():
         if re.fullmatch(r"result_[a-f0-9]{32}\.json|\.result_[a-f0-9]{32}\.json\.[a-f0-9]{32}\.tmp", file.name):
             file.unlink()
+
+
+RESULT_STORAGE_BYTES = 64 * 1024 * 1024
+
+
+def prune(store, row):
+    """Retire old, unprotected results and invisible unreferenced ciphertext."""
+    refs = row.get("result_refs", [])
+    directory = store.root / "results" / hashlib.sha256(row["id"].encode()).hexdigest()
+    if not directory.exists():
+        return
+    if not directory.resolve().is_relative_to((store.root / "results").resolve()):
+        raise AgentError("agent_result_cleanup_failed")
+    checkpoint = encoded(row.get("context_checkpoint") or {})
+    retained = {ref["id"]: ref for ref in refs if not ref.get("expired")}
+    files = []
+    for file in directory.iterdir():
+        if not re.fullmatch(r"result_[a-f0-9]{32}\.json", file.name):
+            continue
+        ref = retained.get(file.stem)
+        if ref is None:
+            file.unlink()
+        else:
+            info = file.stat()
+            files.append((info.st_mtime_ns, file, ref, info.st_size))
+    total = sum(size for _, _, _, size in files)
+    for _, file, ref, size in sorted(files, key=lambda item: item[0]):
+        if total <= RESULT_STORAGE_BYTES:
+            break
+        if ref.get("context_epoch", 0) >= row.get("context_epoch", 0) or ref["id"].encode() in checkpoint:
+            continue
+        file.unlink()
+        ref["expired"] = True
+        total -= size

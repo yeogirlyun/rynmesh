@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import hashlib
 import http.client
+import json
 import os
 import ssl
 import tempfile
@@ -128,9 +129,33 @@ def _profile_headers(profile: TransportProfile) -> dict[str, str]:
     return headers
 
 
-def resolve_profile() -> TransportProfile:
-    """Build the active profile from RYNMESH_TRANSPORT + env overrides."""
-    name = os.environ.get("RYNMESH_TRANSPORT", "camouflage").strip().lower() or "camouflage"
+def _system_proxies() -> dict[str, str]:
+    out: dict[str, str] = {}
+    for k, v in urllib.request.getproxies().items():
+        key = str(k).strip().lower()
+        val = str(v or "").strip()
+        if key in {"http", "https"} and val:
+            out[key] = val
+    return out
+
+
+def _resolve_proxies() -> dict[str, str]:
+    settings_path = Path(os.environ.get("RYNMESH_HOME", str(Path.home() / ".rynmesh"))) / "settings.json"
+    try:
+        stored = json.loads(settings_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        stored = {}
+    proxy_cfg = stored.get("network_proxy") if isinstance(stored, dict) else None
+    if isinstance(proxy_cfg, dict):
+        mode = proxy_cfg.get("mode", "off")
+        if mode == "system":
+            return _system_proxies()
+        if mode == "off":
+            return {}
+        if mode == "manual":
+            url = str(proxy_cfg.get("url") or "").strip()
+            return {"https": url, "http": url} if url else {}
+
     proxies: dict[str, str] = {}
     https_proxy = os.environ.get("RYNMESH_HTTPS_PROXY", "").strip()
     http_proxy = os.environ.get("RYNMESH_HTTP_PROXY", "").strip()
@@ -138,6 +163,17 @@ def resolve_profile() -> TransportProfile:
         proxies["https"] = https_proxy
     if http_proxy:
         proxies["http"] = http_proxy
+    if proxies:
+        return proxies
+    if os.environ.get("RYNMESH_USE_SYSTEM_PROXY", "").strip().lower() in {"1", "true", "yes", "on"}:
+        return _system_proxies()
+    return {}
+
+
+def resolve_profile() -> TransportProfile:
+    """Build the active profile from node settings + RYNMESH_TRANSPORT + env overrides."""
+    name = os.environ.get("RYNMESH_TRANSPORT", "camouflage").strip().lower() or "camouflage"
+    proxies = _resolve_proxies()
 
     if name == "direct":
         # Today's plain behavior: identify as Rynmesh, default TLS.
@@ -298,6 +334,10 @@ class StdlibHttpsTransport:
         except TransportError:
             raise
         except HTTPError as exc:
+            if exc.code == 407:
+                raise TransportError(
+                    "proxy_auth_required", reason="proxy_auth_required", status=407
+                ) from exc
             st = (
                 _parse_server_time(exc.headers.get(SERVER_TIME_HEADER))
                 if exc.code == 409 and exc.headers is not None
@@ -305,7 +345,11 @@ class StdlibHttpsTransport:
             )
             raise TransportError(f"http status {exc.code}", reason="http_error",
                                  status=exc.code, server_time=st) from exc
-        except (URLError, TimeoutError, ssl.SSLError, OSError):
+        except (URLError, TimeoutError, ssl.SSLError, OSError) as exc:
+            if "Tunnel connection failed: 407" in str(exc):
+                raise TransportError(
+                    "proxy_auth_required", reason="proxy_auth_required", status=407
+                ) from exc
             raise TransportError("http request failed", reason="http_error") from None
 
     def get_bytes(
@@ -388,6 +432,102 @@ class StdlibHttpsTransport:
 
 
 
+def _proxy_for_scheme(proxies: dict[str, str], scheme: str) -> str:
+    if not proxies:
+        return ""
+    if scheme in ("https", "wss"):
+        return str(proxies.get("https") or "").strip()
+    return str(proxies.get("http") or proxies.get("https") or "").strip()
+
+
+def _connect_via_proxy(
+    proxy_url: str, target_host: str, target_port: int, *, timeout_s: float
+) -> Any:
+    import base64
+    import socket
+    from urllib.parse import unquote
+
+    parsed = urlparse(proxy_url)
+    p_scheme = (parsed.scheme or "").lower()
+    if p_scheme not in ("http", "https") or not parsed.hostname:
+        raise TransportError(
+            "outbound proxy URL must use http:// or https://", reason="config_error"
+        )
+    proxy_host = parsed.hostname
+    proxy_port = parsed.port or (443 if p_scheme == "https" else 80)
+    try:
+        raw = socket.create_connection((proxy_host, proxy_port), timeout=timeout_s)
+    except OSError:
+        raise TransportError("http request failed", reason="http_error") from None
+
+    try:
+        if p_scheme == "https":
+            raw = ssl.create_default_context().wrap_socket(raw, server_hostname=proxy_host)
+        authority = (
+            f"[{target_host}]:{target_port}"
+            if (":" in target_host and not target_host.startswith("["))
+            else f"{target_host}:{target_port}"
+        )
+        lines = [f"CONNECT {authority} HTTP/1.1", f"Host: {authority}"]
+        if parsed.username is not None or parsed.password is not None:
+            creds = f"{unquote(parsed.username or '')}:{unquote(parsed.password or '')}".encode(
+                "utf-8"
+            )
+            token = base64.b64encode(creds).decode("ascii")
+            lines.append(f"Proxy-Authorization: Basic {token}")
+        raw.sendall("\r\n".join(lines).encode("latin-1") + b"\r\n\r\n")
+
+        buf = bytearray()
+        max_header_bytes = 64 * 1024
+        while not buf.endswith(b"\r\n\r\n"):
+            if len(buf) >= max_header_bytes:
+                raise TransportError("proxy connect header too large", reason="http_error")
+            ch = raw.recv(1)
+            if not ch:
+                raise TransportError("proxy closed connection during CONNECT", reason="http_error")
+            buf.extend(ch)
+
+        first_line = bytes(buf).split(b"\r\n", 1)[0]
+        parts = first_line.split()
+        status = int(parts[1]) if len(parts) >= 2 and parts[1].isdigit() else 0
+        if status == 407:
+            raise TransportError(
+                "proxy_auth_required", reason="proxy_auth_required", status=407
+            )
+        if status != 200:
+            raise TransportError(
+                f"proxy connect failed: status {status}",
+                reason="http_error",
+                status=status or None,
+            )
+        return raw
+    except TransportError:
+        raw.close()
+        raise
+    except (OSError, ValueError):
+        raw.close()
+        raise TransportError("http request failed", reason="http_error") from None
+
+
+def _dial_target(
+    connect_host: str,
+    port: int,
+    *,
+    scheme: str,
+    proxies: dict[str, str],
+    timeout_s: float,
+) -> Any:
+    import socket
+
+    proxy_url = _proxy_for_scheme(proxies, scheme)
+    if proxy_url:
+        return _connect_via_proxy(proxy_url, connect_host, port, timeout_s=timeout_s)
+    try:
+        return socket.create_connection((connect_host, port), timeout=timeout_s)
+    except OSError:
+        raise TransportError("http request failed", reason="http_error") from None
+
+
 class FrontedHttpsTransport:
     """Transport with a real SNI / connect-host / Host split (stdlib only).
 
@@ -443,10 +583,13 @@ class FrontedHttpsTransport:
         is_default_port = port == (443 if scheme == "https" else 80)
         host_header = host if is_default_port else f"{host}:{port}"
 
-        try:
-            raw = socket.create_connection((connect_host, port), timeout=timeout_s)
-        except OSError as exc:
-            raise TransportError("http request failed", reason="http_error") from None
+        raw = _dial_target(
+            connect_host,
+            port,
+            scheme=scheme,
+            proxies=self.profile.proxies,
+            timeout_s=timeout_s,
+        )
         try:
             if scheme == "https":
                 raw = self._ctx.wrap_socket(raw, server_hostname=sni)
@@ -577,11 +720,16 @@ def get_pinned_transport(url: str, connect_ip: str) -> FrontedHttpsTransport:
     except ValueError as exc:
         raise TransportError("pinned address invalid", reason="endpoint_invalid") from exc
     profile = resolve_profile()
-    if profile.proxies:
-        raise TransportError(
-            "pinned transport does not support an outbound proxy",
-            reason="pinned_proxy_unsupported",
-        )
+    for p_url in profile.proxies.values():
+        cleaned_p = str(p_url or "").strip()
+        if not cleaned_p:
+            continue
+        parsed_p = urlparse(cleaned_p)
+        if (parsed_p.scheme or "").lower() not in {"http", "https"} or not parsed_p.hostname:
+            raise TransportError(
+                "pinned transport only supports http(s) CONNECT proxies because other proxy protocols may re-resolve DNS instead of dialing the pinned IP",
+                reason="pinned_proxy_unsupported",
+            )
     return FrontedHttpsTransport(replace(profile, connect_host=connect_ip, sni=host))
 
 
@@ -679,7 +827,13 @@ class CdnWebSocketTransport:
 
         connect_host = self.profile.connect_host or self._ws_host
         sni = self.profile.sni or self._ws_host
-        raw = socket.create_connection((connect_host, self._ws_port), timeout=timeout_s)
+        raw = _dial_target(
+            connect_host,
+            self._ws_port,
+            scheme=self._ws_scheme,
+            proxies=self.profile.proxies,
+            timeout_s=timeout_s,
+        )
         if self._ws_scheme == "wss":
             raw = self._ctx.wrap_socket(raw, server_hostname=sni)
 
@@ -711,7 +865,6 @@ class CdnWebSocketTransport:
         max_handshake_bytes = 64 * 1024
         while b"\r\n\r\n" not in buf:
             if len(buf) >= max_handshake_bytes:
-                raw.close()
                 raise TransportError(
                     f"ws handshake failed: status {_parse_ws_handshake_status(buf)}",
                     reason="http_error",
@@ -732,7 +885,6 @@ class CdnWebSocketTransport:
         lines = header_block.split(b"\r\n")
         status_line = lines[0] if lines else b""
         if not (status_line == b"HTTP/1.1 101" or status_line.startswith(b"HTTP/1.1 101 ")):
-            raw.close()
             raise TransportError(
                 f"ws handshake failed: status {_parse_ws_handshake_status(header_block)}",
                 reason="http_error",
@@ -746,7 +898,6 @@ class CdnWebSocketTransport:
             if colon and name.strip().lower() == b"sec-websocket-accept":
                 accept_values.append(value.strip().decode("latin-1"))
         if accept_values != [expected_accept]:
-            raw.close()
             raise TransportError(
                 "ws handshake failed: invalid Sec-WebSocket-Accept",
                 reason="http_error",
@@ -1064,6 +1215,7 @@ def _record_effective(
         "effective": effective,
         "requested_unknown": profile.requested_unknown,
         "degraded_reason": degraded_reason,
+        "via_proxy": bool(profile.proxies),
     }
 
 
@@ -1110,6 +1262,7 @@ def transport_status() -> dict[str, Any]:
         "effective": None,
         "requested_unknown": current.requested_unknown,
         "degraded_reason": "unknown_transport" if current.requested_unknown else None,
+        "via_proxy": bool(current.proxies),
     }
 
 

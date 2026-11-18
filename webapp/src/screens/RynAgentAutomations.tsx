@@ -1033,6 +1033,7 @@ export function AutomationsPanel({
               </div>
             ) : (
               filteredItems.map(item => {
+                const filesError = (item as AgentAutomation & { files_error?: string }).files_error;
                 const isPaused = item.status === "PAUSED";
                 const isSelected = selectedDraft?.id === item.id;
                 const isHeartbeat = (item.kind || "heartbeat") === "heartbeat";
@@ -1081,6 +1082,11 @@ export function AutomationsPanel({
                       </button>
 
                       <div className="ra-codex-row-body">
+                        {filesError && (
+                          <div className="ra-codex-error" role="alert">
+                            {zh ? "配置文件写入失败：当前以应用内数据为准" : "Configuration file write failed. The app's stored data is in use."}
+                          </div>
+                        )}
                         <div className="ra-codex-row-line1">
                           <span className="ra-codex-row-title">{item.name}</span>
                           {rowAdornment && (

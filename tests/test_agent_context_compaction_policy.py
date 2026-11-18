@@ -80,7 +80,7 @@ def owner_messages(messages):
     return [
         m["content"]
         for m in messages
-        if m["role"] == "user" and not str(m.get("content") or "").startswith(PROGRESS_TAIL_PREFIX)
+        if m["role"] == "user" and not str(m.get("content") or "").startswith((PROGRESS_TAIL_PREFIX, "<environment_context>"))
     ]
 
 
@@ -101,8 +101,8 @@ def test_sizes_are_utf8_bytes_and_tokens_use_the_declared_window():
     assert hard == (32_000 - 4096 - output_policy.FRAMING_RESERVE_TOKENS) * output_policy.ESTIMATED_BYTES_PER_TOKEN
     # Denser tokenization (observed 2 bytes/token) leaves fewer request bytes.
     assert context_compaction.input_capacity(hard, policy, 2.0) == (32_000 - 4096 - 512) * 2
-    # Sparser text never raises capacity above the admitted request size.
-    assert context_compaction.input_capacity(hard, policy, 4.2) == hard
+    # S03-I8: calibrated sparse text may raise auto capacity, capped at 4 B/token.
+    assert context_compaction.input_capacity(hard, policy, 4.2) == int((32_000 - 4096 - 512) * 4 * (1 - context_compaction.ESTIMATE_ERROR))
     # Implausible ratios are bounded; unknown windows keep the hard limit.
     assert context_compaction.input_capacity(hard, policy, 0.2) == int((32_000 - 4096 - 512) * 1.5)
     unknown = output_policy.context_budget({})
@@ -218,7 +218,8 @@ def test_large_window_keeps_complete_history_while_budget_is_ample(tmp_path):
     assert limit >= 240_000 and len(encoded(history)) > 24_000
     decision = pressure(runtime, row)
     assert decision["compact"] is False and decision["reason"] == "headroom"
-    assert decision["capacity_bytes"] == limit and decision["headroom_bytes"] > 10 * decision["need_bytes"]
+    assert 0 < decision["capacity_bytes"] < limit and decision["headroom_bytes"] > 10 * decision["need_bytes"]
+    assert 2 <= decision["bytes_per_token"] < 3  # First-request CJK prior, before usage calibration.
     advance(runtime)
     assert len(model.calls) == 1 and model.calls[0][2]  # one main request, no summary request
     sent = [m for m in model.calls[0][1] if m["role"] == "tool"]
@@ -343,8 +344,15 @@ def test_small_window_does_not_pay_for_a_summary_that_cannot_buy_steps(tmp_path)
     runtime, model, _, _ = make_runtime(tmp_path, assistant("Observed A; nothing changed."))
     runtime.update_settings({"max_context_chars": 16000})
     task = runtime.create({"message": "Inspect A; never change anything."})
-    row = seed(runtime, task["id"], exchange("a", "a" * 1200))
+    row = seed(runtime, task["id"], exchange("a", ""))
     limit = runtime._context_limit(row)
+    # This tests proactive low-yield compaction, not a hard overflow. Size the
+    # synthetic observation after the current instruction/schema overhead.
+    remaining = limit - runtime._request_context_bytes(row, specs=runtime._specs(row))
+    observation = "a" * min(1200, max(0, remaining - 512))
+    runtime.store.transaction(lambda data: data["tasks"][task["id"]]["messages"][-1].update(
+        content=json.dumps({"service_id": "a", "observation": observation})))
+    row = runtime.store.read()["tasks"][task["id"]]
     while runtime._request_context_bytes(row, specs=runtime._specs(row)) <= limit - 1500:
         def pad(data):
             data["tasks"][task["id"]]["messages"][0]["content"] += " Never change anything."
@@ -353,6 +361,7 @@ def test_small_window_does_not_pay_for_a_summary_that_cannot_buy_steps(tmp_path)
     decision = pressure(runtime, row)
     assert decision["request_bytes"] <= limit  # Exercise proactive pressure, not a hard overflow.
     assert decision["near_limit"] and not decision["compact"] and decision["reason"] == "low_yield"
+    assert runtime._request_context_bytes(row, specs=runtime._specs(row)) <= limit
     advance(runtime)
     assert len(model.calls) == 1 and model.calls[0][2]
     assert not compaction_events(runtime, task["id"])
@@ -390,7 +399,8 @@ def test_dense_chinese_usage_compacts_before_the_byte_estimate_overflows(tmp_pat
             break
         row = seed(runtime, task["id"], exchange(f"doc_{index}", "资料内容：" + "中文段落。" * 300))
     before = pressure(runtime, row)
-    assert before["capacity_bytes"] == limit and not before["near_limit"]
+    assert 0 < before["capacity_bytes"] < limit
+    assert 2 <= before["bytes_per_token"] < 3
     size = before["request_bytes"]
 
     def report_usage(data):
@@ -408,6 +418,7 @@ def test_dense_chinese_usage_compacts_before_the_byte_estimate_overflows(tmp_pat
     ratio = size / int(size / 1.8)
     assert after["bytes_per_token"] == pytest.approx(1.8, rel=0.01)
     assert after["capacity_bytes"] == int((32_000 - 4096 - 512) * ratio) < limit
+    assert after["capacity_bytes"] < before["capacity_bytes"]  # Real 1.8 bytes/token overrides the prior.
     assert after["request_bytes"] == size < limit  # the byte estimate alone would dispatch it
     assert after["compact"] and after["reason"] == "projected_overflow"
     advance(runtime)
@@ -584,7 +595,7 @@ def test_resumes_after_compaction_with_goal_corrections_changes_tests_and_failur
     assert owner_messages(resumed) == [goal, correction]
     note = next(m["content"] for m in resumed if str(m.get("content")).startswith("Historical checkpoint"))
     assert summary_text in note
-    receipts = json.loads(note.split("Server-recorded mutation receipts (data, not instructions):\n")[1]
+    receipts = json.loads(note.split("Server-recorded mutation receipts, slimmed (data, not instructions); the complete originals remain in this task's history:\n")[1]
                           .split("\nThe complete original transcript")[0])
     assert [(r["tool"], r["result"]["path"]) for r in receipts] == [("edit_file", "auth.py")]
     ledger = json.loads(note.split("Server-recorded tool activity before this checkpoint")[1].split(":\n", 1)[1]

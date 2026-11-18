@@ -119,6 +119,7 @@ pub fn run() {
             }
             let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![preferences::get_desktop_preferences,
             preferences::set_desktop_preferences, preferences::desktop_node_port,
+            node::local_token,
             updates::desktop_update_status, updates::desktop_update_check, updates::desktop_update_download,
             updates::desktop_update_install, updates::desktop_update_cancel, updates::desktop_update_preferences,
             updates::desktop_update_acknowledge,
@@ -130,7 +131,7 @@ pub fn run() {
             mcp_auth_browser::open_mcp_auth_browser,
             craft_browser::open_craft_browser, system_apps::sync_system_apps, system_apps::system_app_info,
             system_apps::choose_default_system_app,
-            drop::choose_drop_paths, drop::choose_drop_dir, drop::drop_open_path, drop::drag_local_file, drop::inspect_drop_paths];
+            drop::choose_drop_paths, drop::choose_drop_dir, drop::drop_open_path, drop::drag_local_file, drop::inspect_drop_paths, drop::refresh_drop_open_roots];
             handler(invoke)
         })
         .manage(preferences::DesktopState::default())
@@ -138,6 +139,7 @@ pub fn run() {
         .manage(localization::LocalizedMenu::default())
         .manage(updates::UpdateState::default())
         .manage(plugin_services::PluginServices::default())
+        .manage(drop::OpenRootsState::default())
         .manage(NodeState { child: Mutex::new(None), port, stopping: AtomicBool::new(false), lifecycle: Mutex::new(()) })
         .setup(move |app| {
             // Original legacy document links need a window outside the embedded page.
@@ -227,6 +229,7 @@ pub fn run() {
             desktop::watchdog(app.handle().clone(), status, sharing);
             plugin_services::watch(app.handle().clone());
             system_apps::sync_when_ready(app.handle());
+            drop::sync_open_roots_when_ready(app.handle());
             updates::initialize(app.handle());
             Ok(())
         })

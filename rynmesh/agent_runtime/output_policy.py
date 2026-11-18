@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import math
 
 from ..llm_package.context_safety import ESTIMATED_BYTES_PER_TOKEN
 from ..llm_package.image_input_profile import (
@@ -20,17 +21,20 @@ from .store import UNKNOWN_WINDOW_CONTEXT_CHARS, AgentError, encoded
 VERSION = "configured-output-v2"
 IMAGE_ANALYSIS_VERSION = "canonical-image-heuristic-v2"
 TRANSPORT_MAX_TOKENS = 393216
-MAX_RAW_RESPONSE_BYTES = 256 * 1024
+MAX_RAW_RESPONSE_BYTES = 640 * 1024
 MAX_PROVIDER_STATE_BYTES = 2 * 1024 * 1024
 MAX_REASONING_CONTENT_BYTES = 256 * 1024
 ANSWER_TOTAL_LIMIT = 1024 * 1024
 ANSWER_PREVIEW_BYTES = 64 * 1024
-MAX_TOOL_CALL_ARGUMENT_BYTES = 96 * 1024
+MAX_TOOL_CALL_ARGUMENT_BYTES = 256 * 1024
+STREAM_READ_CANCEL_TIMEOUT_S = 10.0
 UNKNOWN_CONTEXT_WINDOW_TOKENS = 32768
 FRAMING_RESERVE_TOKENS = 512
-ESTIMATE_BASIS = "serialized_utf8_bytes_div_3_ceil_plus_512_framing_heuristic"
+MIN_OUTPUT_RESERVE_TOKENS = 8192
+MIN_USEFUL_OUTPUT_TOKENS = 4096
+ESTIMATE_BASIS = "serialized_utf8_bytes_div_cjk_density_ceil_plus_512_framing_heuristic"
 RYN_ADMISSION_ESTIMATE_BASIS = "serialized_utf8_bytes_as_tokens_ryn_provider_admission"
-IMAGE_ESTIMATE_BASIS = "text_utf8_div_3_ceil_plus_512_and_image_area_div_750_capped_10000_plus_85_heuristic"
+IMAGE_ESTIMATE_BASIS = "text_utf8_div_cjk_density_ceil_plus_512_and_image_area_div_750_capped_10000_plus_85_heuristic"
 IMAGE_TOKEN_FORMULA_BASIS = "heuristic_min_10000_ceil_w_times_h_div_750_plus_85_not_provider_tokenizer"
 IMAGE_AREA_DIVISOR = 750
 IMAGE_MAX_TOKENS = 10000
@@ -72,7 +76,12 @@ def admission_bytes_per_token(model):
 
 
 def configured_output(model):
-    configured = model.get("max_output_tokens", 4096)
+    configured = model.get("max_output_tokens")
+    if model.get("max_output_basis") == "vendor_family_guess" and type(configured) is int:
+        return min(configured, 16384)
+    if model.get("max_output_tokens_known") is False or configured is None:
+        metadata = context_metadata(model)
+        return min(16384, metadata["context_window_tokens"] // 4) if metadata["context_window_known"] else 8192
     if type(configured) is not int or configured < 1:
         raise AgentError("agent_token_limit")
     return configured
@@ -143,8 +152,10 @@ def analyze_request(
     text-projection base64 exemption. Prose, tool arguments, tool outputs, remote URLs,
     and malformed structures retain full raw UTF-8 text accounting.
     """
-    raw_messages_bytes = len(encoded(messages))
-    specs_bytes = len(encoded(specs))
+    raw_messages = encoded(messages)
+    raw_specs = encoded(specs)
+    raw_messages_bytes = len(raw_messages)
+    specs_bytes = len(raw_specs)
     raw_serialized_utf8_bytes = raw_messages_bytes + specs_bytes
 
     verified_images = []
@@ -195,14 +206,20 @@ def analyze_request(
 
     if projected_messages is None:
         text_projection_utf8_bytes = raw_serialized_utf8_bytes
+        projected_raw = raw_messages
     else:
-        text_projection_utf8_bytes = len(encoded(projected_messages)) + specs_bytes
+        projected_raw = encoded(projected_messages)
+        text_projection_utf8_bytes = len(projected_raw) + specs_bytes
+
+    char_count = len(projected_raw.decode("utf-8")) + len(raw_specs.decode("utf-8"))
+    cjk_char_estimate = (text_projection_utf8_bytes - char_count) // 2
+    cjk_share = min(1.0, cjk_char_estimate * 3 / text_projection_utf8_bytes)
 
     image_count = len(verified_images)
     image_decoded_bytes = sum(item["decoded_bytes"] for item in verified_images)
     total_image_pixels = sum(item["pixels"] for item in verified_images)
     estimated_text_tokens = (
-        (text_projection_utf8_bytes + ESTIMATED_BYTES_PER_TOKEN - 1) // ESTIMATED_BYTES_PER_TOKEN
+        math.ceil(text_projection_utf8_bytes / (ESTIMATED_BYTES_PER_TOKEN - cjk_share))
         + FRAMING_RESERVE_TOKENS
     )
     estimated_image_tokens = sum(item["estimated_tokens"] for item in verified_images)
@@ -226,6 +243,8 @@ def analyze_request(
         "estimated_input_utf8_bytes": text_projection_utf8_bytes,
         "raw_serialized_utf8_bytes": raw_serialized_utf8_bytes,
         "text_projection_utf8_bytes": text_projection_utf8_bytes,
+        "cjk_char_estimate": cjk_char_estimate,
+        "cjk_share": cjk_share,
         "projected_context_utf8_bytes": projected_context_utf8_bytes,
         "image_count": image_count,
         "image_decoded_bytes": image_decoded_bytes,
@@ -247,6 +266,9 @@ def analyze_request(
         "has_invalid_image_parts": bool(invalid_image_parts),
         "invalid_image_parts": invalid_image_parts,
         "transport_violations": transport_violations,
+        "limits": {"max_raw_request_bytes": max_raw_request_bytes, "max_images": max_images,
+                   "max_single_image_bytes": max_single_image_bytes, "max_total_image_bytes": max_total_image_bytes,
+                   "max_single_image_pixels": max_single_image_pixels, "max_total_image_pixels": max_total_image_pixels},
     }
 
 
@@ -262,9 +284,9 @@ def estimate_input(messages, specs):
 
 
 def context_budget(model, manual_limit=None, *, provenance=None):
-    """Derive a request-byte allowance while reserving the full output setting."""
+    """Reserve useful output space; each request still clamps its actual cap."""
     metadata = context_metadata(model)
-    reserve = configured_output(model)
+    reserve = min(configured_output(model), max(MIN_OUTPUT_RESERVE_TOKENS, metadata["context_window_tokens"] // 4))
     density = admission_bytes_per_token(model)
     effective = max(0, metadata["context_window_tokens"] - reserve - FRAMING_RESERVE_TOKENS) * density
     if not metadata["context_window_known"]:
@@ -283,18 +305,23 @@ def context_budget(model, manual_limit=None, *, provenance=None):
 
 
 def _enforce_analysis_bounds(analysis):
+    def reject(code, reason):
+        raise AgentError(code, details={"reason": reason, "limits": analysis["limits"]})
     if analysis["has_invalid_image_parts"]:
         for item in analysis["invalid_image_parts"]:
             reason = item.get("reason")
             if reason == "single_image_pixels_exceeded":
-                raise AgentError("agent_image_pixel_limit")
+                reject("agent_image_pixel_limit", reason)
             if reason == "single_image_decoded_bytes_exceeded":
-                raise AgentError("agent_context_limit")
+                reject("agent_image_too_large", reason)
         raise AgentError("agent_image_invalid")
     if analysis["transport_violations"]:
-        if "single_image_pixels_exceeded" in analysis["transport_violations"] or "total_image_pixels_exceeded" in analysis["transport_violations"]:
-            raise AgentError("agent_image_pixel_limit")
-        raise AgentError("agent_context_limit")
+        codes = {"single_image_pixels_exceeded": "agent_image_pixel_limit", "total_image_pixels_exceeded": "agent_image_pixel_limit",
+                 "single_image_decoded_bytes_exceeded": "agent_image_too_large", "total_image_decoded_bytes_exceeded": "agent_image_too_large",
+                 "max_request_images_exceeded": "agent_image_count_limit", "raw_request_utf8_bytes_exceeded": "agent_context_limit"}
+        for reason, code in codes.items():
+            if reason in analysis["transport_violations"]:
+                reject(code, reason)
 
 
 def admit_request_context(
@@ -305,6 +332,7 @@ def admit_request_context(
     manual_limit=None,
     provenance=None,
     context_policy=None,
+    capacity_bytes=None,
     max_raw_request_bytes: int = MAX_RAW_REQUEST_UTF8_BYTES,
     max_images: int = MAX_REQUEST_IMAGES,
     max_single_image_bytes: int = MAX_SINGLE_IMAGE_DECODED_BYTES,
@@ -330,12 +358,31 @@ def admit_request_context(
     if effective_manual is not None and analysis["raw_serialized_utf8_bytes"] > effective_manual:
         raise AgentError("agent_context_limit")
     _enforce_analysis_bounds(analysis)
-    if analysis["projected_context_utf8_bytes"] > policy["effective_max_context_bytes"]:
+    capacity = capacity_bytes if capacity_bytes is not None and policy.get("mode") == "auto" else policy["effective_max_context_bytes"]
+    if analysis["projected_context_utf8_bytes"] > capacity:
         raise AgentError("agent_context_limit")
     return analysis
 
 
-def select(model, messages, specs, *, request_cap=None):
+def _input_tokens_at_density(analysis, bytes_per_token):
+    if bytes_per_token is None:
+        return analysis["estimated_input_tokens"]
+    return math.ceil(analysis["text_projection_utf8_bytes"] / bytes_per_token) + FRAMING_RESERVE_TOKENS + analysis["estimated_image_tokens"]
+
+
+def output_room(model, analysis, *, bytes_per_token=None):
+    """Available window tokens without raising when the request overflows."""
+    window = context_metadata(model)["context_window_tokens"]
+    room = window - _input_tokens_at_density(analysis, bytes_per_token)
+    density = admission_bytes_per_token(model)
+    if density != ESTIMATED_BYTES_PER_TOKEN:
+        admitted = ((analysis["text_projection_utf8_bytes"] + density - 1) // density
+                    + FRAMING_RESERVE_TOKENS + analysis["estimated_image_tokens"])
+        room = min(room, window - admitted)
+    return room
+
+
+def select(model, messages, specs, *, request_cap=None, bytes_per_token=None):
     configured = configured_output(model)
     metadata = context_metadata(model)
     window = metadata["context_window_tokens"]
@@ -343,6 +390,10 @@ def select(model, messages, specs, *, request_cap=None):
         raise AgentError("agent_token_limit")
     analysis = analyze_request(messages, specs)
     _enforce_analysis_bounds(analysis)
+    analysis["estimated_input_tokens"] = _input_tokens_at_density(analysis, bytes_per_token)
+    if bytes_per_token is not None:
+        analysis["estimated_text_tokens"] = math.ceil(analysis["text_projection_utf8_bytes"] / bytes_per_token)
+        analysis["estimate_basis"] = "provider_usage_calibrated_text_density_plus_512_and_image_heuristic"
     estimate = {k: v for k, v in analysis.items() if k not in {"images", "invalid_image_parts"}}
     limits = {"configured": configured, "transport": TRANSPORT_MAX_TOKENS, "context": window - estimate["estimated_input_tokens"]}
     density = admission_bytes_per_token(model)
@@ -354,7 +405,7 @@ def select(model, messages, specs, *, request_cap=None):
         limits["admission"] = window - admitted_input
     if request_cap is not None:
         limits["request"] = request_cap
-    maximum = min(limits.values())
+    maximum = min(*limits.values(), output_room(model, analysis))
     if maximum < 1:
         raise AgentError("agent_context_limit")
     public = {**metadata, "max_output_tokens": configured, "estimate_basis": ESTIMATE_BASIS}

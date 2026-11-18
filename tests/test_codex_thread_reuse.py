@@ -350,7 +350,9 @@ def test_content_stream_ignores_other_shapes(text):
 
 
 def test_rejected_proposal_closes_the_thread(codex):
-    codex.replies.extend([propose(path="a.txt"), propose("exec_command", path="x"), propose(path="b.txt")])
+    # Unknown strings now pair a rejection; a non-string name still abandons
+    # the invalid provider turn and must close its private thread.
+    codex.replies.extend([propose(path="a.txt"), propose(None, path="x"), propose(path="b.txt")])
     adapter, messages = CLIAgentAdapter("codex_cli"), conversation()
     step(adapter, messages, "s1")
     with pytest.raises(AdapterError) as rejected:
@@ -633,6 +635,7 @@ def test_provider_derives_the_requester_from_the_signed_sender_not_the_body(code
     adapter = CLIAgentAdapter("codex_cli")
     provider = ProviderService(manifest=manifest, adapter=adapter, store=b, task_store=TaskOrderStore(tmp_path / "records"),
                                balance=TaskBalanceLedger(tmp_path / "balance.json"), messaging_key=bk)
+    provider.adapter.current_models()  # S01-I42: admission reads the discovery snapshot
     codex.replies.append(propose(path="a.txt"))
     key = codex_threads.window_key("task_alice")
     request = seal_task(body={"task_id": "order-1", "service_id": "codex-cli", "max_tokens": 64, "max_amount": 1,

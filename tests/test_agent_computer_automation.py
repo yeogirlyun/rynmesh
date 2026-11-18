@@ -19,9 +19,11 @@ def test_builtin_desktop_inherits_full_access_without_dialog():
 
 
 @pytest.mark.parametrize("mode,expected", [("read_only", "deny"), ("confirm_changes", "ask")])
-def test_restrictive_permission_still_wins(mode, expected):
-    assert decide(CALL, META, policy(), policy(mode)).action == expected
+def test_restrictive_task_permission_still_wins(mode, expected):
     assert decide(CALL, META, policy(mode), policy()).action == expected
+    assert decide(CALL, META, policy(mode), policy("automatic")).action == expected
+    # S13-I25 keeps the active task's mode when the default for new tasks changes.
+    assert decide(CALL, META, policy(), policy(mode)).action == "execute"
 
 
 def test_external_mcp_cannot_claim_builtin_permission_by_name_or_annotation():
@@ -33,15 +35,18 @@ def test_both_desktop_grants_are_required():
     assert decide(CALL, META, policy(), policy(desktop=False)).action == "ask"
 
 
-def test_automatic_full_access_still_needs_the_desktop_grant():
+def test_only_full_automatic_bypasses_the_desktop_grant():
     auto = lambda **kw: policy("automatic", **kw)
     assert decide(CALL, META, auto(), auto()).action == "execute"
-    assert decide(CALL, META, auto(desktop=False), auto()).action == "ask"
-    assert decide(CALL, META, auto(), auto(desktop=False)).action == "ask"
-    # Full access covers any desktop server once the owner allowed desktop use.
+    assert decide(CALL, META, auto(desktop=False), auto()).action == "execute"
+    assert decide(CALL, META, auto(), auto(desktop=False)).action == "execute"
+    assert decide(CALL, META, auto(desktop=False), policy()).action == "ask"
+    assert decide(CALL, META, policy(), auto(desktop=False)).action == "ask"
+    # S04-I24 applies to both bundled and external desktop servers.
     external = {"effect": "write", "computer_access": True}
     assert decide(CALL, external, auto(), auto()).action == "execute"
-    assert decide(CALL, external, auto(desktop=False), auto()).action == "ask"
+    assert decide(CALL, external, auto(desktop=False), auto(desktop=False)).action == "execute"
+    assert decide(CALL, external, auto(desktop=False), policy()).action == "ask"
     # Outside automatic, an external server still cannot claim the bundled authority.
     assert decide(CALL, external, policy(), policy()).action == "ask"
 
@@ -56,7 +61,8 @@ def test_automatic_builtin_grant_survives_dispatch_and_is_revoked_with_desktop_a
     row['in_flight'] = {**CALL, **META, 'authorization':'automatic'}
     assert not write_permission_revoked(row, policy())
     assert write_permission_revoked(row, policy(desktop=False))
-    assert write_permission_revoked(row, policy('confirm_changes'))
+    assert not write_permission_revoked(row, policy('confirm_changes'))
+    assert write_permission_revoked({**row, 'permission_mode': 'confirm_changes'}, policy())
     row['in_flight'].pop('workstation_permission_tool')
     assert write_permission_revoked(row, policy())
 

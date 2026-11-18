@@ -7,7 +7,7 @@ from test_agent_runtime import assistant, make_runtime
 
 from rynmesh.agent_runtime.store import encoded
 
-CONTEXT_LIMIT = 12000
+CONTEXT_LIMIT = 14000
 LITERAL_JSON = '{"keep":"\\n and \\\"quotes\\\" remain business text"}'
 BAD_ARGUMENTS = '{"page": 0, "literal_json": "unterminated'
 DEEP_ARGUMENTS = '{"page":' + "[" * 1100 + "0" + "]" * 1099 + ',"literal_json":""}'

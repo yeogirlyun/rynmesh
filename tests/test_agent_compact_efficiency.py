@@ -10,6 +10,7 @@ from test_agent_runtime import advance, approve, assistant, fit_window, make_run
 from test_agent_tool_menu import ManyTools
 
 from rynmesh.agent_runtime import tool_menu
+from rynmesh.agent_runtime.control import MID_TURN_NOTES
 from rynmesh.agent_runtime.prompt import PROGRESS_TAIL_PREFIX
 from rynmesh.agent_runtime.runtime import AgentRuntime
 from rynmesh.agent_runtime.store import AgentStore, encoded
@@ -81,14 +82,15 @@ def observed_state(history, previous=None):
 
 def test_real_resource_tools_reach_body_and_approved_artifact_under_pressure(writable, record_property):
     tools, _, _, _, source, server, root, app, store = writable
-    source_text = "\n".join(f"Amount={n}" for n in [17, 29, 43]) + "\n" + "Observation detail. " * 85
+
+    source_text = "\n".join(f"Amount={n}" for n in [17, 29, 43]) + "\n" + "Observation detail. " * 220
     (root / "allowed/observations.txt").write_bytes(source_text.encode("utf-8"))
     owners = ["Read observations.txt and create totals.md with the sum. Never modify the source.",
               "Include only the observed total; never share or change permissions."]
     catalog = SimpleNamespace(list_models=lambda: [{"id": "fixture", "source": "local_api", "available": True,
         "agent_supported": True, "peer_id": "local", "source_id": "fixture", "destination_revision": "rev1"}])
     calls, summary_sources = [], []
-    cap = 12000  # replaced below by the historical 12000 plus prompt growth
+    cap = 0  # Set from the measured prompt before the first model call.
     read_names = ["ryn_list_resource_roots", "ryn_list_resources", "ryn_read_resource"]
 
     class BoundModel:
@@ -97,6 +99,15 @@ def test_real_resource_tools_reach_body_and_approved_artifact_under_pressure(wri
         def complete(self, model_id, messages, specs, cancelled, on_event, *, expected_destination):
             calls.append((copy.deepcopy(messages), copy.deepcopy(specs)))
             assert request_size(messages, specs) <= cap
+            # Since S03-I5 a summary may reuse the main prefix (tools included) and end with the compaction request.
+            if specs and str(messages[-1].get("content") or "").startswith("Server compaction request:"):
+                previous = {}
+                for m in messages:
+                    if str(m.get("content") or "").startswith("Historical checkpoint"):
+                        previous = json.loads(m["content"].split("\n", 1)[1].split("\nExact resource")[0]
+                                              .split("\nServer-recorded mutation")[0])
+                summary_sources.append({"history": messages[:-1]})
+                return assistant(json.dumps(observed_state(messages[:-1], previous)))
             if not specs:
                 payload = json.loads(messages[-1]["content"])
                 if "history" in payload:
@@ -106,7 +117,8 @@ def test_real_resource_tools_reach_body_and_approved_artifact_under_pressure(wri
                 return assistant(json.dumps({"status": "passed", "summary": "Created content was mechanically read back.",
                     "uncovered_requirements": [], "evidence_refs": [e["id"] for e in payload["evidence"]]}))
             assert [m["content"] for m in messages if m["role"] == "user"
-                    and not str(m.get("content") or "").startswith(PROGRESS_TAIL_PREFIX)] == owners
+                    and not str(m.get("content") or "").startswith((PROGRESS_TAIL_PREFIX, "<environment_context>", "<host_note"))
+                    and m.get("content") not in MID_TURN_NOTES.values()] == owners
             state, references = {}, {}
             for m in messages:
                 if m.get("content", "").startswith("Historical checkpoint"):
@@ -146,13 +158,15 @@ def test_real_resource_tools_reach_body_and_approved_artifact_under_pressure(wri
     runtime = AgentRuntime(AgentStore(store.home / "agent", key), model, tools, catalog, consumer_node_id="local")
     runtime.update_settings({"enabled": True, "model_id": "fixture",
                              "max_steps": 24, "max_seconds": 600, "verify_text_responses": True})
-    task = runtime.create({"message": owners[0], "budget_limits": {"max_total_model_calls": 12},
+    # S02-I5 adds the mandatory mid-turn owner note before the first request.
+    # At 16KB it forces extra compaction; keep the same hard call-count check.
+    task = runtime.create({"message": owners[0], "budget_limits": {"max_total_model_calls": 13},
         "scope": {"resources": [{"connection_id": source["id"], "root_path": "allowed",
             "actions": ["list", "read_ai", "create_file"]}], "allow_model_data": True},
         "expected_destination_revision": "rev1"})
     task = runtime.add_message(task["id"], {"message": owners[1], "intent": "steer",
         "expected_control_revision": task["control_revision"], "expected_goal_revision": task["goal"]["revision"]})
-    cap = fit_window(runtime, task["id"], 12000, small_window=True)
+    cap = fit_window(runtime, task["id"], 18000)
     pressure, restarted = [], False
     for _ in range(45):
         row = runtime.store.read()["tasks"][task["id"]]
@@ -176,17 +190,15 @@ def test_real_resource_tools_reach_body_and_approved_artifact_under_pressure(wri
     done = runtime.store.read()["tasks"][task["id"]]
     assert done["status"] == "completed", (done.get("error"), [
         {k: e[k] for k in ("bytes", "maximum") if k in e} for e in done["events"] if e["type"] == "context_compaction_rejected"])
-    # The separate checker has its own larger evidence envelope and correctly
-    # refuses it at 12 KiB. This test establishes observed business completion,
-    # not a successful model semantic check or formal acceptance.
-    assert done["outcome"]["status"] == "unverified"
-    assert "agent_verification_context_limit" in done["outcome"]["uncertainties"]
+    # The larger fixture window fits the independent checker as well.
+    assert done["outcome"]["status"] == "verified"
+    assert "agent_verification_context_limit" not in done["outcome"]["uncertainties"]
     assert all(item["status"] == "passed" for item in done["outcome"]["mechanical_scope"])
     assert (root / "allowed/totals.md").read_text(encoding="utf-8") == "Observed total: 89\n"
     assert (root / "allowed/observations.txt").read_text(encoding="utf-8") == source_text
     assert max(pressure) > cap and restarted and summary_sources
     assert len(summary_sources) < len([1 for _, specs in calls if specs])
-    assert len(calls) <= 12 and runtime.get(task["id"])["budget"]["lifetime"]["model_calls"] == len(calls)
+    assert len(calls) <= 13 and runtime.get(task["id"])["budget"]["lifetime"]["model_calls"] == len(calls)
     assert done["goal"]["revision"] == 2 and done["scope_revision"] == 1 and done.get("context_epoch", 0) == 0
     assert done["limits"]["max_context_chars"] == cap
     assert len([e for e in server.audit if e["method"] == "PUT"]) == 1

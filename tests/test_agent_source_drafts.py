@@ -32,10 +32,12 @@ def setup(node, monkeypatch):
     class Adapter:
         def __init__(self, record, model):
             self.model, self.record = model, record
-        def chat(self, body, *, task_id, timeout_s):
+        def chat(self, body, *, task_id, timeout_s, on_event=None):
             requests.append({"model": self.model, "body": copy.deepcopy(body), "timeout_s": timeout_s})
             if self.model == "broken":
                 raise AdapterError("secret-api-key-must-not-escape and private server response")
+            if body.get("stream") and on_event:
+                on_event({"choices": [{"delta": {"content": "OK"}}]})
             if body.get("tool_choice") == "required":
                 return {"message": {"role": "assistant", "content": None, "tool_calls": [{"id": "probe", "type": "function", "function": {
                     "name": "ryn_capability_probe", "arguments": '{"value":"ryn-tool-test"}'}}]}}
@@ -73,14 +75,14 @@ def test_owner_credentials_new_multiple_models_test_save_retest_and_encrypted_st
     row = draft(tools, context, config)
     assert sources.read() == {} and row["has_credential"]
     test = run(tools, context, "ryn_test_source_draft", {**locator(row), "test_tools": True}, "op-test")
-    assert test["test"]["chat_passed"] and len(requests) == 6
+    assert test["test"]["chat_passed"] and len(requests) == 8
     result = run(tools, context, "ryn_commit_source_draft", locator(row), "op-save")
     saved = sources.read()[result["source_id"]]
     assert saved["models"] == config["models"] and saved["shared_models"] == []
     assert all(value == "supported" for value in saved["tool_support"].values())
     checked = tools.verify({"tool": "ryn_commit_source_draft", "arguments": locator(row), "result": result},
                            [{"verifier": "saved_source_state"}], context=context, cancelled=lambda: False)
-    assert checked["status"] == "passed" and len(requests) == 8
+    assert checked["status"] == "passed" and len(requests) == 10
     assert all(request["timeout_s"] <= 15 for request in requests)
     assert "secret-api-key" not in json.dumps([value, row, test, result, checked, requests])
     assert b"secret-api-key" not in tools.source_drafts.path.read_bytes()
@@ -97,9 +99,9 @@ def test_budget_output_admission_caps_every_chat_and_tool_probe(setup):
     credential(tools, context, config)
     row = draft(tools, context, config)
     tested = run(tools, context, "ryn_test_source_draft", {**locator(row), "test_tools": True}, "op-test")
-    assert tested["test"]["chat_passed"] and len(requests) == len(admitted) == 6
+    assert tested["test"]["chat_passed"] and len(requests) == len(admitted) == 8
     for actual, bounds in zip(requests, admitted, strict=True):
-        assert actual["body"]["max_tokens"] == 64
+        assert actual["body"]["max_tokens"] == (2 if actual["body"].get("stream") else 64)
         assert bounds["model_id"] == actual["model"]
         assert bounds["input_bytes"] == len(encoded({**actual["body"], "max_tokens": bounds["max_output_tokens"]}))
     assert sources.read() == {}
@@ -191,6 +193,8 @@ def test_credential_idempotency_expiry_revoke_and_task_deletion(setup, monkeypat
         **{k: context[k] for k in ("owner_id", "consumer_node_id", "goal_revision")})
     with pytest.raises(AgentToolRejected, match="agent_source_owner_credential_required"):
         tools.preview("ryn_test_source_draft", locator(row), context=context)
+    key = peer_box.load_or_create_messaging_key(tools.store.home / "messaging.x25519")
+    tools.local.store = AgentStore(tools.store.home / "agent", key)
     tools.forget_task(context["task_id"], operation_ids=["op-prepare"])
     state = tools.source_drafts._read()
     assert not state["credentials"] and not state["drafts"] and not state["requests"]

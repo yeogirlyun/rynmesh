@@ -29,6 +29,7 @@ from typing import Any, Callable
 
 __all__ = [
     "FAILED_CRASHED",
+    "FAILED_ENCODING_UNKNOWN",
     "FAILED_INTERNAL",
     "FAILED_MEMORY",
     "FAILED_NOT_TEXT",
@@ -89,6 +90,7 @@ FAILED_MEMORY = "failed:memory"
 FAILED_CRASHED = "failed:crashed"
 FAILED_UNREADABLE = "failed:unreadable"
 FAILED_NOT_TEXT = "failed:not_text"
+FAILED_ENCODING_UNKNOWN = "failed:encoding_unknown"
 FAILED_INTERNAL = "failed:internal"
 
 FAILURE_CODES = frozenset(
@@ -99,6 +101,7 @@ FAILURE_CODES = frozenset(
         FAILED_CRASHED,
         FAILED_UNREADABLE,
         FAILED_NOT_TEXT,
+        FAILED_ENCODING_UNKNOWN,
         FAILED_INTERNAL,
     }
 )
@@ -127,6 +130,8 @@ def classify(path: str | Path) -> str:
         return "text"
     if suffix in _PDF_SUFFIXES:
         return "pdf"
+    if suffix in {".docx", ".xlsx", ".pptx"}:
+        return "office"
     guessed, _encoding = mimetypes.guess_type(str(path))
     if guessed == "application/pdf":
         return "pdf"
@@ -143,7 +148,7 @@ def _child_argv() -> list[str]:
     return [sys.executable, "-m", "rynmesh.services.document_extract_child"]
 
 
-def _spawn_worker(args, **options):
+def _spawn_worker(args, *, memory_bytes=MEMORY_BYTES, **options):
     if os.name != "nt":
         return subprocess.Popen(args, **options)
     from rynmesh.llm_package.process_guard import _windows_job
@@ -152,7 +157,7 @@ def _spawn_worker(args, **options):
     # starting it, so a timeout cannot leave the actual parser running.
     process = subprocess.Popen(args, creationflags=0x4 | subprocess.CREATE_NO_WINDOW, **options)
     try:
-        process._ryn_job = _windows_job(process, memory_limit=0, cpu_rate=0)
+        process._ryn_job = _windows_job(process, memory_limit=memory_bytes, cpu_rate=0)
     except BaseException:
         process.kill()
         process.wait(timeout=5)
@@ -205,6 +210,7 @@ def extract_document(
     max_output_chars: int = MAX_OUTPUT_CHARS,
     timeout_s: float = TIMEOUT_S,
     memory_bytes: int = MEMORY_BYTES,
+    page_markers: bool = False,
     spawn: Callable[..., subprocess.Popen] | None = None,
 ) -> dict[str, Any]:
     """Extract bounded plain text from ``path`` in a child process.
@@ -233,7 +239,10 @@ def extract_document(
     child_env["RYNMESH_DOC_EXTRACT_MAX_INPUT_BYTES"] = str(max_input_bytes)
     child_env["RYNMESH_DOC_EXTRACT_MAX_OUTPUT_CHARS"] = str(max_output_chars)
     child_env["RYNMESH_DOC_EXTRACT_MEMORY_BYTES"] = str(memory_bytes)
-    launcher = spawn or _spawn_worker
+    child_env["RYNMESH_DOC_EXTRACT_PAGE_MARKERS"] = "1" if page_markers else "0"
+    # Injectable launchers retain the Popen contract; production always receives
+    # the caller's actual budget, including on Windows.
+    launcher = spawn or (lambda args, **options: _spawn_worker(args, memory_bytes=memory_bytes, **options))
     try:
         process = launcher(
             _child_argv(),
@@ -256,11 +265,20 @@ def extract_document(
             return _failure(FAILED_TIMEOUT, kind)
         except (OSError, ValueError):
             return _failure(FAILED_INTERNAL, kind)
+        if process.returncode != 0:
+            job = getattr(process, "_ryn_job", None)
+            if job and memory_bytes:
+                from rynmesh.llm_package.process_guard import windows_job_peak_memory
+
+                try:
+                    if windows_job_peak_memory(job) >= memory_bytes:
+                        return _failure(FAILED_MEMORY, kind)
+                except OSError:
+                    return _failure(FAILED_INTERNAL, kind)
+            return _failure(FAILED_CRASHED, kind)
     finally:
         _stop(process)
 
-    if process.returncode != 0:
-        return _failure(FAILED_CRASHED, kind)
     if not raw or len(raw) > _MAX_CHILD_STDOUT_BYTES:
         return _failure(FAILED_INTERNAL, kind)
     try:

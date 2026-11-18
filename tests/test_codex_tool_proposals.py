@@ -95,7 +95,18 @@ def test_private_workspace_cleanup_does_not_mask_result_when_windows_file_is_loc
     {"content": "", "tool_calls": [], "extra": "untrusted"},
 ])
 def test_invalid_proposal_never_reaches_client(monkeypatch, proposal):
+    """Malformed replies fail in the adapter; unknown targets pair a host rejection."""
     monkeypatch.setattr(codex_session, "_native_chat", lambda *args, **kwargs: {"text": json.dumps(proposal)})
+    if proposal["tool_calls"] and proposal["tool_calls"][0]["name"] == "exec_command":
+        from rynmesh.agent_runtime.tool_router import normalize_tool_calls
+        result = CLIAgentAdapter("codex_cli").chat({"messages": [{"role": "user", "content": "hello"}],
+                                                   "tools": [TOOL], "tool_choice": "required"}, task_id="probe", timeout_s=1)
+        calls = normalize_tool_calls(result["message"]["tool_calls"], [TOOL],
+                                     metadata=lambda _name: pytest.fail("unknown tool reached metadata"))
+        assert calls[0]["name"] == "exec_command"
+        assert calls[0]["error_result"]["error"] == "agent_unknown_tool"
+        assert calls[0]["error_result"]["not_executed"] and calls[0]["error_result"]["no_mutation"]
+        return
     with pytest.raises(AdapterError, match="invalid client tool proposal") as rejected:
         CLIAgentAdapter("codex_cli").chat({"messages": [{"role": "user", "content": "hello"}],
                                          "tools": [TOOL], "tool_choice": "required"}, task_id="probe", timeout_s=1)
@@ -139,7 +150,8 @@ def test_cli_discovery_exports_bounded_reasoning_metadata_without_upstream_text(
     monkeypatch.setattr(codex_session, "_model_windows", lambda models, cache: models)
     result = codex_session.list_models("fixture")
     assert result == [{"id": "known", "name": "Known", "default": True,
-        "supported_reasoning_efforts": ["low", "ultra"], "default_reasoning_effort": "low"}]
+        "supported_reasoning_efforts": ["low", "ultra"], "ignored_reasoning_efforts": ["invented"],
+        "default_reasoning_effort": "low"}]
     assert "private-upstream-text" not in json.dumps(result)
 
 

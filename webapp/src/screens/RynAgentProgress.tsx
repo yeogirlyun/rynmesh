@@ -106,9 +106,13 @@ export interface CodexCompactionItem {
   seq: number;
   turnIndex: number;
   afterCallId: string | null;
-  status: "inProgress" | "interrupted" | "completed";
+  status: "inProgress" | "interrupted" | "completed" | "rejected";
   startedAtMs: number | null;
   source: "manual" | "automatic";
+  error?: string;
+  beforeBytes?: number;
+  afterBytes?: number;
+  bytesPerToken?: number;
 }
 
 function parseEventMs(value: unknown): number | null {
@@ -144,21 +148,30 @@ export function extractCodexCompactions(task: AgentTask | undefined): CodexCompa
       : events;
     let lastCallId: string | null = null;
     const pairedCompactedSeqs = new Set<number>();
+    const pairedRejectedSeqs = new Set<number>();
     for (let i = 0; i < scoped.length; i += 1) {
       const ev = scoped[i];
       if ((ev.type === "tool_started" || ev.type === "tool_result") && typeof ev.call_id === "string" && ev.call_id) {
         lastCallId = ev.call_id;
       } else if (ev.type === "context_compaction_started") {
         let status: CodexCompactionItem["status"] = activeRun && !nextOriginal ? "inProgress" : "interrupted";
+        let finish: AgentEvent | undefined;
         for (let j = i + 1; j < scoped.length; j += 1) {
           const nextEv = scoped[j];
           if (nextEv.type === "context_compaction_started") break;
           if (nextEv.type === "context_compacted") {
             status = "completed";
+            finish = nextEv;
             pairedCompactedSeqs.add(nextEv.seq);
             break;
           }
-          if (nextEv.type === "context_compaction_rejected" || COMPACTION_STOP_EVENTS.has(nextEv.type)) {
+          if (nextEv.type === "context_compaction_rejected") {
+            status = "rejected";
+            finish = nextEv;
+            pairedRejectedSeqs.add(nextEv.seq);
+            break;
+          }
+          if (COMPACTION_STOP_EVENTS.has(nextEv.type)) {
             status = "interrupted";
             break;
           }
@@ -169,8 +182,18 @@ export function extractCodexCompactions(task: AgentTask | undefined): CodexCompa
           turnIndex,
           afterCallId: lastCallId,
           status,
+          error: typeof finish?.error === "string" ? finish.error : undefined,
+          beforeBytes: typeof finish?.request_bytes_before === "number" ? finish.request_bytes_before : undefined,
+          afterBytes: typeof finish?.after_bytes === "number" ? finish.after_bytes : undefined,
+          bytesPerToken: typeof ev.bytes_per_token === "number" ? ev.bytes_per_token : undefined,
           startedAtMs: parseEventMs(ev.at),
           source: (ev as { source?: unknown }).source === "manual" ? "manual" : "automatic",
+        });
+      } else if (ev.type === "context_compaction_rejected" && !pairedRejectedSeqs.has(ev.seq)) {
+        result.push({
+          id: `compaction-${ev.seq}`, seq: ev.seq, turnIndex, afterCallId: lastCallId, status: "rejected",
+          startedAtMs: parseEventMs(ev.at), source: ev.source === "manual" ? "manual" : "automatic",
+          error: typeof ev.error === "string" ? ev.error : undefined,
         });
       } else if (ev.type === "context_compacted" && !pairedCompactedSeqs.has(ev.seq)) {
         result.push({
@@ -179,6 +202,9 @@ export function extractCodexCompactions(task: AgentTask | undefined): CodexCompa
           turnIndex,
           afterCallId: lastCallId,
           status: "completed",
+          beforeBytes: typeof ev.request_bytes_before === "number" ? ev.request_bytes_before : undefined,
+          afterBytes: typeof ev.after_bytes === "number" ? ev.after_bytes : undefined,
+          bytesPerToken: typeof ev.bytes_per_token === "number" ? ev.bytes_per_token : undefined,
           startedAtMs: parseEventMs(ev.at),
           source: (ev as { source?: unknown }).source === "manual" ? "manual" : "automatic",
         });
@@ -217,8 +243,16 @@ export function RynContextCompactionRow({ item }: { item: CodexCompactionItem })
     label = delayed
       ? (zh ? "正在压缩上下文 · 可能需要几分钟" : "Compacting context · This can take a few minutes")
       : (zh ? "正在压缩上下文" : "Compacting context");
+  } else if (item.status === "rejected") {
+    const reasons: Record<string, string> = {
+      agent_compaction_incomplete: zh ? "摘要未完整生成" : "Summary did not finish",
+      agent_compaction_failed: zh ? "未生成可用摘要" : "No usable summary returned",
+      agent_compaction_size_limit: zh ? "摘要超过可用上下文" : "Summary exceeds available context",
+      agent_context_limit: zh ? "没有足够空间生成安全摘要" : "No room for a safe summary",
+    };
+    label = `${zh ? "压缩被拒" : "Compaction rejected"} (${reasons[item.error || ""] || item.error || (zh ? "原因未提供" : "No reason provided")})`;
   } else if (item.status === "interrupted") {
-    label = zh ? "压缩已中断" : "Compaction interrupted";
+    label = zh ? "压缩已停止" : "Compaction stopped";
   } else if (item.source === "manual") {
     label = zh ? "上下文已压缩" : "Context compacted";
   } else {
@@ -235,6 +269,9 @@ export function RynContextCompactionRow({ item }: { item: CodexCompactionItem })
           <span className={`ra-codex-compaction-summary${item.status === "inProgress" ? " is-shimmer" : ""}`}>
             {label}
           </span>
+          {item.status === "completed" && typeof item.beforeBytes === "number" && typeof item.afterBytes === "number" && (
+            <span>{zh ? "约" : "About"} {Math.round(item.beforeBytes / (item.bytesPerToken && item.bytesPerToken > 0 ? item.bytesPerToken : 4)).toLocaleString()} → {Math.round(item.afterBytes / (item.bytesPerToken && item.bytesPerToken > 0 ? item.bytesPerToken : 4)).toLocaleString()} {zh ? "token" : "tokens"}</span>
+          )}
         </span>
       </div>
     </div>

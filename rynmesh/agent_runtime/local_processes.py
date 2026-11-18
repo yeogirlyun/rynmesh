@@ -6,6 +6,7 @@ import codecs
 import collections
 import locale
 import math
+import ntpath
 import os
 import re
 import shlex
@@ -27,9 +28,9 @@ from .git_safety import (
     SAFE_GIT_CONFIG,
     strip_rynmesh_env,
 )
-from .local_pty import COMPLETED, ConPtyProcess, PosixPtyProcess, check_pty_support, validate_size
+from .local_pty import COMPLETED, ConPtyProcess, PosixPtyProcess, check_pty_support, input_unconfirmed, validate_size
 from .local_pty import terminate_session as terminate
-from .store import AgentToolRejected
+from .store import AgentToolRejected, encoded
 
 _DEFAULT_CONPTY_CLS = ConPtyProcess
 
@@ -50,10 +51,10 @@ POWERSHELL_PROFILE_FALLBACK_NOTICE = (
 
 HEAD_KEEP_CHARS = 512 * 1024
 TAIL_KEEP_CHARS = 512 * 1024
-PAGE_CHARS = 6000
-HEAD_CHARS = 2000
+PAGE_CHARS = 12000
+HEAD_CHARS = PAGE_CHARS // 3
 DEFAULT_READ_WAIT = 10
-MAX_READ_WAIT = 20
+MAX_READ_WAIT = 300
 DEFAULT_YIELD_SECONDS = 10
 DEFAULT_READ_SHELL_TIMEOUT = 120
 MAX_TASK_PROCESSES = 16
@@ -122,7 +123,7 @@ def _append_output(item: dict, text: str) -> None:
     item["total_chars"] += len(text)
     head_keep = HEAD_KEEP_CHARS
     tail_keep = TAIL_KEEP_CHARS
-    head_room = max(0, head_keep - len(item["head"]))
+    head_room = max(0, head_keep - len(item["head"])) if not item["dropped_chars"] else 0
     if head_room > 0:
         take = min(head_room, len(text))
         item["head"] += text[:take]
@@ -209,6 +210,30 @@ def _read_contiguous(item: dict, start: int, end: int) -> str:
     if end > tail_start:
         parts.append(_slice_tail(item, max(0, start - tail_start), end - tail_start))
     return "".join(parts)
+
+
+def _output_page(item, offset, running, max_chars):
+    total_chars, head = item["total_chars"], item["head"]
+    head_end, dropped = len(head), item["dropped_chars"]
+    tail_start = head_end + dropped
+    head_chars = max_chars // 3
+    if offset == -1:
+        start = max(tail_start if dropped else 0, total_chars - max_chars)
+        return _read_contiguous(item, start, total_chars), total_chars
+    if offset == 0 and not running and total_chars > max_chars and (not dropped or head_end > 0):
+        # Keep the true head and tail; the omitted middle remains pageable.
+        end = min(head_chars, head_end if dropped else total_chars)
+        head_part = _read_contiguous(item, 0, end)
+        tail_pos = max(tail_start if dropped else end, total_chars - (max_chars - len(head_part)))
+        tail_part = _read_contiguous(item, tail_pos, total_chars)
+        return (head_part + f"\n... [{tail_pos - end} characters omitted; ryn_process_read offset={end} reads them] ...\n" + tail_part), end
+    if dropped and offset < head_end:
+        end = min(head_end, offset + max_chars)
+        return head[offset:end], end
+    if dropped and offset < tail_start:
+        return f"[{tail_start - offset} characters dropped]\n", tail_start
+    end = min(total_chars, offset + max_chars)
+    return _read_contiguous(item, offset, end), end
 
 
 class AgentProcessStartRejected(AgentToolRejected):
@@ -372,12 +397,11 @@ def _set_env_case_aware(env: dict[str, str], key: str, value: str) -> None:
     env[key] = value
 
 
-def child_environment(*, task_id: str | None = None, tty: bool = False) -> dict[str, str]:
+def child_environment(*, task_id: str | None = None, tty: bool = False, permission_mode: str | None = None) -> dict[str, str]:
     """The node's own configuration and secrets must not reach model-driven commands.
 
-    RYNMESH_LOCAL_TOKEN/RYNMESH_NETWORK_KEY would hand node control to any command the model
-    runs, and RYNMESH_HOME & co. change how a project's own tests behave (a run reported five
-    false "pre-existing" failures because of them).
+    RYNMESH_* is always stripped. Only an automatic task receives the separate
+    RYN_LOCAL_CONTROL_TOKEN credential for its explicitly unrestricted shell.
     """
     env = strip_rynmesh_env(os.environ)
     if os.name != "nt":
@@ -389,6 +413,10 @@ def child_environment(*, task_id: str | None = None, tty: bool = False) -> dict[
                 env[key] = value
     else:
         _merge_windows_registry_path(env)
+
+    _pop_env_case_aware(env, "RYN_LOCAL_CONTROL_TOKEN")
+    if permission_mode == "automatic" and os.environ.get("RYNMESH_LOCAL_TOKEN"):
+        env["RYN_LOCAL_CONTROL_TOKEN"] = os.environ["RYNMESH_LOCAL_TOKEN"]
 
     # Fixed child overrides (applied after login/registry merge, before bundled rg PATH prepend).
     for fixed_key, fixed_val in (
@@ -495,7 +523,7 @@ class Processes:
             victim_id, _ = min(completed_all, key=_evict_key)
             self.items.pop(victim_id, None)
 
-    def start(self, args, cwd, task_id, timeout=None, allowed=lambda: True, cancelled=lambda: False, *, operation_id=None, tty=False, rows=24, cols=80, env_overrides=None, stdin_mode="pipe"):
+    def start(self, args, cwd, task_id, timeout=None, allowed=lambda: True, cancelled=lambda: False, *, operation_id=None, tty=False, rows=24, cols=80, env_overrides=None, stdin_mode="pipe", permission_mode=None):
         # Task-state callbacks can acquire the Agent store lock; never call one
         # while holding the process-table lock (preview takes them in reverse).
         if type(tty) is not bool:
@@ -533,11 +561,11 @@ class Processes:
                         "global_limit": MAX_GLOBAL_PROCESSES,
                     },
                 )
-            proc_env = child_environment(task_id=task_id, tty=tty)
+            proc_env = child_environment(task_id=task_id, tty=tty, permission_mode=permission_mode)
             for extra_env in (getattr(args, "env_overrides", None), env_overrides):
                 if isinstance(extra_env, Mapping):
                     for key, value in extra_env.items():
-                        if not str(key).upper().startswith("RYNMESH_"):
+                        if not str(key).upper().startswith("RYNMESH_") and str(key).upper() != "RYN_LOCAL_CONTROL_TOKEN":
                             proc_env[str(key)] = str(value)
             cmd_args = list(args)
             flags = 0x4 | 0x08000000 if os.name == "nt" else 0
@@ -593,8 +621,14 @@ class Processes:
             try:
                 while chunk := (process.read_output() if tty else os.read(process.stdout.fileno(), 8192)):
                     text = item["decoder"].decode(chunk, final=False)
-                    if text:
+                    transport_dropped = getattr(process, "last_read_dropped_chars", 0) if tty else 0
+                    if text or transport_dropped:
                         with self.changed:
+                            if transport_dropped:
+                                item["total_chars"] += transport_dropped
+                                item["dropped_chars"] += transport_dropped + item["tail_chars"]
+                                item["tail"].clear()
+                                item["tail_chars"] = 0
                             _append_output(item, text)
                             self.changed.notify_all()
                 flushed = item["decoder"].decode(b"", final=True)
@@ -734,9 +768,13 @@ class Processes:
             return item
 
     def read(self, ident, task_id, offset=0, *, wait_seconds=DEFAULT_READ_WAIT, cancelled=None,
-             coalesce_empty_poll=False, tail=False):
+             coalesce_empty_poll=False, tail=False, max_chars=PAGE_CHARS, fill_page=False,
+             _wait_limit=MAX_READ_WAIT, _max_output_bytes=None):
+        if type(max_chars) is not int:
+            raise AgentToolRejected("agent_invalid_process_max_chars")
+        max_chars = min(40000, max(1000, max_chars))
         if (type(wait_seconds) not in {int, float} or not math.isfinite(wait_seconds)
-                or not 0 <= wait_seconds <= MAX_READ_WAIT):
+                or not 0 <= wait_seconds <= _wait_limit):
             raise AgentToolRejected("agent_invalid_process_wait")
         if type(tail) is not bool or type(offset) is not int:
             raise AgentToolRejected("agent_invalid_process_offset")
@@ -761,40 +799,24 @@ class Processes:
                 running = item["process"].poll() is None
                 remaining = deadline - time.monotonic()
                 has_unread = (total_chars > 0) if offset == -1 else (offset < total_chars)
-                if (has_unread and running) or (not running and item["reader_done"].is_set()) or remaining <= 0:
+                page_full = has_unread and (not fill_page or total_chars - max(0, offset) >= max_chars)
+                if has_unread and _max_output_bytes is not None and not page_full:
+                    text, _ = _output_page(item, offset, running, max_chars)
+                    page_full = len(encoded(text)) >= _max_output_bytes
+                if (page_full and running) or (not running and item["reader_done"].is_set()) or remaining <= 0:
                     head = item["head"]
-                    head_end = len(head)
                     dropped = item["dropped_chars"]
-                    tail_start = head_end + dropped
-                    if offset == -1:
-                        min_start = tail_start if dropped > 0 else 0
-                        start = max(min_start, total_chars - PAGE_CHARS)
-                        end = total_chars
-                        text = _read_contiguous(item, start, end)
-                    elif offset == 0 and not running and total_chars > PAGE_CHARS and (dropped == 0 or head_end > 0):
-                        # Failures and summaries are usually at the end of a finished
-                        # command: show its head and tail; the middle stays pageable.
-                        if dropped == 0:
-                            end = min(HEAD_CHARS, total_chars)
-                            head_part = _read_contiguous(item, 0, end)
-                            tail_pos = max(end, total_chars - (PAGE_CHARS - len(head_part)))
-                        else:
-                            end = min(HEAD_CHARS, head_end)
-                            head_part = head[:end]
-                            tail_pos = max(tail_start, total_chars - (PAGE_CHARS - len(head_part)))
-                        tail_part = _read_contiguous(item, tail_pos, total_chars)
-                        text = (head_part
-                                + f"\n... [{tail_pos - end} characters omitted; ryn_process_read offset={end} reads them] ...\n"
-                                + tail_part)
-                    elif dropped > 0 and offset < head_end:
-                        end = min(head_end, offset + PAGE_CHARS)
-                        text = head[offset:end]
-                    elif dropped > 0 and offset < tail_start:
-                        end = tail_start
-                        text = f"[{tail_start - offset} characters dropped]\n"
-                    else:
-                        end = min(total_chars, offset + PAGE_CHARS)
-                        text = _read_contiguous(item, offset, end)
+                    text, end = _output_page(item, offset, running, max_chars)
+                    if _max_output_bytes is not None and len(encoded(text)) > _max_output_bytes:
+                        low, high = 1, max_chars
+                        while low < high:
+                            middle = (low + high + 1) // 2
+                            candidate, _ = _output_page(item, offset, running, middle)
+                            if len(encoded(candidate)) <= _max_output_bytes:
+                                low = middle
+                            else:
+                                high = middle - 1
+                        text, end = _output_page(item, offset, running, low)
                     exit_code = item["process"].poll()
                     stop_reason = item["reason"] or (
                         None if running else ("exited" if exit_code == 0 else "exited_nonzero" if exit_code is not None else "terminated")
@@ -856,9 +878,16 @@ class Processes:
             item["cleanup_done"].wait(5)
         return self.read(ident, task_id, wait_seconds=0)
 
-    def write(self, ident, task_id, text, eof=False, *, control=None, rows=None, cols=None):
+    def write(self, ident, task_id, text, eof=False, *, control=None, rows=None, cols=None, wait_seconds=None):
         item = self.get(ident, task_id)
         process = item["process"]
+        if wait_seconds is None:
+            wait_seconds = 0.1 if item.get("tty") else 0.25
+        if (type(wait_seconds) not in {int, float} or not math.isfinite(wait_seconds)
+                or not 0 <= wait_seconds <= 30):
+            raise AgentToolRejected("agent_invalid_process_wait")
+        with self.lock:
+            offset = item["total_chars"]
         if control not in {None, "interrupt", "eof", "close_terminal"}:
             raise AgentToolRejected("agent_invalid_terminal_control")
         terminal_action = control is not None or rows is not None or cols is not None
@@ -883,14 +912,17 @@ class Processes:
             if rows is not None:
                 if text:
                     raise AgentToolRejected("agent_terminal_resize_requires_empty_text")
-                process.resize(rows, cols)
+                result = process.resize(rows, cols)
             else:
                 # Windows console EOF is Ctrl+Z followed by Enter; POSIX PTY EOF
                 # is Ctrl+D (\x04). Both are program-dependent and keep the PTY open.
                 eof_seq = "\x1a\r" if os.name == "nt" and getattr(process, "backend", None) != "posix_pty" else "\x04"
-                process.write_input({"interrupt": "\x03", "eof": eof_seq}.get(control, text))
+                result = process.write_input({"interrupt": "\x03", "eof": eof_seq}.get(control, text))
+            if isinstance(result, dict) and result.get("side_effects") == "unknown":
+                return {"process_id": ident, **result}
             return {"process_id": ident, "input_delivered": True, "eof": False,
-                    "control": control, "rows": process.rows, "cols": process.cols}
+                    "control": control, "rows": process.rows, "cols": process.cols,
+                    **self.read(ident, task_id, offset=offset, wait_seconds=wait_seconds, _wait_limit=30)}
         if process.poll() is not None:
             raise AgentToolRejected("agent_process_not_running")
         if item.get("stdin_closed") or process.stdin is None:
@@ -898,7 +930,12 @@ class Processes:
                 "agent_process_stdin_closed",
                 correction='Start the command with stdin="pipe" to write to it.',
             )
+        with self.lock:
+            if item.get("stdin_blocked") and not eof:
+                return {"process_id": ident, **input_unconfirmed(
+                    "The process is not reading its stdin; read its output or stop it.")}
         errors = []
+        sent = threading.Event()
 
         def send():
             try:
@@ -910,14 +947,21 @@ class Processes:
                         item["stdin_closed"] = True
             except (OSError, ValueError):
                 errors.append(True)
+            finally:
+                with self.lock:
+                    item["stdin_blocked"] = False
+                    sent.set()
         sender = threading.Thread(target=send, daemon=True)
         sender.start()
         sender.join(2)
-        if sender.is_alive() or errors:
-            # Input may have been partially delivered; it must not be replayed.
-            from .store import AgentError
-            raise AgentError("agent_process_input_unconfirmed")
-        return {"process_id": ident, "input_delivered": True, "eof": eof}
+        with self.lock:
+            blocked = sender.is_alive() and not sent.is_set()
+            if blocked:
+                item["stdin_blocked"] = True
+        if blocked or errors:
+            return {"process_id": ident, **input_unconfirmed()}
+        return {"process_id": ident, "input_delivered": True, "eof": eof,
+                **self.read(ident, task_id, offset=offset, wait_seconds=wait_seconds, _wait_limit=30)}
 
     def wait(self, ident, task_id, cancelled, *, yield_seconds=None):
         item = self.get(ident, task_id)
@@ -928,19 +972,91 @@ class Processes:
                 break
             if deadline is not None and time.monotonic() >= deadline:
                 return self.read(ident, task_id, wait_seconds=0)
-            time.sleep(0.05)
+            with self.changed:
+                if item["process"].poll() is None:
+                    remaining = None if deadline is None else max(0, deadline - time.monotonic())
+                    self.changed.wait(.1 if remaining is None else min(.1, remaining))
         item["reader_done"].wait(2)
         if item.get("tty"):
             item["cleanup_done"].wait(5)
         return self.read(ident, task_id, wait_seconds=0)
 
 
+def _detect_shell(kind, host_os, host_platform, search_path, preferred, program_files, system_root):
+    if host_os != "nt":
+        if kind != "sh":
+            return None
+        candidates = ([preferred] if ntpath.basename(preferred) in {"bash", "zsh"} else [])
+        candidates += ["/bin/zsh", "bash"] if host_platform == "darwin" else ["bash", "zsh"]
+        for candidate in candidates:
+            executable = _which(candidate, path=search_path)
+            if executable:
+                return {"path": executable}
+        return {"path": "/bin/sh"}
+    if kind == "powershell":
+        candidates = [
+            _which("pwsh", path=search_path),
+            _which("powershell", path=search_path),
+            ntpath.join(system_root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+        ]
+        candidates = {ntpath.normcase(candidate): candidate for candidate in candidates if candidate}
+        for executable in candidates.values():
+            try:
+                result = subprocess.run(
+                    [executable, "-NoProfile", "-NonInteractive", "-Command",
+                     "$PSVersionTable.PSVersion.Major.ToString()+'.'+$PSVersionTable.PSVersion.Minor"],
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=2, env=child_environment(),
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                continue
+            version = result.stdout.strip()
+            if result.returncode == 0 and re.fullmatch(r"\d+\.\d+", version):
+                return {"path": executable, "version": version}
+    elif kind == "bash":
+        git = _which("git", path=search_path)
+        candidates = ([ntpath.normpath(ntpath.join(ntpath.dirname(git), "..", "bin", "bash.exe"))] if git else [])
+        candidates += [ntpath.join(program_files, "Git", "bin", "bash.exe"), "bash.exe"]
+        wsl = ntpath.normcase(ntpath.join(system_root, "System32", "bash.exe"))
+        for candidate in candidates:
+            executable = _which(candidate, path=search_path)
+            if executable and ntpath.normcase(ntpath.normpath(executable)) != wsl:
+                return {"path": executable}
+    return None
+
+
+_SHELL_CACHE = {}
+
+
+def detect_shell(kind, path=None):
+    """Resolve a usable interpreter once per host/PATH configuration."""
+    search_path = path if path is not None else child_environment().get("PATH")
+    key = (kind, os.name, sys.platform, search_path, os.environ.get("SHELL", ""),
+           os.environ.get("ProgramFiles", r"C:\Program Files"), os.environ.get("SystemRoot", r"C:\Windows"))
+    if key not in _SHELL_CACHE:
+        detected = _detect_shell(*key)
+        if detected is not None:
+            _SHELL_CACHE[key] = detected
+        return detected
+    return _SHELL_CACHE[key]
+
+
+detect_shell.cache_clear = _SHELL_CACHE.clear
+
+
+def available_shells():
+    if os.name != "nt":
+        return ["sh"]
+    return ["powershell", "cmd", *(["bash"] if detect_shell("bash") else [])]
+
+
 def shell_command(shell, command, *, tty=False, login=True, env: Mapping[str, str] | None = None):
     if os.name == "nt":
         if shell == "powershell":
             search_path = (env if env is not None else child_environment()).get("PATH")
-            executable = _which("pwsh", path=search_path) or _which("powershell", path=search_path)
-            if executable:
+            detected = detect_shell("powershell", path=search_path)
+            if detected:
+                executable = detected["path"]
                 use_profile = bool(login) and not _POWERSHELL_PROFILE_DISABLED
                 prefix = "[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new(); $OutputEncoding=[Console]::OutputEncoding; "
                 argv = [
@@ -954,8 +1070,12 @@ def shell_command(shell, command, *, tty=False, login=True, env: Mapping[str, st
                 return PreparedCommand(argv, powershell_login_profile=True) if use_profile else argv
         elif shell == "cmd":
             return [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/s", "/c", "chcp 65001 >nul & " + command]
+        elif shell == "bash":
+            detected = detect_shell("bash", path=(env if env is not None else child_environment()).get("PATH"))
+            if detected:
+                return [detected["path"], "-c", command]
     elif shell == "sh":
-        return ["/bin/sh", "-c", command]
+        return [detect_shell("sh", path=(env if env is not None else child_environment()).get("PATH"))["path"], "-c", command]
     raise AgentToolRejected("agent_shell_unavailable")
 
 
@@ -1161,6 +1281,9 @@ def _contains_unavailable_rg_segment(command: str) -> bool:
 
 def prepare_shell_command(arguments):
     """Resolve the actual executable before recording a durable dispatch intent."""
+    from .patch_intercept import extract_patch, reject_shell_patch
+    if extract_patch(arguments["command"]) is not None:
+        reject_shell_patch()
     login = arguments.get("login", True)
     if type(login) is not bool:
         raise AgentToolRejected("agent_invalid_login_mode")

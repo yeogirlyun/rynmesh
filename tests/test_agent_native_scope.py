@@ -43,7 +43,9 @@ def test_native_authorized_http_resource_reaches_only_bound_adapter(native_scope
     ref = reference(tools, context)
     result = tools.execute("ryn_read_resource", {"resource_ref": ref}, operation_id="fixture-read",
                            context=context, cancelled=lambda: False)
-    assert result["text"] == expected[:2000]
+    page_chars = min(20000, max(2000, context["result_budget_bytes"] // 4))
+    assert result["text"] == expected[:page_chars]
+    assert result["characters_returned"] == len(expected[:page_chars])
     def record(data):
         data["tasks"][task["id"]]["messages"].extend([
             {"role": "assistant", "content": "", "context_epoch": 0, "tool_calls": [{"id": "read-fixture", "type": "function",
@@ -54,7 +56,7 @@ def test_native_authorized_http_resource_reaches_only_bound_adapter(native_scope
     runtime.run_once()
     status = runtime.get(task["id"])
     assert len(traces) == 1, (status["status"], status.get("error"))
-    assert expected[:2000] in json.dumps(traces[0])
+    assert expected[:page_chars] in json.dumps(traces[0])
     assert "Must never enter model data" not in json.dumps(traces)
     assert not any(event["mutation"] for event in dav.audit)
     old = runtime.store.read()["tasks"][task["id"]]

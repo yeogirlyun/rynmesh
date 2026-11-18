@@ -84,6 +84,12 @@ def safe_diagnostics(raw) -> dict:
         if isinstance(flag, bool):
             out[key] = flag
     stream_retries = raw.get("stream_max_retries")
+    reset_at = raw.get("reset_at")
+    if type(reset_at) is int and reset_at >= 0:
+        out["reset_at"] = reset_at
+    upstream_id = raw.get("upstream_request_id")
+    if isinstance(upstream_id, str) and re.fullmatch(r"[A-Za-z0-9_:\-]{1,128}", upstream_id):
+        out["upstream_request_id"] = upstream_id
     if type(stream_retries) is int and 0 <= stream_retries <= 20:
         out["stream_max_retries"] = stream_retries
     from ..llm_package.transport_failure import REASONS
@@ -111,6 +117,13 @@ def storage_relief(trigger, *, archived, before_bytes, after_bytes, tasks):
 
 
 def failure(stage, exc, *, elapsed_seconds=None, diagnostics=None, **context_fields):
+    if stage == "task_cleanup":
+        module = context_fields.get("module", "unknown")
+        if not isinstance(module, str) or not _SAFE_ENUM.fullmatch(module):
+            module = "unknown"
+        name = re.sub(r"[^A-Za-z0-9_]", "", type(exc).__name__)[:80]
+        _log.warning("agent_failure stage=task_cleanup module=%s exception_type=%s", module, name)
+        return
     chain, seen, current = [], set(), exc if isinstance(exc, BaseException) else None
     while current is not None and id(current) not in seen and len(chain) < 5:
         seen.add(id(current))
@@ -131,6 +144,10 @@ def failure(stage, exc, *, elapsed_seconds=None, diagnostics=None, **context_fie
             chain[0]["diagnostics"] = diag
     with context_scope(**context_fields):
         ctx = _safe_context()
+    if stage == "tool_menu_source":
+        source = context_fields.get("source")
+        if isinstance(source, str) and _SAFE_ENUM.fullmatch(source):
+            ctx["source"] = source
     # stage is a host-authored route/tool phase, never a request argument.
     _log.warning("agent_failure at=%s pid=%s thread=%s stage=%s context=%s elapsed_seconds=%s causes=%s",
                  datetime.now(timezone.utc).isoformat(), os.getpid(), threading.current_thread().name[:48], stage,

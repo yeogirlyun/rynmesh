@@ -86,6 +86,8 @@ def test_t3_routes_all_three_admission_rejections_use_closed_code_and_cli_per_mo
     try:
         with TestClient(app) as client:
             assert client.post("/api/local/llm/cli-services/codex_cli/setup").status_code == 200
+            # S01-I42: admission reads the inventory snapshot; the background worker fills it.
+            app.state.llm_agent_services["provider_for"]("codex-cli").adapter.refresh_inventory()
             # Small CLI model (window=600) rejects 700 CJK chars with closed code
             small_resp = client.post(
                 "/api/local/llm/orders",

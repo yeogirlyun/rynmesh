@@ -185,15 +185,11 @@ def test_t7_messages_sse_overloaded_error_event_uses_native_stream_error_and_ret
 
         created = runtime.create({"message": "Test anthropic overloaded error event."})
         runtime.run_once()
-        mid_row = runtime.get(created["id"])
-        assert mid_row["status"] == "queued"
-        assert mid_row["connection_recovery"]["error_code"] == "agent_model_upstream_failed"
-        assert mid_row["connection_recovery"]["diagnostics"].get("overloaded") is True
-        clock[0] += 4.5
-        runtime.run_once()
         done_row = runtime.get(created["id"])
         assert done_row["status"] == "completed"
         assert "anthropic ok" in done_row["result"]
+        assert [bool(r["body"].get("stream")) for r in requests] == [True, False]
+        assert not any(e["type"] == "tool_result" for e in done_row["events"])
         assert len(requests) == 2
 
 
@@ -226,14 +222,11 @@ def test_t8_responses_failed_server_error_retries_and_content_filter_finish_kept
 
         created = runtime.create({"message": "Test responses.failed server_error retry."})
         runtime.run_once()
-        mid_row = runtime.get(created["id"])
-        assert mid_row["status"] == "queued"
-        assert mid_row["connection_recovery"]["error_code"] == "agent_model_upstream_failed"
-        clock[0] += 2.5
-        runtime.run_once()
         done_row = runtime.get(created["id"])
         assert done_row["status"] == "completed"
         assert "responses ok" in done_row["result"]
+        assert [bool(r["body"].get("stream")) for r in requests] == [True, False]
+        assert not any(e["type"] == "tool_result" for e in done_row["events"])
         assert len(requests) == 2
         assert "PRIVATE_RESP_ERR" not in json.dumps(done_row)
 

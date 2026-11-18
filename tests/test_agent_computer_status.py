@@ -170,6 +170,7 @@ def _assert_valid_evidence(ev: dict[str, Any]) -> None:
 
 def assert_valid_computer_status_dto(payload: dict[str, Any], expected_task_id: str | None = None) -> None:
     assert set(payload.keys()) == {
+        "storage_health",
         "schema_version",
         "snapshot_id",
         "generated_at",
@@ -181,6 +182,12 @@ def assert_valid_computer_status_dto(payload: dict[str, Any], expected_task_id: 
         "model",
         "latest_observation",
     }
+    health = payload["storage_health"]
+    assert set(health) == {"state", "damaged_tasks", "quarantine_dir", "recovered_from_prev"}
+    assert health["state"] in {"ok", "recovered", "damaged", "unavailable"}
+    assert type(health["damaged_tasks"]) is int and health["damaged_tasks"] >= 0
+    assert type(health["recovered_from_prev"]) is bool
+    assert isinstance(health["quarantine_dir"], str) or health["quarantine_dir"] is None
     assert type(payload["schema_version"]) is int and payload["schema_version"] == 1
     assert isinstance(payload["snapshot_id"], str) and 0 < len(payload["snapshot_id"]) <= 160
     _assert_utc_iso(payload["generated_at"])
@@ -483,10 +490,14 @@ def test_auth_query_validation_and_error_codes(tmp_path: Path) -> None:
 
         # 7. Corrupt encrypted state -> 503 agent_computer_status_unavailable
         runtime.store.path.write_bytes(b"corrupted-ciphertext")
+        runtime.store.prev_path.write_bytes(b"corrupted-previous-ciphertext")
         runtime.store._cached_stamp = None
         unreadable = client.get("/api/local/agent/computer/status")
         assert unreadable.status_code == 503
-        assert unreadable.json() == {"detail": "agent_computer_status_unavailable"}
+        assert unreadable.json() == {"detail": "agent_computer_status_unavailable", "storage_health": {
+            "state": "damaged", "damaged_tasks": 0,
+            "quarantine_dir": str(runtime.store.root / "quarantine"), "recovered_from_prev": False,
+        }}
         assert unreadable.headers.get("Cache-Control") == "no-store"
 
 

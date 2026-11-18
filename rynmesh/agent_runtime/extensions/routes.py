@@ -5,6 +5,7 @@ import asyncio
 import hmac
 import json
 import time
+from pathlib import Path
 from typing import Any, Callable
 
 from fastapi import BackgroundTasks, HTTPException, Request
@@ -63,6 +64,12 @@ def install_extension_routes(
             )
         except Exception:
             return False
+
+    def _default_workspace_roots() -> list[Path] | None:
+        ws = runtime.store.inspect(
+            lambda data: (data.get("settings") or {}).get("workspace_root")
+        ) or runtime.store.default_workspace()
+        return [Path(ws)]
 
     async def _run(name: str, fn: Callable[[], Any]) -> Any:
         started = time.monotonic()
@@ -217,7 +224,10 @@ def install_extension_routes(
         local_control(request)
         return await _run(
             "overview",
-            lambda: extensions.overview(desktop_access=_desktop_access()),
+            lambda: extensions.overview(
+                desktop_access=_desktop_access(),
+                workspace_roots=_default_workspace_roots(),
+            ),
         )
 
     @app.post("/api/local/agent/extensions/mcp/servers")
@@ -451,14 +461,16 @@ def install_extension_routes(
         return await _run("restart_mcp_server", _op)
 
     @app.post("/api/local/agent/extensions/mcp/restart")
-    async def restart_all_mcp_servers():
+    async def restart_all_mcp_servers(request: Request):
+        local_control(request)
         return await _run(
             "restart_all_mcp_servers",
             lambda: extensions.manager.restart_all(desktop_access=_desktop_access()),
         )
 
     @app.post("/api/local/agent/extensions/mcp/apps/clear-data")
-    async def clear_mcp_app_data():
+    async def clear_mcp_app_data(request: Request):
+        local_control(request)
         return await _run(
             "clear_mcp_app_data",
             lambda: extensions.manager.clear_app_data(desktop_access=_desktop_access()),
@@ -552,6 +564,16 @@ def install_extension_routes(
         return await _run("delete_plugin", _op)
 
 
+    @app.get("/api/local/agent/extensions/skills/settings")
+    async def skill_settings(request: Request):
+        local_control(request)
+        return await _run("skill_settings", extensions.store.skills_settings)
+
+    @app.patch("/api/local/agent/extensions/skills/settings")
+    async def update_skill_settings(request: Request):
+        payload = await _body(request)
+        return await _run("update_skill_settings", lambda: extensions.store.update_skills_settings(payload))
+
     @app.get("/api/local/agent/extensions/skills/recommended")
     async def list_recommended_skills(request: Request):
         local_control(request)
@@ -592,6 +614,7 @@ def install_extension_routes(
         return await _run(
             "refresh_discovered_skills",
             lambda: extensions.store.sync_discovered_skills(
+                workspace_roots=_default_workspace_roots(),
                 desktop_access=_desktop_access(),
                 reset_uninstalled=bool(payload.get("reset_uninstalled", False)),
             ),

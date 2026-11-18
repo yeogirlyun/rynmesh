@@ -28,6 +28,14 @@ from .transport_failure import (
 )
 
 
+def _server_model(value):
+    return value.strip()[:160] if isinstance(value, str) else ""
+
+
+def _header_server_model(headers):
+    return _server_model(headers.get("openai-model") or headers.get("x-model"))
+
+
 def actual_usage(result: Any) -> dict[str, int | None]:
     """Reported metadata wins by presence, including an explicit unknown value.
 
@@ -169,7 +177,7 @@ def _response_too_large(limit_bytes: int) -> AdapterError:
 RUNTIME_ERROR_CODES = frozenset({
     "runtime_busy", "model_not_ready", "model_not_found", "runtime_unavailable",
     "runtime_connection_failed", "inference_timeout", "inference_failed",
-    "model_configuration_changed", "model_daily_quota_exhausted",
+    "model_configuration_changed", "model_daily_quota_exhausted", "cli_model_discovery_failed",
     "ai_permission_denied",
     "stream_delivery_failed", "upstream_http_failed", "upstream_response_invalid",
     "upstream_response_too_large",
@@ -333,6 +341,7 @@ class OpenAICompatibleAdapter:
         try:
             with model_urlopen(request, timeout=timeout_s) as response:
                 phase = "read"
+                server_model = _header_server_model(response.headers)
                 if task_id:
                     with self._lock:
                         self._active_responses[task_id] = response
@@ -349,7 +358,9 @@ class OpenAICompatibleAdapter:
                 diagnostics, runtime_detail = read_http_failure(exc, phase, detail_codes=RUNTIME_ERROR_CODES)
             finally:
                 exc.close()
-            if classify_errors and diagnostics.get("image_rejected"):
+            if diagnostics.get("network_reason") == "context_overflow":
+                code = "upstream_context_overflow"
+            elif classify_errors and diagnostics.get("image_rejected"):
                 code = "upstream_image_rejected"  # The model refused the image, not the request.
             elif runtime_detail in RUNTIME_ERROR_CODES:
                 code = runtime_detail
@@ -375,6 +386,8 @@ class OpenAICompatibleAdapter:
         if not isinstance(value, dict):
             raise AdapterError("local API JSON root must be an object",
                                code="upstream_response_invalid" if classify_errors else "inference_failed")
+        if path == "/v1/chat/completions":
+            value["server_model"] = server_model or _server_model(value.get("model"))
         return value
 
     def models(self) -> list[dict[str, Any]]:
@@ -504,6 +517,7 @@ class OpenAICompatibleAdapter:
                 self._metrics.total_duration_ms += duration_ms
             return {"text": text, "model": self.model, **counts,
                     "reported_usage": counts,
+                    **({"server_model": result["server_model"]} if result.get("server_model") else {}),
                     **({"cached_tokens": cached} if cached is not None else {}),
                     "duration_ms": duration_ms}
         except Exception:
@@ -581,6 +595,7 @@ class OpenAICompatibleAdapter:
             last_byte = started
             is_sse = False
             received_usage, received_finish = None, None
+            server_model = ""
 
             def read_timeout() -> float:
                 if deadline is None:
@@ -603,6 +618,7 @@ class OpenAICompatibleAdapter:
             ignored_stream_events = 0
             if not streaming:
                 raw = self._json("/v1/chat/completions", body, read_timeout(), task_id=task_id, classify_errors=True)
+                server_model = _server_model(raw.get("server_model")) or _server_model(raw.get("model"))
                 choice = raw["choices"][0]
                 message = normalize_message_tool_calls(choice["message"], call_id_nonce)
                 usage = raw.get("usage") or {}
@@ -643,6 +659,7 @@ class OpenAICompatibleAdapter:
                     break
                 with resp_ctx as response:
                     phase = "read"
+                    server_model = _header_server_model(response.headers)
                     last_byte = time.monotonic()
                     is_sse = "text/event-stream" in response.headers.get("content-type", "").lower()
                     with self._lock:
@@ -655,6 +672,7 @@ class OpenAICompatibleAdapter:
                         if len(raw) > MAX_JSON_RESPONSE_BYTES:
                             raise _response_too_large(MAX_JSON_RESPONSE_BYTES)
                         payload = json.loads(raw)
+                        server_model = server_model or _server_model(payload.get("model"))
                         choice = payload["choices"][0]
                         message = normalize_message_tool_calls(choice["message"], call_id_nonce)
                         usage = payload.get("usage") or {}
@@ -714,6 +732,7 @@ class OpenAICompatibleAdapter:
                             err_code, err_diag = classify_stream_error(chunk["error"], phase)
                             raise failure(err_code, err_diag)
                         if isinstance(chunk, dict):
+                            server_model = server_model or _server_model(chunk.get("model"))
                             if "usage" in chunk:
                                 fresh_usage = observed_usage(chunk["usage"])
                                 received_usage = {name: value if value is not None else (received_usage or {}).get(name)
@@ -755,6 +774,7 @@ class OpenAICompatibleAdapter:
             cached = cached_input_tokens(usage)
             return {"text": message.get("content") or "", "message": message, "finish_reason": finish,
                     **counts, "reported_usage": counts,
+                    **({"server_model": server_model} if server_model else {}),
                     **({"cached_tokens": cached} if cached is not None else {}),
                     **({"diagnostics": {"ignored_stream_events": ignored_stream_events}} if ignored_stream_events > 0 else {}),
                     "duration_ms": int((time.monotonic() - started) * 1000)}
@@ -773,7 +793,9 @@ class OpenAICompatibleAdapter:
         except urllib.error.HTTPError as exc:
             diagnostics = read_http_failure(exc, phase)
             exc.close()
-            if diagnostics.get("image_rejected"):
+            if diagnostics.get("network_reason") == "context_overflow":
+                err_code = "upstream_context_overflow"
+            elif diagnostics.get("image_rejected"):
                 err_code = "upstream_image_rejected"
             elif diagnostics.get("network_reason") in {"request_rejected", "auth_rejected"}:
                 err_code = "upstream_request_rejected"
@@ -842,6 +864,7 @@ class OpenAICompatibleAdapter:
             with self._lock:
                 self._active_responses[task_id] = response
             content_type = str(response.headers.get("Content-Type", "")).lower()
+            server_model = _header_server_model(response.headers)
             if "application/json" in content_type and "event-stream" not in content_type:
                 raw = response.read(MAX_JSON_RESPONSE_BYTES + 1)
                 if len(raw) > MAX_JSON_RESPONSE_BYTES:
@@ -852,6 +875,7 @@ class OpenAICompatibleAdapter:
                     raise AdapterError("local API returned invalid JSON") from None
                 if not isinstance(value, dict):
                     raise AdapterError("local API JSON root must be an object")
+                server_model = server_model or _server_model(value.get("model"))
                 choices = value.get("choices") or []
                 message = choices[0].get("message") if choices and isinstance(choices[0], dict) else {}
                 message = message if isinstance(message, dict) else {}
@@ -904,6 +928,7 @@ class OpenAICompatibleAdapter:
                         raise AdapterError("local API stream event is invalid") from None
                     if not isinstance(event, dict):
                         raise AdapterError("local API stream event is not an object")
+                    server_model = server_model or _server_model(event.get("model"))
                     if isinstance(event.get("usage"), dict):
                         usage = dict(event["usage"])
                     choices = event.get("choices") or []
@@ -944,6 +969,7 @@ class OpenAICompatibleAdapter:
                 "text": text,
                 "model": self.model,
                 **counts, "reported_usage": counts,
+                **({"server_model": server_model} if server_model else {}),
                 **({"cached_tokens": cached} if cached is not None else {}),
                 "duration_ms": duration_ms,
             }

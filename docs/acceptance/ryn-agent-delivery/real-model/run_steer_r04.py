@@ -121,14 +121,13 @@ class FixturePlanner:
     def complete(self, model_id, messages, specs, cancelled, on_event=None, **options):
         from importlib import import_module
         helper = import_module("docs.acceptance.ryn-agent-delivery.real-model.planner_discovery")
-        business_history, discover = helper.business_history, helper.discover
-        discovery = discover(specs, ['ryn_list_models', 'ryn_list_devices', 'ryn_share_model_with_friend', 'ryn_inspect_services'])
-        if discovery:
-            return discovery
-        messages = business_history(messages)
         handoff = helper.checkpoint(messages, specs)
         if handoff:
             return handoff
+        discovery = helper.discover(specs, ['ryn_list_models', 'ryn_list_devices', 'ryn_share_model_with_friend', 'ryn_inspect_services'])
+        if discovery:
+            return discovery
+        messages = helper.business_history(messages)
         if not specs:
             evidence = json.loads(messages[-1]["content"])["evidence"]
             message = {"role": "assistant", "content": json.dumps({"status": "unknown",
@@ -141,7 +140,7 @@ class FixturePlanner:
             receipts = {calls.get(m.get("tool_call_id")): json.loads(m["content"]) for m in messages if m["role"] == "tool"}
             name, args = None, {}
             if steered:
-                if "ryn_inspect_services" not in receipts:
+                if "ryn_inspect_services" not in receipts and "ryn_inspect_services" not in helper.checkpoint_progress(messages):
                     name = "ryn_inspect_services"
             elif "ryn_list_models" not in receipts:
                 name = "ryn_list_models"

@@ -557,6 +557,11 @@ def test_t10_local_cli_order_timeout_records_inference_timeout_not_local_cli_fai
     )
     monkeypatch.setattr(routes, "connect_cli", lambda **_: {"manifest": str(cli_manifest_path)})
     monkeypatch.setattr(CLIAgentAdapter, "health", lambda _: {"ok": True})
+    monkeypatch.setattr(CLIAgentAdapter, "_command_path", lambda _: "fixture-no-process")
+    from rynmesh.llm_package import cli_models
+
+    monkeypatch.setattr(cli_models, "list_models", lambda *args, **kwargs: [
+        {"id": "fixture", "name": "Fixture", "default": True, "context_window": 8192}])
 
     mode = ["timeout"]
 
@@ -569,6 +574,7 @@ def test_t10_local_cli_order_timeout_records_inference_timeout_not_local_cli_fai
 
     with TestClient(app) as order_client:
         assert order_client.post("/api/local/llm/cli-services/codex_cli/setup").status_code == 200
+        app.state.llm_agent_services["active_cli_managers"]()["codex_cli"].adapter.current_models()
 
         res_timeout = order_client.post(
             "/api/local/llm/orders",

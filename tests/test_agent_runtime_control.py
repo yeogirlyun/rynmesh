@@ -113,7 +113,8 @@ def test_steer_closes_old_approval_pairs_and_cannot_reuse_approval(tmp_path):
     changed = steer(runtime, row["id"])
     assert changed["pending_approval"] is None
     assert pairs(changed["messages"])[0] == pairs(changed["messages"])[1]
-    assert json.loads(changed["messages"][-2]["content"])["not_executed"] is True
+    tool_result = next(m for m in changed["messages"] if m["role"] == "tool")
+    assert json.loads(tool_result["content"])["not_executed"] is True
     with pytest.raises(AgentError, match="agent_approval_mismatch"):
         control(runtime, row["id"], "approve", approval_id=old["pending_approval"]["id"])
     advance(runtime)

@@ -134,6 +134,7 @@ def test_signed_cli_provider_uses_selected_window_not_32k_or_caller_capacity(cli
     # Both the provider's capacity gate and binding derive from installed listing.
     monkeypatch.setattr(cli_models, "list_models", lambda *a, **kw: copy.deepcopy(models))
     p.provider.manifest.context_window = 32768
+    p.provider.adapter.current_models()
     def wire(model, task_id):
         return seal_task(body={"task_id": task_id, "service_id": p.provider.manifest.package_id,
             "chat": {"messages": [{"role": "user", "content": "x" * 200000}]}, "max_tokens": 32, "max_amount": 1,

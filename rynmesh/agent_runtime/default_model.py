@@ -67,13 +67,15 @@ class DefaultModelTool:
             if (row["status"] != "running" or not data["settings"]["enabled"]
                     or flight.get("operation_id") != operation_id or flight.get("name") != NAME
                     or flight.get("arguments") != args or flight.get("dispatched") is not True
-                    or flight.get("authorization") not in {"approved", "automatic"}
+                    or flight.get("authorization") not in {"approved", "automatic", "task_grant", "owner_rule"}
                     or flight.get("preview") != expected_preview):
                 raise AgentToolRejected("agent_configuration_authority_changed")
-            if "read_only" in {row["permission_mode"], data["settings"]["permission_mode"]}:
+            if row["permission_mode"] == "read_only":
                 raise AgentToolRejected("agent_permission_denied")
-            if flight["authorization"] == "automatic" and (
-                    row["permission_mode"] != "automatic" or data["settings"]["permission_mode"] != "automatic"):
+            from .runtime import write_permission_revoked
+            if write_permission_revoked(row, data["settings"]):
+                raise AgentToolRejected("agent_permission_denied")
+            if flight["authorization"] == "automatic" and row["permission_mode"] != "automatic":
                 raise AgentToolRejected("agent_permission_denied")
             if data.get("settings_revision", 0) != args["expected_settings_revision"]:
                 raise AgentToolRejected("agent_settings_revision_conflict")

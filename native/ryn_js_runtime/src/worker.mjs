@@ -352,7 +352,11 @@ class QuickJsTaskWorker {
         throw new Error(`ryn_sky_method_unsupported: Unsupported host method ${String(method)}`);
       }
       if (Buffer.byteLength(argsJson, "utf8") > active.maxArgBytes) {
-        throw new Error("ryn_js_argument_limit_exceeded: Host call arguments exceed byte limit");
+        const error = context.newError("agent_model_output_limit: Host call arguments exceed byte limit");
+        context.newString("agent_model_output_limit").consume((code) => context.setProp(error, "code", code));
+        context.setProp(error, "not_executed", context.true);
+        context.newString("not_executed").consume((outcome) => context.setProp(error, "outcome", outcome));
+        return { error };
       }
       if (active.callbackOrdinal >= active.maxHostCalls) {
         throw new Error("ryn_js_host_call_limit_exceeded: Maximum host calls per evaluation exceeded");

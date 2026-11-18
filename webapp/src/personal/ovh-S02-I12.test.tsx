@@ -71,7 +71,7 @@ describe("S02-I12 Desktop agent activity counts, copy, and confirmation titles",
       setLanguagePreference("zh-CN");
     });
 
-    expect(await screen.findByRole("switch", { name: "有任务运行或共享时保持唤醒" })).toBeInTheDocument();
+    expect(await screen.findByRole("switch", { name: "共享 AI 或 Agent 任务运行时防止空闲休眠" })).toBeInTheDocument();
     expect(await screen.findByText("2 个 Agent 任务")).toBeInTheDocument();
     expect(screen.getByText("0 个模型请求")).toBeInTheDocument();
     expect(screen.getByText("1 个等你处理")).toBeInTheDocument();

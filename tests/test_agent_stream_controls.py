@@ -170,12 +170,13 @@ def test_service_restart_recovers_actual_unfinished_model_journal_without_reexec
         restarted = AgentRuntime(store, model, tools, Catalog())
         restarted.reconcile()
         recovered = store.read()["tasks"][fixture.row["id"]]
-        assert recovered["status"] == "interrupted" and recovered["in_flight"] is None
+        assert recovered["status"] == "queued" and recovered["in_flight"] is None
         assert recovered["queue"] == [] and replayed == []
         calls = [call for message in recovered["messages"] for call in message.get("tool_calls", [])]
         results = [message for message in recovered["messages"] if message["role"] == "tool"]
         assert [call["id"] for call in calls] == [message["tool_call_id"] for message in results] == ["stream-read-control"]
-        assert "partial model response" in recovered["messages"][-2]["content"]
+        assert any("partial model response" in m["content"]
+                   for m in recovered["messages"] if m["role"] == "assistant")
         assert LATE_TEXT not in json.dumps(recovered["messages"])
         assert len(recovered["receipts"]) == 1
         assert recovered["receipts"][0]["operation_id"] == before["stream_read_journal"][0]["call"]["operation_id"]
@@ -188,7 +189,6 @@ def test_service_restart_recovers_actual_unfinished_model_journal_without_reexec
         restarted.reconcile()
         assert len([message for message in store.read()["tasks"][fixture.row["id"]]["messages"]
                     if message["role"] == "tool"]) == 1
-        control(restarted, fixture.row["id"], "resume")
         restarted.run_once()
         assert restarted.get(fixture.row["id"])["status"] == "completed"
         assert len(model.calls) == 1 and replayed == [] and len(fixture.executions) == 1

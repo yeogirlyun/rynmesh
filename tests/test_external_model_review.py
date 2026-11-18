@@ -238,6 +238,7 @@ def test_full_app_mounts_provider_controls_and_extension_sync(tmp_path, monkeypa
     monkeypatch.setattr(socket.socket, "connect_ex", lambda sock, address: connect(sock, address, original=real_connect_ex))
     monkeypatch.setattr(socket, "getaddrinfo", resolve)
     monkeypatch.setattr("rynmesh.store._local_ip_addresses", lambda: ["192.0.2.10"])
+    monkeypatch.setattr("rynmesh.store._primary_lan_ip", lambda: "192.0.2.10")
     monkeypatch.setenv("RYNMESH_HOME", str(tmp_path / "node"))
     monkeypatch.setenv("RYNMESH_AUTO_REGISTER", "0")
     monkeypatch.setenv("RYNMESH_DEFAULT_DISCOVERY", "0")

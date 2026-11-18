@@ -5,6 +5,7 @@ export interface PeerProviderStatus {
   status: "signed_out" | "pending" | "connected";
   bound: boolean;
   selected_service_ids: string[];
+  sign_in_error?: string;
 }
 export interface PeerProviderModel { service_id: string; name: string; }
 export interface PeerProviderMemberDevice { peer_id: string; name: string; }
@@ -35,6 +36,7 @@ function status(raw: Record<string, unknown>, pluginId: string): PeerProviderSta
   const state = raw.status;
   if (!["signed_out", "pending", "connected"].includes(String(state)) || raw.plugin_id !== pluginId) throw new Error("peer_provider_invalid_response");
   return { plugin_id: pluginId, status: state as PeerProviderStatus["status"], bound: raw.bound === true,
+    sign_in_error: typeof raw.sign_in_error === "string" ? raw.sign_in_error : undefined,
     selected_service_ids: Array.isArray(raw.selected_service_ids) ? raw.selected_service_ids.filter((x): x is string => typeof x === "string") : [] };
 }
 

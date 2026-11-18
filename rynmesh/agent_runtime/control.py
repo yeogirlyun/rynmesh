@@ -10,6 +10,13 @@ from .store import AgentError, encoded
 
 MAX_CONTROL_REQUESTS = 256
 
+MID_TURN_NOTES = {
+    "steer": ("This owner message changes the goal: follow it, keep earlier requirements that it does not replace. "
+              "Cover every open request; answer status questions briefly, then continue."),
+    "information": ("This owner message adds information: keep the original goal. "
+                    "Cover every open request; answer status questions briefly, then continue."),
+}
+
 # A reconciliation holds owner input only while it can still finish. Local
 # commands never produce a completion receipt, so an "unknown" result must not
 # lock the conversation: the owner may continue and the model is told.
@@ -127,6 +134,16 @@ def owner_removable(row, current=None):
             and status in {"completed", "failed", "cancelled", "paused", "interrupted"})
 
 
+def has_compactable_history(row):
+    if "_has_compactable_history" in row:
+        return row["_has_compactable_history"]
+    from .loop import AgentLoop, _is_owner_user_message
+    messages = row.get("messages", [])
+    through = int((row.get("context_checkpoint") or {}).get("through", 0))
+    return any(any(not _is_owner_user_message(message) for message in messages[through:cut])
+               for cut in AgentLoop._closed_boundaries(messages, through))
+
+
 def allowed_actions(row, settings):
     status, flight = row["status"], row.get("in_flight")
     enabled = settings.get("enabled", False)
@@ -142,9 +159,9 @@ def allowed_actions(row, settings):
                                                               or (status == "cancelled" and not flight))))
     possible = {"pause": active, "stop": active, "cancel": status not in {"completed", "failed", "cancelled"},
                 "resume": enabled and status in {"paused", "interrupted"} and (not flight or recoverable_read) and not uncertain,
-                "approve": enabled and status == "waiting_approval" and bool(row["pending_approval"]) and "read_only" not in {row["permission_mode"], settings["permission_mode"]},
+                "approve": enabled and status == "waiting_approval" and bool(row["pending_approval"]) and row["permission_mode"] != "read_only",
                 "deny": enabled and status == "waiting_approval" and bool(row["pending_approval"]),
-                "answer": enabled and status == "waiting_input" and bool(row.get("pending_input")) and row["pending_input"]["kind"] != "credential_ref",
+                "answer": enabled and (bool(row.get("open_questions")) or (status == "waiting_input" and bool(row.get("pending_input")) and row["pending_input"]["kind"] != "credential_ref")),
                 "steer": mutable, "information": mutable, "scope": not uncertain and status != "cancelled",
                 "reconcile": enabled and ((uncertain and row.get("reconciliation", {}).get("attempts", 0) < 3) or recoverable_read)
                              and row.get("reconciliation", {}).get("state") not in {"pending", "running"}}
@@ -152,6 +169,11 @@ def allowed_actions(row, settings):
     removable = owner_removable(row)
     possible.update(rename=True, archive=removable and not row.get("archived"), restore=bool(row.get("archived")), delete=removable)
     possible["budget"] = safe_lifecycle and status in {"paused", "completed", "failed"}
+    possible["compact"] = (enabled and status in {"paused", "completed", "waiting_input"}
+                           and not flight and not uncertain and not row.get("pending_control")
+                           and has_compactable_history(row))
+    possible["set_permission"] = (not flight and not uncertain and not row.get("pending_control")
+                                  and status in {"paused", "waiting_input", "waiting_approval", "completed", "failed", "cancelled", "interrupted"})
     possible["source_credential"] = enabled and not flight and not uncertain and status in {"queued", "waiting_input", "paused", "completed", "failed"}
     possible["model"] = continuable or (not flight and not uncertain and status in {"paused", "completed", "failed", "waiting_input", "waiting_approval", "interrupted", "cancelled"}
                                         and (not row.get("pending_control") or (status == "cancelled" and row["pending_control"].get("kind") == "cancel")))
@@ -159,6 +181,7 @@ def allowed_actions(row, settings):
     if (row.get("fork") or {}).get("awaiting_instruction"):
         possible["resume"] = False
         possible["edit_message"] = False
+    possible["rollback"] = possible["edit_message"]
     if row.get("archived"):
         possible = {action: allowed if action in {"rename", "restore", "delete"} else False for action, allowed in possible.items()}
     if row.get("continued_to"):
@@ -194,16 +217,26 @@ def settle(row, emit, data=None):
         retry_policy.stop(row)
     if not control or row.get("in_flight"):
         return
-    if control["kind"] != "pause":
+    if control["kind"] == "information" and row.get("queue"):
+        return  # Pair every proposed tool result before appending owner information.
+    if control["kind"] not in {"pause", "information"}:
         row.pop("verification", None)
         close_queue(row, emit, "agent_owner_changed" if control["kind"] in {"steer", "scope", "permissions"} else "agent_cancelled", keep_flight=False)
-    if control["kind"] == "edit_message":
+    if control["kind"] in {"edit_message", "rollback"}:
         from .conversation import rewrite
         rewrite(row, control, emit, data=data)
         row.pop("pending_control", None)
         return
     pending_users = row.pop("pending_user_messages", [])
     row["messages"].extend(pending_users)
+    if pending_users and control.get("mid_turn"):
+        note = MID_TURN_NOTES.get((pending_users[-1].get("ui") or {}).get("kind"))
+        if note:
+            row["messages"].append({"role": "user", "content": note, "synthetic": True,
+                                    "context_epoch": row.get("context_epoch", 0),
+                                    "ui": {"kind": "runtime_note", "hidden": True}})
+    if control["kind"] == "information" and row["status"] == "running":
+        row["status"] = "queued"
     if pending_users and isinstance(data, dict):
         from . import memory_integration
         memory_integration.apply_owner_turn_memory_in_tx(None, data, row)

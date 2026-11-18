@@ -10,6 +10,7 @@ import copy
 import hashlib
 import json
 import re
+from pathlib import Path
 
 from ..llm_package.chat import validate_tool_arguments, validate_tool_schema
 from .output_policy import MAX_RAW_RESPONSE_BYTES, MAX_TOOL_CALL_ARGUMENT_BYTES
@@ -142,14 +143,20 @@ def _reject(call, code, message, *, details=None):
 
 def normalize_tool_calls(calls, specs, *, existing_call_ids=(), metadata=None,
                          internal_names=(),
-                         max_argument_bytes=MAX_TOOL_CALL_ARGUMENT_BYTES):
+                         max_argument_bytes=MAX_TOOL_CALL_ARGUMENT_BYTES,
+                         rewrite_ids_seed=None, index_offset=0, collisions=None,
+                         workspace_root=None):
     """Return request-ordered calls with deep-copied schemas or paired errors.
 
     Accepts normalized chat calls and Responses function_call items. Original
-    argument strings survive unchanged, even when malformed; arguments is an
+    argument strings survive unchanged unless oversized (then only a size
+    placeholder and the original digest survive); arguments is an
     empty dict on rejection and must never be executed when error_result exists.
     Schema validation reuses Ryn's shared validator. Permissions, effects,
     approval, operation ids and result accounting remain the host's authority.
+    A request seed repairs invalid/reused ids deterministically; without it,
+    identity checks remain strict. index_offset is the completed stream item's
+    position in the full response, so early and final normalization agree.
     """
     if type(max_argument_bytes) is not int or not 1 <= max_argument_bytes <= MAX_TOOL_CALL_ARGUMENT_BYTES:
         raise ValueError("invalid tool-call budget")
@@ -166,33 +173,44 @@ def normalize_tool_calls(calls, specs, *, existing_call_ids=(), metadata=None,
     # Preflight all identities/argument sizes before even consulting metadata.
     seen = set(existing_call_ids)
     entries = []
-    for raw in calls:
+    for index, raw in enumerate(calls, start=index_offset):
         if not isinstance(raw, dict):
             raise ToolCallProtocolError("invalid_calls")
         response_item = raw.get("type") == "function_call"
         call_id = raw.get("call_id") if response_item else raw.get("id")
-        if not isinstance(call_id, str) or not CALL_ID.fullmatch(call_id):
-            raise ToolCallProtocolError("invalid_call_id")
-        if call_id in seen:
-            raise ToolCallProtocolError("duplicate_call_id")
+        provider_call_id = call_id
+        invalid_id = not isinstance(call_id, str) or not CALL_ID.fullmatch(call_id)
+        needs_rewrite = invalid_id or call_id in seen
+        if needs_rewrite:
+            if rewrite_ids_seed is None:
+                raise ToolCallProtocolError("invalid_call_id" if invalid_id else "duplicate_call_id")
+            call_id = "call_ryn_" + hashlib.sha256(
+                f"{rewrite_ids_seed}:{index}:{provider_call_id}".encode()
+            ).hexdigest()[:24]
         seen.add(call_id)
         function = raw if response_item else raw.get("function")
         function = function if isinstance(function, dict) else {}
         arguments = function.get("arguments")
         arguments_json = arguments if isinstance(arguments, str) else _json(arguments)
-        if len(arguments_json.encode()) > max_argument_bytes:
-            raise ToolCallProtocolError("arguments_too_large", code="agent_model_output_limit")
-        entries.append((raw, function, call_id, arguments, arguments_json))
+        argument_bytes = arguments_json.encode()
+        argument_sha = hashlib.sha256(argument_bytes).hexdigest()
+        oversize = len(argument_bytes) > max_argument_bytes
+        if oversize:
+            arguments_json = f"<arguments omitted: {len(argument_bytes)} bytes>"
+            arguments = None
+        entries.append((raw, function, call_id, arguments, arguments_json, needs_rewrite, provider_call_id, oversize, argument_sha))
 
+    from .tool_menu import dedupe_specs
+    specs, dropped = dedupe_specs(specs)
+    if collisions is not None:
+        collisions.extend(dropped)
     catalog = {}
     for spec in specs:
         function = _function_spec(spec)
-        if function["name"] in catalog:
-            raise AgentError("agent_tool_definition_changed")
         catalog[function["name"]] = copy.deepcopy(function)
     internal_names = frozenset(internal_names)
     normalized = []
-    for raw, function, call_id, original_arguments, arguments_json in entries:
+    for raw, function, call_id, original_arguments, arguments_json, rewritten, provider_call_id, oversize, argument_sha in entries:
         raw_name = function.get("name")
         valid_name = isinstance(raw_name, str) and bool(TOOL_NAME.fullmatch(raw_name))
         namespace = raw.get("namespace")
@@ -216,17 +234,28 @@ def normalize_tool_calls(calls, specs, *, existing_call_ids=(), metadata=None,
             snapshot = catalog.get(name) if valid_name else None
         call = {"call_id": call_id, "name": name, "arguments": {},
                 "arguments_json": arguments_json, "raw_arguments_json": arguments_json,
-                "arguments_sha256": hashlib.sha256(arguments_json.encode()).hexdigest(),
+                "arguments_sha256": argument_sha,
                 "schema_snapshot": copy.deepcopy(snapshot),
                 "schema_sha256": _schema_digest(snapshot) if snapshot is not None else None,
                 "effect": None, "error_result": None}
+        if rewritten:
+            call["provider_call_id"] = copy.deepcopy(provider_call_id)
         if raw.get("wire_kind") == "custom":
             call["wire_kind"] = "custom"
+        if oversize:
+            call["oversize"] = True
+            normalized.append(_reject(call, "agent_model_output_limit",
+                "Arguments exceed the byte limit; resend with smaller arguments (put large content in files)."))
+            continue
         if bad_type:
             normalized.append(_reject(call, "agent_unknown_tool", "This tool payload is not in the request's function catalog."))
             continue
         if snapshot is None:
-            normalized.append(_reject(call, "agent_unknown_tool", "Choose a tool from the tools offered in this request."))
+            if name == "ryn_proposal_overflow":
+                normalized.append(_reject(call, "agent_tool_proposal_overflow",
+                    "Too many tool proposals in one reply; this one was not executed. Send it again in the next step."))
+            else:
+                normalized.append(_reject(call, "agent_unknown_tool", "Choose a tool from the tools offered in this request."))
             continue
         try:
             if isinstance(original_arguments, str):
@@ -279,10 +308,39 @@ def normalize_tool_calls(calls, specs, *, existing_call_ids=(), metadata=None,
                 normalized.append(_reject(call, "agent_tool_arguments_invalid", message, details=details))
                 continue
         call["arguments"] = arguments
+        if name == "ryn_shell_execute" and "ryn_apply_patch" in catalog:
+            from .local_patch import rebase_paths, shell_patch
+            invocation = shell_patch(arguments["command"], arguments.get("shell", ""))
+            if invocation and invocation.get("error") == "implicit_patch":
+                rejected = _reject(call, "agent_patch_implicit_patch", "Use ryn_apply_patch for a raw patch.")
+                rejected["error_result"]["correction"] = "改用 ryn_apply_patch 工具，把补丁原文放在 patch 参数"
+                normalized.append(rejected)
+                continue
+            if invocation:
+                root = Path(workspace_root or Path.cwd()).resolve()
+                base = (root / arguments.get("cwd", ".") / (invocation["cd"] or ".")).resolve()
+                if base.is_relative_to(root):
+                    name = "ryn_apply_patch"
+                    arguments = {"patch": rebase_paths(invocation["patch"], base.relative_to(root).as_posix())}
+                    snapshot = catalog[name]
+                    rewritten_json = _json(arguments)
+                    call.update(name=name, arguments=arguments, arguments_json=rewritten_json,
+                                raw_arguments_json=rewritten_json,
+                                arguments_sha256=hashlib.sha256(rewritten_json.encode()).hexdigest(),
+                                schema_snapshot=copy.deepcopy(snapshot), schema_sha256=_schema_digest(snapshot),
+                                rewritten_from="ryn_shell_execute", intercepted_from="ryn_shell_execute")
+                else:
+                    call["shell_patch_outside_workspace"] = True
         if metadata is not None:
-            meta = metadata(name)
-            if not isinstance(meta, dict) or meta.get("effect") not in {"read", "write"}:
-                raise AgentError("agent_tool_definition_changed")
+            try:
+                meta = metadata(name)
+            except Exception:
+                meta = None
+            if not isinstance(meta, dict) or meta.get("effect") not in ("read", "write"):
+                call["arguments"] = {}
+                normalized.append(_reject(call, "agent_tool_unavailable",
+                    "This tool is temporarily unavailable; call ryn_discover_tools and retry."))
+                continue
             call["effect"] = meta["effect"]
             if isinstance(meta.get("extension_binding"), dict):
                 call["extension_binding"] = copy.deepcopy(meta["extension_binding"])

@@ -686,6 +686,30 @@ class CodexRPC:
             self.workspace.__exit__(None, None, None)
 
 
+def _model_fact_fields(item):
+    """Keep declared scalar facts; do not copy Codex prompts or assume token byte sizes."""
+    facts = {}
+    parallel = item.get("parallel_tool_calls", item.get("supports_parallel_tool_calls"))
+    if type(parallel) is bool:
+        facts["parallel_tool_calls"] = parallel
+    verbosity = item.get("verbosity", item.get("default_verbosity"))
+    if item.get("support_verbosity") is not False and verbosity in ("low", "medium", "high"):
+        facts["verbosity"] = verbosity
+    patch = item.get("patch_tool", item.get("apply_patch_tool_type"))
+    if patch in ("function", "freeform"):
+        facts["patch_tool"] = patch
+    limit = item.get("max_tool_output_bytes")
+    policy = item.get("truncation_policy")
+    if limit is None and isinstance(policy, dict) and policy.get("mode") == "bytes":
+        limit = policy.get("limit")
+    if type(limit) is int and limit > 0:
+        facts["max_tool_output_bytes"] = limit
+    output = item.get("max_output_tokens")
+    if type(output) is int and 1 <= output <= 393216:
+        facts["max_output_tokens"] = output
+    return facts
+
+
 def list_models(executable: str):
     rpc = CodexRPC(executable)
     try:
@@ -694,7 +718,7 @@ def list_models(executable: str):
         for _ in range(10):
             page = rpc.call("model/list", {"limit": 100, "cursor": cursor})
             models.extend({"id": item["model"], "name": item["displayName"],
-                           "default": item.get("isDefault", False),
+                           "default": item.get("isDefault", False), **_model_fact_fields(item),
                            **reasoning_metadata(item.get("supportedReasoningEfforts"), item.get("defaultReasoningEffort"))}
                           for item in page["data"] if not item.get("hidden"))
             cursor = page.get("nextCursor")
@@ -727,7 +751,8 @@ def _model_windows(models, cache_path=None):
             # The live model/list response wins; the fresh private cache only
             # supplements versions whose response omits reasoning metadata.
             reasoning = reasoning_metadata(cached.get("supported_reasoning_levels"), cached.get("default_reasoning_level"))
-            result.append({**reasoning, **row, **({"context_window": window} if window is not None else {})})
+            result.append({**_model_fact_fields(cached), **reasoning, **row,
+                           **({"context_window": window} if window is not None else {})})
         return result
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return models

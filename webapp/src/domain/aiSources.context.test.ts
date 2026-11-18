@@ -6,7 +6,8 @@ it("starts every new source in explicit automatic discovery mode rather than ass
     const value = newSource(provider);
     expect(value.context_window_mode).toBe("auto");
     expect(value.context_window).toBe(32768);
-    expect(value.max_output_tokens).toBeLessThan(value.context_window);
+    expect(value.max_output_tokens).toBeNull();
+    expect(value.max_output_tokens_explicit).toBe(false);
     expect(value.model_metadata).toBeUndefined();
   }
 });

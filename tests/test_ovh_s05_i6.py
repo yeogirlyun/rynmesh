@@ -283,9 +283,10 @@ def test_t5_stricter_of_task_and_settings_permission_mode_governs_outside_access
         tools.perform("ryn_file_read", {"path": str(target)}, context, lambda: False)
     assert str(exc_2.value) == "agent_local_path_outside_workspace"
 
-    # Case 3: settings is workspace, task is automatic -> effective is workspace (rejected)
+    # Case 3: existing task retains its mode, but outside access still needs both modes.
     _set_modes(store, settings_mode="workspace", task_mode="automatic")
-    assert tools.policy(context)["permission_mode"] == "workspace"
+    policy = tools.policy(context)
+    assert policy["permission_mode"] == "automatic" and policy["allow_outside_workspace"] is False
     with pytest.raises(AgentToolRejected) as exc_3:
         execute(tools, context, "ryn_file_write", {"path": str(target), "content": "no"}, "op_strict_3")
     assert str(exc_3.value) == "agent_local_path_outside_workspace"

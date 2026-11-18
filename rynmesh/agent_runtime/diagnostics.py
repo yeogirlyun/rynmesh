@@ -10,7 +10,7 @@ import math
 import re
 from datetime import datetime
 
-from . import diagnostic_log, execution_policy, model_profiles
+from . import diagnostic_log, execution_policy, model_profiles, output_policy
 from .store import AgentError, AgentToolRejected
 
 _TITLES = {
@@ -26,19 +26,24 @@ _STATES = {"queued", "running", "paused", "waiting_input", "waiting_approval", "
 _RUN_STATES = _STATES | {"pausing", "reconciling", "ended"}
 _OUTCOMES = {"unverified", "verified", "partial", "not_achieved", "unknown", "budget_limited"}
 _ERROR_GUIDANCE = {
+    "agent_image_too_large": ("resize_images", "图片太大，请压缩后重发。", "/agent"),
+    "agent_image_count_limit": ("reduce_images", f"图片太多，单次最多 {output_policy.MAX_REQUEST_IMAGES} 张。", "/agent"),
     "agent_workspace_required": ("choose_workspace", "No working directory is bound to this task. The owner must select a working directory in task settings; a chat answer containing a path does not configure it.", "/agent"),
     "agent_workspace_changed_new_task_required": ("choose_workspace", "The working directory changed. The owner must explicitly rebind this task to the new directory before continuing.", "/agent"),
     "agent_invalid_control_proposal": ("correct_input_request", "Correct the control arguments. Credential requests accept only credential_ref fields; ordinary facts use a separate information/choice request. Never put a key in chat.", "/agent"),
-    "agent_model_unavailable": ("review_models", "Review the selected model's availability and explicitly select a usable model.", "/services/sources"),
+    "agent_model_unavailable": ("review_models", "检查本机模型服务是否已启动，并检查所选模型的来源连接或重新选择可用模型。", "/services/sources"),
+    "agent_model_discovery_failed": ("review_models", "暂时读不到命令行模型的模型列表，稍后会自动重试；若持续失败，请检查命令行工具是否已安装并登录。", "/services/sources"),
+    "agent_model_starting": ("wait_for_model_start", "本机模型服务正在启动，将每 5 秒重试；若持续不可用，请检查本机模型服务是否已启动。", "/services/sources"),
+    "agent_model_peer_unreachable": ("review_peer_connection", "无法连接模型所在的设备，请检查对端在线状态和线路后重试；不会自动更换模型。", "/services/sources"),
     "agent_model_tools_unsupported": ("review_models", "This connection does not provide the Agent tool protocol. Select a connected model with Agent tool support.", "/services/sources"),
     "agent_inference_timeout": ("review_connection", "Check the source connection and model timeout; do not assume the model responded.", "/services/sources"),
     "agent_model_connection_failed": ("review_connection", "Check the source connection using its existing test action.", "/services/sources"),
     "agent_model_protocol_unsupported": ("review_connection", "Review the source protocol and its supported request parameters.", "/services/sources"),
     "agent_model_protocol_invalid": ("review_connection", "The upstream protocol response was incomplete or unsupported. Check the selected source protocol before retrying.", "/services/sources"),
-    "agent_model_busy": ("wait_for_capacity", "Wait for model capacity, then start an explicit retry.", "/agent"),
-    "agent_step_limit": ("review_budget", "Review the task's step limit and narrow the request before starting another task.", "/agent"),
-    "agent_time_limit": ("review_budget", "Review the task's time limit and narrow the request before starting another task.", "/agent"),
-    "agent_node_restarted": ("resume_if_allowed", "Review current state and use Resume only when the server permits it.", "/agent"),
+    "agent_model_busy": ("wait_for_capacity", "The model was busy and automatic retries were used up. Wait a moment, then use Retry.", "/agent"),
+    "agent_step_limit": ("review_budget", "Raise the task's step limit in its budget, if available, then continue; start a new task only if the request itself is too large.", "/agent"),
+    "agent_time_limit": ("review_budget", "Raise the task's time limit in its budget, if available, then continue; start a new task only if the request itself is too large.", "/agent"),
+    "agent_node_restarted": ("resume_if_allowed", "能自动续跑的任务已续跑。Review current state and use Resume only when the server permits it.", "/agent"),
     "agent_write_outcome_unknown": ("reconcile_original_write", "Check the original operation receipt; do not repeat the write to guess its outcome.", "/agent"),
     "agent_scope_changed": ("review_scope", "Review current task data permissions and explicitly resume if appropriate.", "/agent"),
     "agent_permission_denied": ("review_permissions", "The recorded operation was rejected by permission enforcement. Review current task and Agent permissions; this code alone does not identify a hash mismatch or prove that approval was never staged. Do not retry a write without current authorization.", "/agent"),
@@ -50,6 +55,7 @@ _ERROR_GUIDANCE = {
     "agent_model_output_limit_reached": ("review_models", "模型把输出额度都用在思考上了，请调高该模型的输出上限或降低推理强度", "/services/sources"),
     "agent_context_limit": ("start_new_or_continue", "对话太长超出模型上下文窗口，请新开对话或从摘要续接。", "/agent"),
     "agent_output_limit": ("narrow_request", "回复超过单次输出长度上限，请要求分段或精简输出。", "/agent"),
+    "agent_preview_limit": ("narrow_request", "预览过大；请把写入拆成多个文件或改用 ryn_apply_patch。", "/agent"),
     "agent_inference_failed": ("review_connection", "模型调用异常，请检查模型来源连接与服务状态。", "/services/sources"),
     "agent_compaction_failed": ("retry_task", "上下文压缩未能生成有效摘要，可重试当前轮次。", "/agent"),
     "agent_compaction_incomplete": ("retry_task", "上下文压缩摘要未完整结束，可重试当前轮次或调高模型输出上限。", "/agent"),
@@ -59,8 +65,8 @@ _ERROR_GUIDANCE = {
     "agent_model_call_budget_exhausted": ("increase_budget", "任务模型调用次数预算已用完，请在任务预算设置中调高上限。", "/agent"),
     "agent_time_budget_exhausted": ("increase_budget", "任务运行时间预算已用完，请在任务预算设置中调高上限。", "/agent"),
     "agent_model_upstream_failed": ("review_connection", "上游模型 HTTP 或流式请求失败，请查看模型来源状态。", "/services/sources"),
-    "agent_model_image_rejected": ("review_models", "上游模型拒收图片输入，请去掉图片或切换到支持图片的模型。", "/services/sources"),
-    "agent_model_quota_exhausted": ("review_quota", "该模型当日额度已用完，请切换其他模型或等待额度恢复。", "/services/sources"),
+    "agent_model_image_rejected": ("review_models", "所选模型不接受图片：换支持图片的模型，或去掉图片后继续。", "/services/sources"),
+    "agent_model_quota_exhausted": ("review_quota", "该模型今日额度已用完：换一个模型继续，或等额度重置后继续。", "/services/sources"),
     "agent_model_destination_unverifiable": ("review_destination", "无法核实模型去向绑定，请复查模型来源配置。", "/services/sources"),
     "agent_model_stream_interrupted": ("review_connection", "上游模型流式传输中断，请检查连接稳定性后重试。", "/services/sources"),
     "agent_model_request_rejected": ("review_models", "上游服务商拒绝了本次模型请求参数或载荷，请检查模型配置或精简输入。", "/services/sources"),
@@ -237,6 +243,17 @@ class DiagnosticTools:
                 "suggestions": [{"id": key, "instruction": text, "owner_path": path, "executed": False} for key, text, path in guidance],
                 "evidence": {"kind": "current_task_runtime_record", "other_tasks_read": False},
                 "note": "All states and counters describe task_id only, not the diagnosing task. Error codes classify observed failures, not every underlying cause. Missing time/usage stays null. A finished turn is not proof of goal completion."}
+        if error in {"agent_image_too_large", "agent_image_count_limit"}:
+            result["image_limits"] = {"max_images": output_policy.MAX_REQUEST_IMAGES,
+                "max_single_image_bytes": output_policy.MAX_SINGLE_IMAGE_DECODED_BYTES,
+                "max_total_image_bytes": output_policy.MAX_TOTAL_IMAGE_DECODED_BYTES}
+        if error == "agent_model_quota_exhausted":
+            last_failure = next((entry for entry in reversed(row.get("events", []))
+                                 if entry.get("type") == "failed" and entry.get("error") == error), {})
+            quota_diagnostics = diagnostic_log.safe_diagnostics(last_failure.get("diagnostics"))
+            if "reset_at" in quota_diagnostics:
+                result["reset_at"] = quota_diagnostics["reset_at"]
+                result["suggestions"][0]["reset_at"] = quota_diagnostics["reset_at"]
         # A recoverable tool rejection need not set row.error. The diagnosing
         # task needs the same bounded operation facts as an owner-selected task.
         result.update(self._operations(row))

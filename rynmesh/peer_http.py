@@ -11,6 +11,7 @@ from .transport import stamp_network_key
 import codecs
 import hashlib
 import json
+import logging
 import os
 import re
 import socket
@@ -27,6 +28,8 @@ from urllib.parse import quote, urlencode, urlparse
 from . import recommendation_service
 from . import transport_plugins as _transport_plugins  # noqa: F401 — registers reality/meek/ech
 from .background_workers import BackgroundWorkerRegistry, BackgroundWorkerSpec, BackoffPolicy
+from .atomic_io import AtomicIOError
+from .diagnostic_events import record
 from .credits import CreditEvent, CreditLedgerError
 from .crypto import SignedPayload
 from .recommendation_profile import RecommendationProfileStore
@@ -49,58 +52,39 @@ CONTENT_LISTING_TIMEOUT_S = 8.0
 MAX_JSON_BYTES = 2 * 1024 * 1024
 MAX_PREVIEW_BYTES = 32 * 1024 * 1024
 MAX_MEDIA_BYTES = 10 * 1024 * 1024 * 1024
+MAX_MESSAGE_ATTACHMENT_BYTES = 25 * 1024 * 1024
+MAX_PEER_MESSAGE_BYTES = 36 * 1024 * 1024
+MESSAGE_SUBSCRIBER_QUEUE_SIZE = 256
 BLOCKED_HOSTS = {
     "169.254.169.254",
     "metadata.google.internal",
     "metadata",
 }
 ITEM_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_:.-]{0,255}$")
+UNTRUSTED_CONTENT_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "Content-Security-Policy": "sandbox; default-src 'none'",
+}
+
+
+def _passive_attachment_type(mime: str) -> str:
+    if "\r" in mime or "\n" in mime:
+        return "application/octet-stream"
+    declared = mime.strip()
+    mime = declared.partition(";")[0].strip().lower()
+    if "javascript" in mime or "xml" in mime:
+        return "application/octet-stream"
+    if mime in {"image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf", "text/plain"}:
+        return declared
+    if re.fullmatch(r"(?:audio|video)/[a-z0-9.+-]+", mime):
+        return declared
+    return "application/octet-stream"
 
 
 def _desktop_lan_ip() -> str:
     """Resolve a useful LAN address without requiring network access."""
-    if configured_ip := os.environ.get("RYNMESH_MACHINE_IP", "").strip():
-        return configured_ip
-    if sys.platform == "darwin":
-        try:
-            route = subprocess.run(
-                ["/sbin/route", "-n", "get", "default"],
-                capture_output=True,
-                check=False,
-                text=True,
-                timeout=2,
-            ).stdout
-            interface = next(
-                (
-                    line.split(":", 1)[1].strip()
-                    for line in route.splitlines()
-                    if "interface:" in line
-                ),
-                "",
-            )
-            if interface:
-                ip = subprocess.run(
-                    ["/usr/sbin/ipconfig", "getifaddr", interface],
-                    capture_output=True,
-                    check=False,
-                    text=True,
-                    timeout=2,
-                ).stdout.strip()
-                if ip:
-                    return ip
-        except (OSError, subprocess.SubprocessError):
-            pass
-        # Do not fall back to hostname/mDNS resolution on macOS: it can block
-        # startup for minutes when the local hostname has no usable DNS record.
-        from .store import _primary_lan_ip
-        return _primary_lan_ip() or "127.0.0.1"
-    try:
-        for family, _, _, _, sockaddr in socket.getaddrinfo(socket.gethostname(), None):
-            if family == socket.AF_INET and not sockaddr[0].startswith("127."):
-                return str(sockaddr[0])
-    except OSError:
-        pass
-    return "127.0.0.1"
+    from .store import _primary_lan_ip
+    return _primary_lan_ip()
 
 
 def _desktop_node_name() -> str:
@@ -262,17 +246,18 @@ class HttpPeerClient:
             )
         except TransportError as exc:
             if exc.reason == "too_large":
-                raise PeerTransportError("peer_media_too_large") from exc
+                raise PeerTransportError("peer_media_too_large") from None
             if exc.reason == "unsupported_encoding":
-                raise PeerTransportError("peer_unsupported_encoding") from exc
-            raise PeerTransportError(f"peer_http_error: {exc}") from exc
+                raise PeerTransportError("peer_unsupported_encoding") from None
+            detail = f"http_{exc.status}" if exc.status else exc.reason
+            raise PeerTransportError(f"peer_http_error:{detail}") from None
 
     def _json(self, path: str) -> dict[str, Any]:
-        raw = self._bytes(path, max_bytes=MAX_JSON_BYTES).decode("utf-8")
         try:
+            raw = self._bytes(path, max_bytes=MAX_JSON_BYTES).decode("utf-8")
             payload = json.loads(raw or "{}")
-        except json.JSONDecodeError as exc:
-            raise PeerTransportError(f"peer_invalid_json: {exc}") from exc
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise PeerTransportError("peer_invalid_json") from None
         if not isinstance(payload, dict):
             raise PeerTransportError("peer_response_not_object")
         return payload
@@ -370,7 +355,7 @@ class HttpPeerClient:
                 timeout_s=self.timeout_s,
                 max_chunk_bytes=min(64 * 1024, max_event_bytes),
                 max_total_bytes=effective_total,
-                headers={"Content-Type": "application/json", "Accept": "application/x-ndjson"},
+                headers=stamp_network_key({"Content-Type": "application/json", "Accept": "application/x-ndjson"}),
             )
             for chunk in chunks:
                 buffered += decoder.decode(chunk)
@@ -406,10 +391,11 @@ class HttpPeerClient:
             )
         except TransportError as exc:
             if exc.reason == "too_large":
-                raise PeerTransportError("peer_response_too_large") from exc
+                raise PeerTransportError("peer_response_too_large") from None
             if exc.reason == "unsupported_encoding":
-                raise PeerTransportError("peer_unsupported_encoding") from exc
-            raise PeerTransportError(f"peer_http_error: {exc}") from exc
+                raise PeerTransportError("peer_unsupported_encoding") from None
+            detail = f"http_{exc.status}" if exc.status else exc.reason
+            raise PeerTransportError(f"peer_http_error:{detail}") from None
 
 
 MAX_NDJSON_STREAM_TOTAL_BYTES = 32 * 1024 * 1024
@@ -575,7 +561,7 @@ def create_app(store: RynmeshStore | None = None):
                 os.environ.get("RYNMESH_NETWORK_ID", "rynmesh-main").strip() or "rynmesh-main"
             )
             try:
-                active_store.register_node(network_id=network_id)
+                await _asyncio.to_thread(active_store.register_node, network_id=network_id)
                 lifespan_app.state.registration_error = ""
             except RegistryError as exc:
                 lifespan_app.state.registration_error = str(exc)
@@ -762,6 +748,8 @@ def create_app(store: RynmeshStore | None = None):
     )
 
     _local_token = os.environ.get("RYNMESH_LOCAL_TOKEN", "").strip()
+    if os.environ.get("RYNMESH_ALLOW_REMOTE_CONTROL"):
+        logging.getLogger(__name__).warning("RYNMESH_ALLOW_REMOTE_CONTROL 已不支持；本机控制接口始终需要授权")
 
     # Device-token auth for the control surface. A loopback socket is only
     # trusted when nothing proxied the request — cloudflared dials the origin
@@ -815,32 +803,19 @@ def create_app(store: RynmeshStore | None = None):
         # except the two unauthenticated auth routes below, so a route added
         # later is private without anyone remembering to gate it.
         if path.startswith("/api/local") and path not in _auth_open_paths:
-            import hmac
-
+            # CORS validates preflight origins/headers; no control handler runs.
+            # Browsers cannot include the credential until that preflight succeeds.
+            if (request.method == "OPTIONS" and request.headers.get("origin")
+                    and request.headers.get("access-control-request-method")):
+                return await call_next(request)
             from fastapi.responses import JSONResponse
 
-            client_host = (request.client.host if request.client else "") or ""
-
-            if _local_token:
-                # Per-launch token injected by the desktop shell; when set it
-                # is the only accepted credential on this surface.
-                if not hmac.compare_digest(
-                    request.headers.get("x-ryn-local-token", ""), _local_token
-                ):
-                    return JSONResponse({"detail": "forbidden"}, status_code=403)
-            else:
-                decision = node_auth.authorize(
-                    client_host=client_host,
-                    headers=request.headers,
-                    cookie=request.cookies.get(node_auth_mod.COOKIE_NAME, ""),
-                )
-                if not decision.allowed:
-                    # 401, not 403: the client can fix this by unlocking, and
-                    # the webapp keys its unlock prompt off this status.
-                    return JSONResponse(
-                        {"detail": "unauthorized", "unlock_required": True},
-                        status_code=401,
-                    )
+            try:
+                local_control(request)
+            except HTTPException as exc:
+                return JSONResponse({"detail": exc.detail, "unlock_required": True}, status_code=exc.status_code)
+            except OSError:
+                return JSONResponse({"detail": "device_token_unreadable"}, status_code=503)
         return await call_next(request)
 
     def route_id(value: str) -> str:
@@ -855,26 +830,25 @@ def create_app(store: RynmeshStore | None = None):
             or "rynmesh-main"
         )
 
-    def local_control(request: FastAPIRequest) -> None:
+    def local_control(request: FastAPIRequest) -> node_auth_mod.AuthDecision:
         """Per-route re-check of the control gate.
 
         The middleware above is the real boundary; this is defense in depth for
         the ~60 routes that call it, so a change to the path prefix can't
         silently open them.
         """
-        if os.environ.get("RYNMESH_ALLOW_REMOTE_CONTROL", "").strip() in {"1", "true", "yes"}:
-            return
         if _local_token:
-            # Already verified by the middleware, which is the only thing that
-            # can accept this credential.
-            return
+            import hmac
+            if hmac.compare_digest(request.headers.get("x-ryn-local-token", ""), _local_token):
+                return node_auth_mod.AuthDecision(True, "launch_token", via="local")
         decision = node_auth.authorize(
-            client_host=(request.client.host if request.client else "") or "",
+            client_host="" if _local_token else (request.client.host if request.client else "") or "",
             headers=request.headers,
             cookie=request.cookies.get(node_auth_mod.COOKIE_NAME, ""),
         )
         if not decision.allowed:
-            raise HTTPException(status_code=401, detail="local_control_unauthorized")
+            raise HTTPException(status_code=403 if _local_token else 401, detail="local_control_unauthorized")
+        return decision
 
     from .nas import mount_nas
     mount_nas(app, active_store.home, local_control)
@@ -1050,7 +1024,7 @@ def create_app(store: RynmeshStore | None = None):
         raw: dict[str, Any], *, provider: dict[str, Any], fetched_ids: set[str]
     ) -> dict[str, Any]:
         content_id = str(raw.get("content_id") or raw.get("clip_id") or "")
-        provider_peer_id = str(raw.get("provider_peer_id") or provider.get("peer_id") or "")
+        provider_peer_id = str(provider.get("peer_id") or raw.get("provider_peer_id") or "")
         publisher_peer_id = str(
             raw.get("publisher_peer_id") or raw.get("source_peer_id") or provider_peer_id
         )
@@ -1105,15 +1079,18 @@ def create_app(store: RynmeshStore | None = None):
 
     content_scan_flight = _SingleFlight()
 
-    def network_content(network_id: str) -> list[dict[str, Any]]:
+    def network_content(network_id: str, *, with_errors: bool = False):
         """Local content plus every reachable device's listing.
 
         Home asks for content and recommendations together; concurrent callers
         share one scan, and each gets its own list.
         """
-        return list(content_scan_flight.run(network_id, lambda: scan_network_content(network_id)))
+        result = content_scan_flight.run(network_id, lambda: scan_network_content(network_id))
+        if with_errors:
+            return {"content": list(result["content"]), "scan_errors": list(result["scan_errors"])}
+        return list(result["content"])
 
-    def scan_network_content(network_id: str) -> list[dict[str, Any]]:
+    def scan_network_content(network_id: str) -> dict[str, Any]:
         fetched_ids = local_content_ids()
         items: list[dict[str, Any]] = []
         self_record = self_peer_record(network_id)
@@ -1138,32 +1115,43 @@ def create_app(store: RynmeshStore | None = None):
         # timeout once per device in a row.
         listing_timeout = min(_fetch_timeout(), CONTENT_LISTING_TIMEOUT_S)
 
-        def listing_of(target: tuple[dict[str, Any], str]) -> tuple[dict[str, Any], dict[str, Any] | None]:
+        def listing_of(target):
             peer, endpoint = target
             try:
-                return peer, active_store.list_peer_content(endpoint, timeout_s=listing_timeout)
-            except (PeerTransportError, StoreError, OSError):
-                return peer, None
+                listing = active_store.list_peer_content(endpoint, expected_peer_id=peer["peer_id"], timeout_s=listing_timeout)
+                info = listing.get("peer", {})
+                if info.get("peer_id") != peer["peer_id"]:
+                    return [], {"peer_id": peer["peer_id"], "code": "peer_identity_mismatch"}
+                provider = dict(peer)
+                provider.update({key: info[key] for key in ("node_name", "machine_name") if key in info})
+                return [content_item(raw, provider=provider, fetched_ids=fetched_ids)
+                        for raw in listing.get("content", []) if isinstance(raw, dict)], None
+            except PeerTransportError as exc:
+                code = str(exc).split(":", 1)[0]
+                if not re.fullmatch(r"peer_[a-z_]+", code):
+                    code = "peer_scan_failed"
+            except (StoreError, OSError):
+                code = "peer_scan_failed"
+            except Exception:
+                code = "peer_scan_failed"
+            return [], {"peer_id": peer["peer_id"], "code": code}
 
-        results: list[tuple[dict[str, Any], dict[str, Any] | None]] = []
+        results = []
         if targets:
             from concurrent.futures import ThreadPoolExecutor
 
             with ThreadPoolExecutor(max_workers=min(CONTENT_SCAN_PARALLELISM, len(targets)),
                                     thread_name_prefix="ryn-content-scan") as pool:
                 results = list(pool.map(listing_of, targets))
-        for peer, listing in results:
-            if listing is None:
-                continue
-            provider = dict(peer)
-            provider.update(dict(listing.get("peer", {})))
-            for raw in listing.get("content", []):
-                if isinstance(raw, dict):
-                    items.append(content_item(raw, provider=provider, fetched_ids=fetched_ids))
+        scan_errors = []
+        for content, error in results:
+            items.extend(content)
+            if error:
+                scan_errors.append(error)
         deduped: dict[tuple[str, str], dict[str, Any]] = {}
         for item in items:
             deduped[(item["content_id"], item["provider_peer_id"])] = item
-        return sorted(
+        content = sorted(
             deduped.values(),
             key=lambda item: (
                 float(item.get("distribution_weight", 0)),
@@ -1171,6 +1159,7 @@ def create_app(store: RynmeshStore | None = None):
             ),
             reverse=True,
         )
+        return {"content": content, "scan_errors": scan_errors}
 
     def filtered_peers(
         items: list[dict[str, Any]], request: FastAPIRequest
@@ -1290,14 +1279,18 @@ def create_app(store: RynmeshStore | None = None):
             data = active_store.get_local_preview_bytes(route_id(item_id))
         except (FileNotFoundError, StoreError) as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        return Response(content=data, media_type="application/octet-stream")
+        return Response(content=data, media_type="application/octet-stream", headers={
+            **UNTRUSTED_CONTENT_HEADERS, "Content-Disposition": "attachment",
+        })
 
     def bytes_response(item_id: str):
         try:
             content_path = active_store.get_local_content_path(route_id(item_id))
         except (FileNotFoundError, StoreError) as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        return FileResponse(content_path, media_type="application/octet-stream")
+        return FileResponse(content_path, media_type="application/octet-stream", headers={
+            **UNTRUSTED_CONTENT_HEADERS, "Content-Disposition": "attachment",
+        })
 
     @app.get("/health")
     def health() -> dict[str, Any]:
@@ -1338,11 +1331,13 @@ def create_app(store: RynmeshStore | None = None):
         Unauthenticated on purpose — it carries no secrets and the webapp needs
         it to decide whether to show the unlock prompt.
         """
-        decision = node_auth.authorize(
-            client_host=(request.client.host if request.client else "") or "",
-            headers=request.headers,
-            cookie=request.cookies.get(node_auth_mod.COOKIE_NAME, ""),
-        )
+        try:
+            node_auth.token()
+            decision = local_control(request)
+        except OSError as exc:
+            raise HTTPException(status_code=503, detail="device_token_unreadable") from exc
+        except HTTPException:
+            decision = node_auth_mod.AuthDecision(False, "unauthenticated")
         return {
             "authorized": decision.allowed,
             "via": decision.via,
@@ -1360,9 +1355,10 @@ def create_app(store: RynmeshStore | None = None):
         client_host = (request.client.host if request.client else "") or ""
         # Rate-limit against the real caller when proxied, so one tunnel client
         # can't hide behind the proxy's address.
-        forwarded_for = request.headers.get("cf-connecting-ip") or request.headers.get(
-            "x-forwarded-for", ""
-        )
+        assertion = request.headers.get("cf-access-jwt-assertion", "")
+        forwarded_for = (
+            request.headers.get("cf-connecting-ip") or request.headers.get("x-forwarded-for", "")
+        ) if assertion and node_auth.verify_access_jwt(assertion) else ""
         client_key = (forwarded_for.split(",")[0].strip() or client_host) or "unknown"
 
         session = node_auth.unlock(str(body.get("token") or ""), client=client_key)
@@ -1412,6 +1408,10 @@ def create_app(store: RynmeshStore | None = None):
 
         network_id = control_network_id()
         local_items = active_store.list_local_content().get("content", [])
+        try:
+            pending_recs = _digest_service().discovery_status().get("unread_count")
+        except (OSError, ValueError):
+            pending_recs = None
         return {
             "node_name": active_store.node_name,
             "peer_id": active_store.peer_id,
@@ -1434,7 +1434,7 @@ def create_app(store: RynmeshStore | None = None):
             "fetched_items": sum(
                 1 for item in local_items if item.get("publisher_peer_id") != active_store.peer_id
             ),
-            "pending_recs": 0,
+            **({"pending_recs": pending_recs} if pending_recs is not None else {}),
             "version": f"ryn-node {RYNMESH_VERSION}",
             "uptime_seconds": int(time.monotonic() - started_at),
             "workers": app.state.background_workers.status(),
@@ -1460,37 +1460,46 @@ def create_app(store: RynmeshStore | None = None):
 
     @app.post("/api/local/jobs/capacity/register")
     async def local_register_job_capacity(request: FastAPIRequest) -> dict[str, Any]:
-        local_control(request)
+        await run_in_threadpool(local_control, request)
         body = await request.json()
-        return active_store.register_job_capacity(
-            capabilities=tuple(str(item) for item in body.get("capabilities", []) if str(item)),
-            network_id=control_network_id(body.get("network_id")),
-            capacity_units=int(body.get("capacity_units") or 1),
-            max_concurrent=int(body.get("max_concurrent") or 1),
-            price_credits=dict(body.get("price_credits", {}) or {}),
-            polling_interval_sec=int(body.get("polling_interval_sec") or 30),
-            metadata=dict(body.get("metadata", {}) or {}),
-        )
+
+        def work():
+            return active_store.register_job_capacity(
+                owner="manual",
+                capabilities=tuple(str(item) for item in body.get("capabilities", []) if str(item)),
+                network_id=control_network_id(body.get("network_id")),
+                capacity_units=int(body.get("capacity_units") or 1),
+                max_concurrent=int(body.get("max_concurrent") or 1),
+                price_credits=dict(body.get("price_credits", {}) or {}),
+                polling_interval_sec=int(body.get("polling_interval_sec") or 30),
+                metadata=dict(body.get("metadata", {}) or {}),
+            )
+
+        return await run_in_threadpool(work)
 
     @app.post("/api/local/jobs/work-orders")
     async def local_submit_work_order(request: FastAPIRequest) -> dict[str, Any]:
-        local_control(request)
+        await run_in_threadpool(local_control, request)
         body = await request.json()
-        return active_store.submit_work_order(
-            provider_peer_id=str(body.get("provider_peer_id", "")),
-            capability=str(body.get("capability", "")),
-            operation=str(body.get("operation", "")),
-            params=dict(body.get("params", {}) or {}),
-            network_id=control_network_id(body.get("network_id")),
-            input_content_ids=tuple(
-                str(item) for item in body.get("input_content_ids", []) if str(item)
-            ),
-            max_credit_cost=float(body.get("max_credit_cost") or 0.0),
-            idempotency_key=str(body.get("idempotency_key", "")),
-            result_policy=dict(body.get("result_policy", {}) or {}),
-            expires_at=str(body.get("expires_at", "")),
-            expires_in_hours=float(body.get("expires_in_hours") or 6.0),
-        )
+
+        def work():
+            return active_store.submit_work_order(
+                provider_peer_id=str(body.get("provider_peer_id", "")),
+                capability=str(body.get("capability", "")),
+                operation=str(body.get("operation", "")),
+                params=dict(body.get("params", {}) or {}),
+                network_id=control_network_id(body.get("network_id")),
+                input_content_ids=tuple(
+                    str(item) for item in body.get("input_content_ids", []) if str(item)
+                ),
+                max_credit_cost=float(body.get("max_credit_cost") or 0.0),
+                idempotency_key=str(body.get("idempotency_key", "")),
+                result_policy=dict(body.get("result_policy", {}) or {}),
+                expires_at=str(body.get("expires_at", "")),
+                expires_in_hours=float(body.get("expires_in_hours") or 6.0),
+            )
+
+        return await run_in_threadpool(work)
 
     @app.get("/api/local/jobs/work-orders")
     def local_work_orders(
@@ -1527,12 +1536,16 @@ def create_app(store: RynmeshStore | None = None):
 
     @app.post("/api/local/egress/connect")
     async def local_egress_connect(request: FastAPIRequest) -> dict[str, Any]:
-        local_control(request)
+        await run_in_threadpool(local_control, request)
         body = await request.json()
-        return egress_controller.connect(
-            region=str(body.get("region") or "CN"),
-            provider_peer_id=str(body.get("provider_peer_id") or ""),
-        )
+
+        def work():
+            return egress_controller.connect(
+                region=str(body.get("region") or "CN"),
+                provider_peer_id=str(body.get("provider_peer_id") or ""),
+            )
+
+        return await run_in_threadpool(work)
 
     @app.get("/api/local/egress/status")
     def local_egress_status(request: FastAPIRequest, region: str = "CN") -> dict[str, Any]:
@@ -1551,9 +1564,13 @@ def create_app(store: RynmeshStore | None = None):
 
     @app.post("/api/local/egress/disconnect")
     async def local_egress_disconnect(request: FastAPIRequest) -> dict[str, Any]:
-        local_control(request)
+        await run_in_threadpool(local_control, request)
         body = await request.json()
-        return egress_controller.disconnect(region=str(body.get("region") or "CN"))
+
+        def work():
+            return egress_controller.disconnect(region=str(body.get("region") or "CN"))
+
+        return await run_in_threadpool(work)
 
     from .services.peer_health import PeerHealthProbe, PeerPresenceCache
 
@@ -1647,7 +1664,7 @@ def create_app(store: RynmeshStore | None = None):
     @app.get("/api/local/directory")
     async def local_directory(request: FastAPIRequest) -> dict[str, Any]:
         """Devices and their services as one snapshot (docs/PEER_DIRECTORY_REDESIGN.md, P2)."""
-        local_control(request)
+        await run_in_threadpool(local_control, request)
         from datetime import datetime, timezone
 
         network_id = control_network_id()
@@ -1671,46 +1688,54 @@ def create_app(store: RynmeshStore | None = None):
                         lambda: discover_services(network_id, cache_registry=True, passive_registry=True))
             except Exception:
                 services = []  # Devices stay listed when the service catalog is unavailable.
-        members: list[str] = []
-        friend_ids: list[str] = []
-        with timer.phase("membership"):
-            try:
-                status = active_store.personal_space.status()
-                if status.get("membership") == "active":
-                    members = [m["peer_id"] for m in status.get("members", []) if not m.get("removed")]
-            except Exception:
-                members = []
-            try:
-                friends_state = getattr(app.state, "friends", None)
-                if friends_state is not None:
-                    friend_ids = [str(row.get("peer_id")) for row in friends_state.service.store.list_relationships()
-                                  if row.get("peer_id")]
-            except Exception:
-                friend_ids = []
-        with timer.phase("snapshot"):
-            snapshot = _peer_dir.build_snapshot(
-                items, services, self_id=active_store.peer_id, network_id=network_id,
-                members=members, friend_ids=friend_ids, probe_for=peer_presence.get,
-                policy=freshness, now=datetime.now(timezone.utc),
-            )
-            violations = _peer_dir.directory_violations(snapshot)
-            if violations:
-                snapshot = {**snapshot, "diagnostics": {"violations": violations}}
+
+        def work():
+            members: list[str] = []
+            friend_ids: list[str] = []
+            with timer.phase("membership"):
                 try:
-                    from . import diagnostic_events  # type: ignore[attr-defined]
+                    status = active_store.personal_space.status()
+                    if status.get("membership") == "active":
+                        members = [m["peer_id"] for m in status.get("members", []) if not m.get("removed")]
+                except Exception:
+                    members = []
+                try:
+                    friends_state = getattr(app.state, "friends", None)
+                    if friends_state is not None:
+                        friend_ids = [str(row.get("peer_id")) for row in friends_state.service.store.list_relationships()
+                                      if row.get("peer_id")]
+                except Exception:
+                    friend_ids = []
+            with timer.phase("snapshot"):
+                snapshot = _peer_dir.build_snapshot(
+                    items, services, self_id=active_store.peer_id, network_id=network_id,
+                    members=members, friend_ids=friend_ids, probe_for=peer_presence.get,
+                    policy=freshness, now=datetime.now(timezone.utc),
+                )
+                violations = _peer_dir.directory_violations(snapshot)
+                if violations:
+                    snapshot = {**snapshot, "diagnostics": {"violations": violations}}
+                    try:
+                        from . import diagnostic_events  # type: ignore[attr-defined]
 
-                    diagnostic_events.record("peer_directory", "directory_invariant_violation")
-                except ImportError:
-                    from .agent_runtime import diagnostic_log
+                        diagnostic_events.record("peer_directory", "directory_invariant_violation")
+                    except ImportError:
+                        from .agent_runtime import diagnostic_log
 
-                    diagnostic_log.failure("peer_directory_violations", "agent_directory_invariant_violation")
-        timer.finish()
-        return snapshot
+                        diagnostic_log.failure("peer_directory_violations", "agent_directory_invariant_violation")
+            timer.finish()
+            return snapshot
+
+        return await run_in_threadpool(work)
 
     @app.get("/api/local/content")
-    def local_content(request: FastAPIRequest) -> list[dict[str, Any]]:
+    def local_content(request: FastAPIRequest) -> list[dict[str, Any]] | dict[str, Any]:
         local_control(request)
-        return filtered_content(network_content(control_network_id()), request)
+        scan = network_content(control_network_id(), with_errors=True)
+        content = filtered_content(scan["content"], request)
+        if request.query_params.get("include_scan_errors") == "1":
+            return {"content": content, "scan_errors": scan["scan_errors"]}
+        return content
 
     @app.get("/api/local/content/{content_id}")
     def local_content_detail(content_id: str, request: FastAPIRequest) -> dict[str, Any]:
@@ -1722,7 +1747,7 @@ def create_app(store: RynmeshStore | None = None):
         raise HTTPException(status_code=404, detail="content_not_found")
 
     @app.get("/api/local/content/{content_id}/body")
-    def local_content_body(content_id: str, request: FastAPIRequest) -> dict[str, Any]:
+    def local_content_body(content_id: str, request: FastAPIRequest, response: Response) -> dict[str, Any]:
         local_control(request)
         content_id = route_id(content_id)
         try:
@@ -1741,7 +1766,8 @@ def create_app(store: RynmeshStore | None = None):
         ):
             raise HTTPException(status_code=415, detail="content_body_not_text")
         max_body_bytes = int(os.environ.get("RYNMESH_LOCAL_BODY_MAX_BYTES", str(1024 * 1024)))
-        data = content_path.read_bytes()[: max_body_bytes + 1]
+        with content_path.open("rb") as handle:
+            data = handle.read(max_body_bytes + 1)
         truncated = len(data) > max_body_bytes
         if truncated:
             data = data[:max_body_bytes]
@@ -1749,6 +1775,7 @@ def create_app(store: RynmeshStore | None = None):
             text = data.decode("utf-8")
         except UnicodeDecodeError as exc:
             raise HTTPException(status_code=415, detail="content_body_not_utf8") from exc
+        response.headers.update(UNTRUSTED_CONTENT_HEADERS)
         return {
             "ok": True,
             "content_id": content_id,
@@ -1945,28 +1972,32 @@ def create_app(store: RynmeshStore | None = None):
 
     @app.post("/api/local/ai/model")
     async def local_ai_select_model(request: FastAPIRequest) -> dict[str, Any]:
-        local_control(request)
+        await run_in_threadpool(local_control, request)
         body = await request.json()
-        model = str(body.get("model", "") or "").strip()
-        if model:
-            installed = {
-                entry["name"] for entry in model_provider_module.OllamaProvider().installed()
+
+        def work():
+            model = str(body.get("model", "") or "").strip()
+            if model:
+                installed = {
+                    entry["name"] for entry in model_provider_module.OllamaProvider().installed()
+                }
+                if model not in installed:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"model_not_installed: pull it first with `ollama pull {model}`",
+                    )
+            # "" clears the choice and returns to automatic selection.
+            _settings.patch({"ai_model": model})
+            _reset_model_provider()
+            provider = _model_provider()
+            return {
+                "ok": True,
+                "selected": model,
+                "provider": provider.id if provider else None,
+                "model": getattr(provider, "model", None) if provider else None,
             }
-            if model not in installed:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"model_not_installed: pull it first with `ollama pull {model}`",
-                )
-        # "" clears the choice and returns to automatic selection.
-        _settings.patch({"ai_model": model})
-        _reset_model_provider()
-        provider = _model_provider()
-        return {
-            "ok": True,
-            "selected": model,
-            "provider": provider.id if provider else None,
-            "model": getattr(provider, "model", None) if provider else None,
-        }
+
+        return await run_in_threadpool(work)
 
     @app.get("/api/local/sources")
     def local_sources(request: FastAPIRequest) -> list[dict[str, Any]]:
@@ -1975,16 +2006,20 @@ def create_app(store: RynmeshStore | None = None):
 
     @app.post("/api/local/sources")
     async def local_sources_add(request: FastAPIRequest) -> dict[str, Any]:
-        local_control(request)
+        await run_in_threadpool(local_control, request)
         body = await request.json()
-        tags = body.get("tags")
-        try:
-            return _digest_service().add_source(
-                str(body.get("url", "")),
-                tags=[str(tag) for tag in tags] if isinstance(tags, list) else None,
-            )
-        except DigestError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        def work():
+            tags = body.get("tags")
+            try:
+                return _digest_service().add_source(
+                    str(body.get("url", "")),
+                    tags=[str(tag) for tag in tags] if isinstance(tags, list) else None,
+                )
+            except DigestError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        return await run_in_threadpool(work)
 
     @app.delete("/api/local/sources/{source_id}")
     def local_sources_remove(source_id: str, request: FastAPIRequest) -> dict[str, Any]:
@@ -2034,12 +2069,16 @@ def create_app(store: RynmeshStore | None = None):
 
     @app.post("/api/local/readlater")
     async def local_readlater(request: FastAPIRequest) -> dict[str, Any]:
-        local_control(request)
+        await run_in_threadpool(local_control, request)
         body = await request.json()
-        try:
-            return _digest_service().save_link(str(body.get("url", "")), now_unix=time.time())
-        except DigestError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        def work():
+            try:
+                return _digest_service().save_link(str(body.get("url", "")), now_unix=time.time())
+            except DigestError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        return await run_in_threadpool(work)
 
     @app.get("/api/local/watchers")
     def local_watchers(request: FastAPIRequest) -> list[dict[str, Any]]:
@@ -2048,14 +2087,18 @@ def create_app(store: RynmeshStore | None = None):
 
     @app.post("/api/local/watchers")
     async def local_watchers_add(request: FastAPIRequest) -> dict[str, Any]:
-        local_control(request)
+        await run_in_threadpool(local_control, request)
         body = await request.json()
-        try:
-            return _digest_service().add_watcher(
-                str(body.get("url", "")), note=str(body.get("note", ""))
-            )
-        except DigestError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        def work():
+            try:
+                return _digest_service().add_watcher(
+                    str(body.get("url", "")), note=str(body.get("note", ""))
+                )
+            except DigestError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        return await run_in_threadpool(work)
 
     @app.delete("/api/local/watchers/{watcher_id}")
     def local_watchers_remove(watcher_id: str, request: FastAPIRequest) -> dict[str, Any]:
@@ -2254,101 +2297,128 @@ def create_app(store: RynmeshStore | None = None):
 
     @app.post("/api/local/digest/steer")
     async def local_digest_steer(request: FastAPIRequest) -> dict[str, Any]:
-        local_control(request)
+        await run_in_threadpool(local_control, request)
         body = await request.json()
-        result = _digest_service().steer(str(body.get("text", "")))
-        _digest_service().build(now_unix=time.time())
-        _audit().append(
-            "rec",
-            "Recommendation direction updated",
-            details={"interest_count": len(result["interests"]), "avoid_count": len(result["avoids"])},
-        )
-        return result
 
-    @app.post("/api/local/digest/feedback")
-    async def local_digest_feedback(request: FastAPIRequest) -> dict[str, Any]:
-        local_control(request)
-        body = await request.json()
-        if not isinstance(body, dict):
-            raise HTTPException(status_code=400, detail="feedback_not_object")
-        try:
-            result = _digest_service().feedback(
-                str(body.get("item_id", "")), str(body.get("action", ""))
-            )
+        def work():
+            result = _digest_service().steer(str(body.get("text", "")))
             _digest_service().build(now_unix=time.time())
             _audit().append(
                 "rec",
-                f"Recommendation feedback recorded: {body.get('action', '')}",
-                details={"action": str(body.get("action", ""))},
-                item_id=str(body.get("item_id", "")),
+                "Recommendation direction updated",
+                details={"interest_count": len(result["interests"]), "avoid_count": len(result["avoids"])},
             )
             return result
-        except DigestError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except (OSError, ValueError):
-            raise HTTPException(status_code=503, detail="recommendation_feedback_unavailable") from None
+
+        return await run_in_threadpool(work)
+
+    @app.post("/api/local/digest/feedback")
+    async def local_digest_feedback(request: FastAPIRequest) -> dict[str, Any]:
+        await run_in_threadpool(local_control, request)
+        body = await request.json()
+
+        def work():
+            if not isinstance(body, dict):
+                raise HTTPException(status_code=400, detail="feedback_not_object")
+            try:
+                result = _digest_service().feedback(
+                    str(body.get("item_id", "")), str(body.get("action", ""))
+                )
+                _digest_service().build(now_unix=time.time())
+                _audit().append(
+                    "rec",
+                    f"Recommendation feedback recorded: {body.get('action', '')}",
+                    details={"action": str(body.get("action", ""))},
+                    item_id=str(body.get("item_id", "")),
+                )
+                return result
+            except DigestError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            except (OSError, ValueError):
+                raise HTTPException(status_code=503, detail="recommendation_feedback_unavailable") from None
+
+        return await run_in_threadpool(work)
 
     @app.post("/api/local/recommendations")
     async def local_recommendations(request: FastAPIRequest) -> list[dict[str, Any]]:
-        local_control(request)
+        await run_in_threadpool(local_control, request)
         try:
             body = await request.json()
         except json.JSONDecodeError:
             body = {}
-        now_unix = time.time()
-        # Asking devices for their listings must not stall the event loop
-        # (it serves health checks and the Agent's reads).
-        items = await run_in_threadpool(network_content, control_network_id())
-        items.extend(_digest_service().recommendation_items())
-        profile_signals = _recommendation_profile.signals()
-        return recommendation_service.recommend_from_items(
-            items,
-            now_unix=now_unix,
-            query=str(body.get("query", "") or ""),
-            limit=int(body.get("limit", 6) or 6),
-            profile=profile_signals,
-        )
+
+        def work():
+            now_unix = time.time()
+            # Asking devices for their listings must not stall the event loop
+            # (it serves health checks and the Agent's reads).
+            items = network_content(control_network_id())
+            items.extend(_digest_service().recommendation_items())
+            profile_signals = _recommendation_profile.signals()
+            return recommendation_service.recommend_from_items(
+                items,
+                now_unix=now_unix,
+                query=str(body.get("query", "") or ""),
+                limit=int(body.get("limit", 6) or 6),
+                profile=profile_signals,
+            )
+
+        return await run_in_threadpool(_recommendation_call, work)
+
+    def _recommendation_call(fn):
+        try:
+            return fn()
+        except ValueError as exc:
+            record("recommendation", "recommendation_profile_invalid", exc)
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        except (AtomicIOError, OSError) as exc:
+            record("recommendation", "recommendation_profile_unavailable", exc)
+            raise HTTPException(status_code=503, detail="recommendation_profile_unavailable") from None
 
     @app.get("/api/local/recommendations/profile")
     def local_recommendations_profile(request: FastAPIRequest) -> dict[str, Any]:
         local_control(request)
-        return _recommendation_profile.public()
+        return _recommendation_call(_recommendation_profile.public)
 
     @app.patch("/api/local/recommendations/profile")
     async def local_recommendations_profile_update(request: FastAPIRequest) -> dict[str, Any]:
-        local_control(request)
+        await run_in_threadpool(local_control, request)
         body = await request.json()
-        if not isinstance(body, dict):
-            raise HTTPException(status_code=400, detail="recommendation_profile_not_object")
-        profile = _recommendation_profile.patch(body)
-        if "direction" in body:
-            _digest_service().steer(profile["direction"])
-        _digest_service().build(now_unix=time.time())
-        _audit().append(
-            "rec",
-            "Recommendation profile updated",
-            details={
-                "topic_count": len(profile["topics"]),
-                "platform_count": len(profile["platforms"]),
-                "has_direction": bool(profile["direction"]),
-            },
-        )
-        return profile
+
+        def work():
+            if not isinstance(body, dict):
+                raise HTTPException(status_code=400, detail="recommendation_profile_not_object")
+            profile = _recommendation_profile.patch(body)
+            if "direction" in body:
+                _digest_service().steer(profile["direction"])
+            _digest_service().build(now_unix=time.time())
+            _audit().append(
+                "rec",
+                "Recommendation profile updated",
+                details={
+                    "topic_count": len(profile["topics"]),
+                    "platform_count": len(profile["platforms"]),
+                    "has_direction": bool(profile["direction"]),
+                },
+            )
+            return profile
+
+        return await run_in_threadpool(_recommendation_call, work)
 
     @app.post("/api/local/recommendations/feedback")
     async def local_recommendations_feedback(request: FastAPIRequest) -> dict[str, Any]:
-        local_control(request)
+        await run_in_threadpool(local_control, request)
         body = await request.json()
-        content_id = str(body.get("contentId", "") or "")
-        candidates = await run_in_threadpool(network_content, control_network_id())
-        candidates.extend(_digest_service().recommendation_items())
-        item = next(
-            (candidate for candidate in candidates if candidate.get("content_id") == content_id),
-            None,
-        )
-        if item is None:
-            raise HTTPException(status_code=404, detail="recommendation_content_not_found")
-        try:
+
+        def work():
+            content_id = str(body.get("contentId", "") or "")
+            candidates = network_content(control_network_id())
+            candidates.extend(_digest_service().recommendation_items())
+            item = next(
+                (candidate for candidate in candidates if candidate.get("content_id") == content_id),
+                None,
+            )
+            if item is None:
+                raise HTTPException(status_code=404, detail="recommendation_content_not_found")
             profile = _recommendation_profile.feedback(item, str(body.get("action", "")))
             if str(body.get("action", "")) != "neutral":
                 app.state.first_run.record("first_signal_recorded")
@@ -2360,36 +2430,40 @@ def create_app(store: RynmeshStore | None = None):
                 item_id=content_id,
             )
             return profile
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        return await run_in_threadpool(_recommendation_call, work)
 
     @app.post("/api/local/search-ask")
     async def local_search_ask(request: FastAPIRequest) -> dict[str, Any]:
-        local_control(request)
+        await run_in_threadpool(local_control, request)
         body = await request.json()
-        query = str(body.get("text", "")).strip()
-        digest = _digest_service().last_digest() or {}
-        provider = _model_provider()
-        # Evaluated before the model call; it used to run on the event loop.
-        content_items = await run_in_threadpool(network_content, control_network_id())
-        result = await _asyncio.to_thread(
-            ask_service.answer,
-            query,
-            provider=provider,
-            digest_items=digest.get("items", []),
-            content_items=content_items,
-        )
-        _audit().append(
-            "rec",
-            "Search & Ask completed" if provider is not None else "Search & Ask had no model",
-            details={
-                "provider": getattr(provider, "id", None),
-                "model": getattr(provider, "model", None),
-                "network_access": getattr(provider, "id", None) == "anthropic",
-                "query_length": len(query),
-            },
-        )
-        return result
+
+        def work():
+            query = str(body.get("text", "")).strip()
+            digest = _digest_service().last_digest() or {}
+            provider = _model_provider()
+            scan = network_content(control_network_id(), with_errors=True)
+            content_items = scan["content"]
+            result = ask_service.answer(
+                query,
+                provider=provider,
+                digest_items=digest.get("items", []),
+                content_items=content_items,
+            )
+            result["scan_errors"] = scan["scan_errors"]
+            _audit().append(
+                "rec",
+                "Search & Ask completed" if provider is not None else "Search & Ask had no model",
+                details={
+                    "provider": getattr(provider, "id", None),
+                    "model": getattr(provider, "model", None),
+                    "network_access": getattr(provider, "id", None) == "anthropic",
+                    "query_length": len(query),
+                },
+            )
+            return result
+
+        return await run_in_threadpool(work)
 
     @app.post("/api/local/publish/prepare")
     async def local_publish_prepare(request: FastAPIRequest) -> dict[str, Any]:
@@ -2482,7 +2556,6 @@ def create_app(store: RynmeshStore | None = None):
             "rank_default": stored["rank_default"],
             "publish_visibility": stored["publish_visibility"],
             "fetch_budget_mb": int(stored["fetch_budget_mb"]),
-            "fetch_used_mb": 0,
             "fetch_timeout_s": int(stored["fetch_timeout_s"]),
             "onboarding_version": int(stored["onboarding_version"]),
             "notifications_enabled": bool(stored["notifications_enabled"]),
@@ -2493,6 +2566,7 @@ def create_app(store: RynmeshStore | None = None):
             "desktop_managed": os.environ.get("RYNMESH_DESKTOP_MODE", "").strip().lower()
             in {"1", "true", "yes"},
             "network_id": control_network_id(),
+            "network_proxy": stored["network_proxy"],
         }
 
     @app.patch("/api/local/settings")
@@ -2579,32 +2653,44 @@ def create_app(store: RynmeshStore | None = None):
 
     @app.post("/api/local/privacy/erase")
     async def local_privacy_erase(request: FastAPIRequest) -> dict[str, Any]:
-        local_control(request)
+        await run_in_threadpool(local_control, request)
         body = await request.json()
-        requested = body.get("scopes", []) if isinstance(body, dict) else []
-        scopes = {str(scope) for scope in requested if str(scope)}
-        allowed = {"history", "profile", "cache", "audit", "onboarding"}
-        if not scopes or not scopes.issubset(allowed):
-            raise HTTPException(status_code=400, detail="privacy_erase_scopes_invalid")
-        if "history" in scopes:
-            app.state.consumption_store.clear()
-        if "profile" in scopes:
-            _recommendation_profile.clear()
-            _digest_service().clear_personalization()
-        if "cache" in scopes:
-            _digest_service().clear_cached_content()
-            app.state.reader_cache.clear()
-        if "audit" in scopes:
-            _audit().clear()
-        if "onboarding" in scopes:
-            app.state.first_run.store.reset()
-        if "audit" not in scopes:
-            _audit().append(
-                "verify",
-                "Personal assistant data erased",
-                details={"scopes": sorted(scopes)},
-            )
-        return {"ok": True, "erased": sorted(scopes)}
+
+        def work():
+            requested = body.get("scopes", []) if isinstance(body, dict) else []
+            scopes = {str(scope) for scope in requested if str(scope)}
+            allowed = {"history", "profile", "cache", "audit", "onboarding", "agent_history", "agent_memory"}
+            if not scopes or not scopes.issubset(allowed):
+                raise HTTPException(status_code=400, detail="privacy_erase_scopes_invalid")
+            if scopes & {"agent_history", "agent_memory"}:
+                from .agent_runtime.store import AgentError
+                try:
+                    app.state.agent_runtime.erase_owner_data(scopes)
+                except AgentError as exc:
+                    raise HTTPException(status_code=409, detail=str(exc)) from None
+                except OSError:
+                    raise HTTPException(status_code=409, detail="agent_task_cleanup_failed") from None
+            if "history" in scopes:
+                app.state.consumption_store.clear()
+            if "profile" in scopes:
+                _recommendation_profile.clear()
+                _digest_service().clear_personalization()
+            if "cache" in scopes:
+                _digest_service().clear_cached_content()
+                app.state.reader_cache.clear()
+            if "audit" in scopes:
+                _audit().clear()
+            if "onboarding" in scopes:
+                app.state.first_run.store.reset()
+            if "audit" not in scopes:
+                _audit().append(
+                    "verify",
+                    "Personal assistant data erased",
+                    details={"scopes": sorted(scopes)},
+                )
+            return {"ok": True, "erased": sorted(scopes)}
+
+        return await run_in_threadpool(work)
 
     @app.get("/api/v1/node")
     def node_info() -> dict[str, Any]:
@@ -2657,24 +2743,28 @@ def create_app(store: RynmeshStore | None = None):
         cannot inflate themselves. Dedup handled by the ledger.
         """
         body = await request.json()
-        try:
-            signed = SignedPayload.from_dict(body)
-            peeked = CreditEvent.from_payload(signed.payload)
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail=f"invalid_payload: {exc}") from exc
-        if peeked.kind not in ("preview_served", "full_served"):
-            raise HTTPException(status_code=400, detail="kind_not_acceptable")
-        if peeked.issuer_peer_id == peeked.subject_peer_id:
-            raise HTTPException(status_code=400, detail="self_attestation_rejected")
-        try:
-            result = active_store.credit_ledger.append(signed)
-        except CreditLedgerError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return {
-            "ok": True,
-            "status": result.get("status", ""),
-            "event_id": result.get("event_id", ""),
-        }
+
+        def work():
+            try:
+                signed = SignedPayload.from_dict(body)
+                peeked = CreditEvent.from_payload(signed.payload)
+            except Exception as exc:
+                raise HTTPException(status_code=400, detail=f"invalid_payload: {exc}") from exc
+            if peeked.kind not in ("preview_served", "full_served"):
+                raise HTTPException(status_code=400, detail="kind_not_acceptable")
+            if peeked.issuer_peer_id == peeked.subject_peer_id:
+                raise HTTPException(status_code=400, detail="self_attestation_rejected")
+            try:
+                result = active_store.credit_ledger.append(signed)
+            except CreditLedgerError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            return {
+                "ok": True,
+                "status": result.get("status", ""),
+                "event_id": result.get("event_id", ""),
+            }
+
+        return await run_in_threadpool(work)
 
     @app.get("/api/v1/clips/{clip_id}/manifest")
     def manifest(clip_id: str) -> dict[str, Any]:
@@ -2703,7 +2793,7 @@ def create_app(store: RynmeshStore | None = None):
     # --- peer messaging (1:1 chat) ---
     from .services import peer_box as _peer_box
     from .services.messaging_store import MessagingStore as _MsgStore
-    from .services.peer_messenger import PeerMessenger as _PeerMessenger
+    from .services.peer_messenger import PeerMessenger as _PeerMessenger, MAX_INLINE_BYTES
 
     # Beside the identity key, not $RYNMESH_HOME: the store owns the peer id
     # these messages are sealed to, and `register_node` advertises this key.
@@ -2719,7 +2809,8 @@ def create_app(store: RynmeshStore | None = None):
 
     def _resolve_endpoint(peer_id: str) -> str:
         discovered = (
-            active_store.discover_peers(network_id=control_network_id(), include_self=False) or {}
+            active_store.discover_peers(network_id=control_network_id(), include_self=False,
+                                       cache_only=True, use_cache_on_error=True) or {}
         )
         for rec in discovered.get("peers", []):
             if rec.get("peer_id") == peer_id:
@@ -2737,11 +2828,7 @@ def create_app(store: RynmeshStore | None = None):
         ep = _resolve_endpoint(peer_id)
         if not ep:
             raise RuntimeError(f"no endpoint for peer {peer_id}")
-        from .transport import network_key_header
-
-        req = _urlreq.Request(ep + "/api/peer/pubkey", headers=network_key_header())
-        with _urlreq.urlopen(req, timeout=10) as resp:
-            return str(json.load(resp)["x25519_pub"])
+        return str(HttpPeerClient(ep, timeout_s=10)._json("/api/peer/pubkey")["x25519_pub"])
 
     def _lookup_verified_pubkey(peer_id: str) -> str:
         return _mailbox_routes.with_registry_fallback(
@@ -2761,16 +2848,8 @@ def create_app(store: RynmeshStore | None = None):
         ep = _resolve_endpoint(peer_id)
         if not ep:
             return 0
-        from .transport import network_key_header
-
-        req = _urlreq.Request(
-            ep + "/api/peer/msg",
-            data=json.dumps(header).encode(),
-            headers={"Content-Type": "application/json", **network_key_header()},
-            method="POST",
-        )
-        with _urlreq.urlopen(req, timeout=15) as resp:
-            return resp.status
+        HttpPeerClient(ep, timeout_s=15).post_json("/api/peer/msg", header)
+        return 200
 
     _messenger = _PeerMessenger(
         my_peer_id=active_store.peer_id,
@@ -2787,6 +2866,19 @@ def create_app(store: RynmeshStore | None = None):
         resolve_pubkey=_resolve_pubkey, workers=app.state.background_workers,
         local_control=local_control,
     )
+
+    def _enqueue_message(q, record):
+        if q not in _msg_subscribers:
+            return
+        try:
+            q.put_nowait(record)
+        except _asyncio.QueueFull:
+            _msg_subscribers.remove(q)
+            # End the stream promptly instead of draining stale live events.
+            # The client reconnects and reloads the durable conversation history.
+            while not q.empty():
+                q.get_nowait()
+            q.put_nowait(None)
 
     def _publish(record: dict) -> None:
         """Fan one record out to every SSE subscriber, from any thread.
@@ -2808,9 +2900,9 @@ def create_app(store: RynmeshStore | None = None):
         for q in list(_msg_subscribers):
             try:
                 if on_loop or loop is None:
-                    q.put_nowait(record)
+                    _enqueue_message(q, record)
                 else:
-                    loop.call_soon_threadsafe(q.put_nowait, record)
+                    loop.call_soon_threadsafe(_enqueue_message, q, record)
             except Exception:
                 pass
 
@@ -2984,7 +3076,14 @@ def create_app(store: RynmeshStore | None = None):
 
     @app.post("/api/peer/msg")
     async def peer_msg(request: FastAPIRequest) -> dict:
-        header = await request.json()
+        if int(request.headers.get("content-length") or 0) > MAX_PEER_MESSAGE_BYTES:
+            raise HTTPException(status_code=413, detail="message_too_large")
+        raw = bytearray()
+        async for chunk in request.stream():
+            if len(raw) + len(chunk) > MAX_PEER_MESSAGE_BYTES:
+                raise HTTPException(status_code=413, detail="message_too_large")
+            raw.extend(chunk)
+        header = json.loads(raw)
         if not isinstance(header, dict):
             raise HTTPException(status_code=400, detail="invalid_payload")
         sender = str(header.get("from") or "")
@@ -3011,40 +3110,53 @@ def create_app(store: RynmeshStore | None = None):
 
     @app.post("/api/local/messages/send")
     async def local_send(request: FastAPIRequest) -> dict:
+        local_control(request)
         body = await request.json()
         peer_id = str(body.get("peer_id", ""))
         att = body.get("attachment")
         if att and att.get("bytes_b64"):
             import base64 as _b64
 
+            if len(att["bytes_b64"]) > 4 * ((MAX_MESSAGE_ATTACHMENT_BYTES + 2) // 3):
+                raise HTTPException(status_code=413, detail="attachment_too_large")
+            data = _b64.b64decode(att["bytes_b64"])
+            # The messenger's existing 5 MiB inline policy is stricter than the
+            # route's decode budget. Keep that policy and expose a useful error.
+            if len(data) > MAX_INLINE_BYTES:
+                raise HTTPException(status_code=413, detail="attachment_too_large")
             att = {
                 "filename": att.get("filename", "file"),
                 "mime": att.get("mime", "application/octet-stream"),
-                "bytes": _b64.b64decode(att["bytes_b64"]),
+                "bytes": data,
             }
         else:
             att = None
-        return _messenger.send(peer_id, text=str(body.get("text", "")), attachment=att)
+        return await run_in_threadpool(_messenger.send, peer_id, text=str(body.get("text", "")), attachment=att)
 
     @app.get("/api/local/messages/stream")
-    async def local_stream():
+    async def local_stream(request: FastAPIRequest):
+        local_control(request)
         from fastapi.responses import StreamingResponse
 
-        q: _asyncio.Queue = _asyncio.Queue()
+        q: _asyncio.Queue = _asyncio.Queue(maxsize=MESSAGE_SUBSCRIBER_QUEUE_SIZE)
         _msg_subscribers.append(q)
 
         async def gen():
             try:
                 while True:
                     rec = await q.get()
+                    if rec is None:
+                        return
                     yield f"data: {json.dumps(rec)}\n\n"
             finally:
-                _msg_subscribers.remove(q)
+                if q in _msg_subscribers:
+                    _msg_subscribers.remove(q)
 
         return StreamingResponse(gen(), media_type="text/event-stream")
 
     @app.get("/api/local/messages/attachment/{msg_id}")
-    def local_attachment(msg_id: str, peer_id: str) -> Response:
+    def local_attachment(msg_id: str, peer_id: str, request: FastAPIRequest) -> Response:
+        local_control(request)
         # peer_id is a query param: base64 peer ids contain '/', '+', '=' which
         # break path routing. msg_id is a uuid hex — safe in the path.
         mime = "application/octet-stream"
@@ -3057,10 +3169,15 @@ def create_app(store: RynmeshStore | None = None):
             data = _msg_store.load_attachment(msg_id)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="attachment not found") from exc
-        return Response(content=data, media_type=mime)
+        mime = _passive_attachment_type(mime)
+        headers = dict(UNTRUSTED_CONTENT_HEADERS)
+        if mime == "application/octet-stream":
+            headers["Content-Disposition"] = "attachment"
+        return Response(content=data, media_type=mime, headers=headers)
 
     @app.get("/api/local/messages")
-    def local_history(peer_id: str) -> list:
+    def local_history(peer_id: str, request: FastAPIRequest) -> list:
+        local_control(request)
         # peer_id is a query param (not a path segment): base64 peer ids contain
         # '/' which Starlette can't route in a path.
         return _messenger.history(peer_id)
@@ -3092,8 +3209,11 @@ def create_app(store: RynmeshStore | None = None):
     )
     peer_providers.extension_source = lambda: app.state.agent_runtime.tools.extensions.store.list_peer_providers_internal()
 
+    mcp_token_failures: dict[str, str] = {}
+
     def _mcp_token_for_plugin(plugin_id: str):
         from .agent_runtime.extensions.mcp_oauth import COMPANY_PLUGIN_IDS
+        from .agent_runtime.store import AgentError
         from .peer_providers.service import companion_servers
         ext = app.state.agent_runtime.tools.extensions
         provider = next((row for row in ext.store.list_peer_providers_internal()
@@ -3101,16 +3221,24 @@ def create_app(store: RynmeshStore | None = None):
         url = ((provider or {}).get("peer_provider") or {}).get("url")
         # The company workspace plugin signs in to its local service; the
         # company-issued sign-in may sit on a sibling company plugin.
+        failure = "peer_provider_companion_missing"
         for server in companion_servers(ext.store.list_mcp_servers_internal(), plugin_id, url, COMPANY_PLUGIN_IDS):
+            failure = "agent_mcp_token_unavailable"
             try:
                 token = ext.manager.oauth.access_token(server)
+            except AgentError as exc:
+                failure = str(exc)
+                continue
             except Exception:
                 continue
             if token:
+                mcp_token_failures.pop(plugin_id, None)
                 return token
+        mcp_token_failures[plugin_id] = failure
         return None
 
     peer_providers.mcp_token_source = _mcp_token_for_plugin
+    peer_providers.mcp_token_failure = mcp_token_failures.get
 
     # Installer-provided plugin runtimes update in the background; a runtime's
     # downloads are authorized by its provider's sign-in.

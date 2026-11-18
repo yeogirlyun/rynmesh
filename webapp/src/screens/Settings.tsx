@@ -97,7 +97,7 @@ export default function Settings() {
       </aside>
       <Panel className="settings-panel">
         {active === "Identity & storage" ? <IdentitySection settings={settings} onUpdate={update} /> : null}
-        {active === "Network" ? <NetworkSection settings={settings} /> : null}
+        {active === "Network" ? <NetworkSection settings={settings} onUpdate={update} /> : null}
         {active === "Trust & safety" ? (
           <TrustSection settings={settings} onConfirmUpdate={confirmUpdate} />
         ) : null}
@@ -231,7 +231,10 @@ export function PrivacySection({
         <Button icon={Trash2} variant="danger" onClick={() => erase(["audit"], tr("Clear assistant audit?"), tr("This permanently erases the local record of assistant activity."))}>
           {tr("Clear audit")}
         </Button>
+        <Button icon={Trash2} variant="danger" onClick={() => erase(["agent_history"], tr("清除 Agent 历史？"), tr("将先停止所有 Agent 任务，再永久清除任务、归档、检查点、附件和本机结果文件。此操作不可撤销。不会删除模型来源凭据和插件，也不删除项目中的业务文件。"))}>{tr("清除 Agent 历史")}</Button>
+        <Button icon={Trash2} variant="danger" onClick={() => erase(["agent_memory"], tr("清除 Agent 记忆？"), tr("将先停止所有 Agent 任务，再永久清除记忆条目与候选。任务历史和文件保留。此操作不可撤销。不会删除模型来源凭据和插件。"))}>{tr("清除 Agent 记忆")}</Button>
       </div>
+      <p>{tr("Agent 清理不会删除模型来源凭据和插件。")}</p>
       <div className="privacy-audit">
         {client.mode === "live" ? <PrivateCopiesPanel /> : null}
         <div className="privacy-audit-head"><Activity size={16} /><b>{tr("Recent assistant activity")}</b></div>
@@ -352,15 +355,71 @@ function IdentitySection({
 
 function NetworkSection({
   settings,
+  onUpdate,
 }: {
   settings: NodeSettings;
+  onUpdate: (patch: Partial<NodeSettings>) => Promise<void>;
 }) {
   useUILanguage();
+  const proxy = settings.network_proxy ?? { mode: "off", url: "" };
+  const [proxyUrl, setProxyUrl] = useState(proxy.url);
+  useEffect(() => {
+    setProxyUrl(proxy.url);
+  }, [proxy.url]);
+
   return (
     <Section title={tr("Network")} icon={<Network size={22} />}>
       <div className="alert-callout">
         {tr("Desktop networking is configured automatically at startup. Advanced operators can override RYNMESH_* environment variables before launch.")}
       </div>
+      <div className="setting-row">
+        <span>
+          <b>{tr("Outbound proxy")}</b>
+          <small>{tr("代理只用于节点之间和注册中心的连接，不用于模型请求")}</small>
+        </span>
+        <select
+          aria-label={tr("Outbound proxy")}
+          value={proxy.mode}
+          onChange={(event) =>
+            void onUpdate({
+              network_proxy: {
+                mode: event.target.value as "off" | "system" | "manual",
+                url: proxyUrl,
+              },
+            })
+          }
+        >
+          <option value="off">{tr("Off")}</option>
+          <option value="system">{tr("Use system proxy")}</option>
+          <option value="manual">{tr("Manual proxy")}</option>
+        </select>
+      </div>
+      {proxy.mode === "manual" ? (
+        <div className="setting-row">
+          <span>
+            <b>{tr("Proxy URL")}</b>
+            <small>{tr("http:// or https:// CONNECT proxy")}</small>
+          </span>
+          <div className="setting-edit">
+            <input
+              aria-label={tr("Proxy URL")}
+              placeholder="http://127.0.0.1:7890"
+              value={proxyUrl}
+              onChange={(event) => setProxyUrl(event.target.value)}
+            />
+            <Button
+              icon={Save}
+              onClick={() =>
+                void onUpdate({
+                  network_proxy: { mode: "manual", url: proxyUrl.trim() },
+                })
+              }
+            >
+              {tr("Save proxy")}
+            </Button>
+          </div>
+        </div>
+      ) : null}
       <ReadOnly label={tr("Mode")} value={settings.desktop_managed ? tr("automatic desktop") : tr("operator managed")} />
       <ReadOnly label={tr("Network")} value={settings.network_id ?? "rynmesh-main"} />
       <ReadOnly label={tr("Registry URL")} value={settings.registry_url} />
@@ -499,19 +558,14 @@ function FetchSection({
   onUpdate: (patch: Partial<NodeSettings>) => Promise<void>;
 }) {
   useUILanguage();
-  const pct = Math.round((settings.fetch_used_mb / settings.fetch_budget_mb) * 100);
   return (
     <Section title={tr("Fetch limits")} icon={<HardDrive size={22} />}>
       <KV
         rows={[
-          { label: tr("Daily budget"), value: `${settings.fetch_budget_mb} MB` },
-          { label: tr("Used today"), value: `${settings.fetch_used_mb} MB` },
+          { label: tr("Daily budget"), value: `${settings.fetch_budget_mb == null ? "—" : `${settings.fetch_budget_mb} MB`} · ${tr("Not yet effective")}` },
           { label: tr("Timeout"), value: `${settings.fetch_timeout_s}s` },
         ]}
       />
-      <div className={`budget-bar${pct > 80 ? " budget-warn" : ""}`}>
-        <span style={{ width: `${Math.min(100, pct)}%` }} />
-      </div>
       <SettingInput
         label={tr("Fetch timeout seconds")}
         value={String(settings.fetch_timeout_s)}

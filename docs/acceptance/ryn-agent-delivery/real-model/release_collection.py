@@ -636,7 +636,15 @@ class ReleaseCollection:
             tool_ids = {r["id"] for r in task["budget"]["records"] if r["kind"] == "tool"}
             captured_models = {e["id"] for e in self.events if e["kind"] == "model" and e["basis"] != "original_receiver_probe"}
             captured_tools = {e.get("budget_record_id", e["id"]) for e in self.events if e["kind"] == "tool"}
-            complete = complete and model_ids == captured_models and tool_ids <= captured_tools
+            folded = task["budget"].get("round_totals", {}).values()
+            folded_models = sum(row["model_calls"] for row in folded)
+            folded_tools = sum(row["tool_calls"] for row in folded)
+            # S13-I53 folds old records. Earlier dispatches still have their
+            # registered IDs, checked by the gate before writing each event.
+            captured_metered_tools = {e["budget_record_id"] for e in self.events if e["kind"] == "tool" and "budget_record_id" in e}
+            complete = (complete and model_ids <= captured_models and tool_ids <= captured_tools
+                        and len(captured_models - model_ids) == folded_models
+                        and len(captured_metered_tools - tool_ids) == folded_tools)
         native_readback = None
         if self.cohort == "reference" and self.registration_path is not None:
             rows = []

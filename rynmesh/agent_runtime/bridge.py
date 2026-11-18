@@ -25,7 +25,7 @@ from ..llm_package.image_input_profile import (
     prepare_internal_image_profile,
     shared_image_carrier_scope,
 )
-from . import data_policy, image_capabilities, output_policy, reasoning
+from . import data_policy, diagnostic_log, image_capabilities, output_policy, reasoning
 from .model_events import (
     ModelEventError,
     ModelEventStream,
@@ -55,6 +55,8 @@ OUTPUT_LIMIT_REACHED_FEEDBACK = (
 OUTPUT_LIMIT_REACHED_MESSAGE = "模型把输出额度都用在思考上了，请调高该模型的输出上限或降低推理强度"
 
 _PEER_ERROR_MAP = {
+    "upstream_context_overflow": "agent_model_context_overflow",
+    "cli_model_discovery_failed": "agent_model_discovery_failed",
     "model_configuration_changed": "agent_model_destination_changed",
     "ai_permission_denied": "agent_model_destination_changed",
     "source_protocol_parameters_unsupported": "agent_model_protocol_unsupported",
@@ -67,6 +69,8 @@ _PEER_ERROR_MAP = {
     "task_cancelled": "agent_cancelled",
 }
 _ADAPTER_ERROR_MAP = {
+    "upstream_context_overflow": "agent_model_context_overflow",
+    "cli_model_discovery_failed": "agent_model_discovery_failed",
     "inference_timeout": "agent_inference_timeout",
     "runtime_connection_failed": "agent_model_connection_failed",
     "upstream_http_failed": "agent_model_upstream_failed",
@@ -81,9 +85,9 @@ _ADAPTER_ERROR_MAP = {
     "ai_permission_denied": "agent_model_destination_changed",
     "model_configuration_changed": "agent_model_destination_changed",
     "model_daily_quota_exhausted": "agent_model_quota_exhausted",
-    "model_not_ready": "agent_model_unavailable",
+    "model_not_ready": "agent_model_starting",
     "model_not_found": "agent_model_unavailable",
-    "runtime_unavailable": "agent_model_unavailable",
+    "runtime_unavailable": "agent_model_starting",
     "task_cancelled": "agent_cancelled",
 }
 MODEL_ERROR_CODES = frozenset({
@@ -97,6 +101,13 @@ MODEL_ERROR_CODES = frozenset({
 
 def retry_output_limit_cap(prev_cap: int, target: dict) -> int:
     return min(2 * prev_cap, output_policy.configured_output(target))
+
+
+def _cli_binding(adapter, model):
+    try:
+        return adapter.binding_for_model(model)
+    except AdapterError as exc:
+        raise AgentError(_ADAPTER_ERROR_MAP.get(exc.code, "agent_inference_failed")) from None
 
 
 def has_output_limit_feedback(messages) -> bool:
@@ -118,10 +129,20 @@ class AgentModelBridge:
     supports_conversation_key = True
     supports_cache_key = True
     supports_model_events = True
+    supports_limit_retry = True
+    supports_calibrated_capacity = True
 
 
-    def __init__(self, services, catalog):
+    def __init__(self, services, catalog, *, local_model_status=None):
         self.services, self.catalog = services, catalog
+        self.local_model_status = local_model_status
+
+    def _local_model_starting(self, model_id):
+        if not model_id.startswith("local/") or self.local_model_status is None:
+            return False
+        status = self.local_model_status()
+        return (model_id == "local/" + status.get("id", "")
+                and status.get("state") in {"starting", "installing"})
 
     def _data_policy_context(self, target, expected_destination, manager=None):
         """Use host-owned records and the actual adapter, never display claims."""
@@ -151,7 +172,7 @@ class AgentModelBridge:
             manifest = getattr(manager, "manifest", None)
             if manager is not None and target.get("adapter") in {"codex_cli", "antigravity_cli"}:
                 method = getattr(manager.adapter, "binding_for_model", None)
-                actual = method(target.get("cli_model", "")) if callable(method) else None
+                actual = _cli_binding(manager.adapter, target.get("cli_model", "")) if callable(method) else None
             else:
                 actual = getattr(manager.adapter, "model_binding", None) if manager else None
             if (target.get("peer_id") != consumer or manager is None or binding != actual
@@ -182,7 +203,9 @@ class AgentModelBridge:
             manager = self.services["provider_for"](target["service_id"]) if target["source"] != "peer" else None
             destination = self.catalog.destination(target) if expected_destination is None else expected_destination
             return self._data_policy_context(target, destination, manager)
-        except (ValueError, KeyError, TypeError, AttributeError):
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
+            if isinstance(exc, AgentError) and str(exc) == "agent_model_discovery_failed":
+                raise
             raise AgentError("agent_model_destination_changed") from None
 
     @staticmethod
@@ -257,9 +280,11 @@ class AgentModelBridge:
             flags["cache_creation_input_tokens"] = cache_created
         if isinstance(data.get("diagnostics"), dict) and data["diagnostics"]:
             flags["diagnostics"] = copy.deepcopy(data["diagnostics"])
+        if isinstance(data.get("server_model"), str) and data["server_model"]:
+            flags["server_model"] = data["server_model"][:160]
         return {"message": message, "finish_reason": finish, "usage": usage, "output_policy": policy, **flags}
 
-    def complete(self, model_id, messages, tool_specs, cancelled, on_event=None, *, expected_destination=None, max_output_tokens=None, deadline=None, on_request_policy=None, reasoning_effort=None, conversation=None, cache_key=None, request_id=None, data_policy_state=None):
+    def complete(self, model_id, messages, tool_specs, cancelled, on_event=None, *, expected_destination=None, max_output_tokens=None, deadline=None, on_request_policy=None, reasoning_effort=None, conversation=None, cache_key=None, request_id=None, data_policy_state=None, on_limit_retry=None, bytes_per_token=None):
         if cancelled():
             raise AgentError(cancellation_reason(cancelled))
         if deadline is not None:
@@ -267,7 +292,12 @@ class AgentModelBridge:
                 raise AgentError("agent_invalid_request_deadline")
             if time.monotonic() >= deadline:
                 raise AgentError("agent_inference_timeout")
-        target = self.catalog.resolve(model_id)
+        try:
+            target = self.catalog.resolve(model_id)
+        except ValueError as exc:
+            if str(exc) == "agent_model_unavailable" and self._local_model_starting(model_id):
+                raise ValueError("agent_model_starting") from None
+            raise
         restricted = data_policy.task_requires_model_restriction(data_policy_state)
         if restricted and expected_destination is None:
             raise AgentError("agent_extension_model_not_allowed")
@@ -294,11 +324,23 @@ class AgentModelBridge:
                 try:
                     messages, shared_resize = image_capabilities.fit_images_for_shared_route(
                         messages, shared_carrier or "inline-v1")
+                except AgentError:
+                    raise
                 except (ValueError, OSError):
                     raise AgentError("agent_image_invalid") from None
             else:
                 image_capabilities.require_route_image_support(target, model_client=self)
-        policy = output_policy.select(target, messages, tool_specs, request_cap=max_output_tokens)
+        try:
+            policy = output_policy.select(target, messages, tool_specs, request_cap=max_output_tokens, bytes_per_token=bytes_per_token)
+        except AgentError as exc:
+            messages, omitted = image_capabilities.omit_old_images_for_limits(messages, exc)
+            if not omitted:
+                raise
+            policy = output_policy.select(target, messages, tool_specs, request_cap=max_output_tokens, bytes_per_token=bytes_per_token)
+            shared_resize = {**(shared_resize or {"carrier": "local", "resized": 0}),
+                "omitted": (shared_resize or {}).get("omitted", 0) + omitted,
+                "omitted_old": (shared_resize or {}).get("omitted_old", 0) + omitted}
+        has_images = image_capabilities.message_has_image_input(messages)
         maximum = policy["effective_cap"]
         image_profile = None
         if has_images:
@@ -349,7 +391,7 @@ class AgentModelBridge:
         with internal_image_scope(image_profile), shared_image_carrier_scope(shared_carrier):
             chat = normalize({"messages": messages, "tools": tool_specs, "max_tokens": maximum}, "chat")
         if reasoning_effort is not None:
-            chat["reasoning_effort"] = reasoning.validate(target, reasoning_effort)
+            chat["reasoning_effort"] = reasoning.resolve(target, reasoning_effort)
         if isinstance(cache_key, str) and cache_key and target.get("source") != "peer":
             prompt_cache_mode = None
             if isinstance(target.get("model_settings"), dict):
@@ -370,6 +412,8 @@ class AgentModelBridge:
             chat["stream"] = True
         window = codex_threads.window_key(conversation)
         manager = self.services["provider_for"](target["service_id"]) if target["source"] != "peer" else None
+        if target["source"] != "peer" and manager is None:
+            raise ValueError("agent_model_starting" if self._local_model_starting(model_id) else "agent_model_unavailable")
         if expected_destination is not None and target["source"] == "local_api":
             # Bind the actual immutable provider instance to the authorized
             # source snapshot, not only an earlier catalog lookup.
@@ -385,22 +429,21 @@ class AgentModelBridge:
         elif expected_destination is not None and target["source"] == "local_service":
             native_binding = target.get("local_model_binding")
             if manager is not None and target.get("adapter") in {"codex_cli", "antigravity_cli"}:
-                actual_binding = manager.adapter.binding_for_model(target.get("cli_model", "")) if hasattr(manager.adapter, "binding_for_model") else None
+                actual_binding = _cli_binding(manager.adapter, target.get("cli_model", "")) if hasattr(manager.adapter, "binding_for_model") else None
             else:
                 actual_binding = getattr(manager.adapter, "model_binding", None) if manager else None
             if (manager is None or native_binding != actual_binding
                     or peer_binding.local_revision(native_binding, target["peer_id"]) != expected_destination["destination_revision"]):
                 raise AgentError("agent_model_destination_changed")
-        if target["source"] != "peer" and manager is None:
-            raise ValueError("agent_model_unavailable")
-
         def check_data_release():
             context = None
             if restricted:
                 try:
                     current = self.catalog.resolve(model_id)
                     context = self._data_policy_context(current, expected_destination, manager)
-                except (ValueError, KeyError, TypeError, AttributeError):
+                except (ValueError, KeyError, TypeError, AttributeError) as exc:
+                    if isinstance(exc, AgentError) and str(exc) == "agent_model_discovery_failed":
+                        raise
                     raise AgentError("agent_model_destination_changed") from None
             if not data_policy.allows_task(data_policy_state, context):
                 raise AgentError("agent_extension_model_not_allowed")
@@ -435,8 +478,12 @@ class AgentModelBridge:
                     on_event(event)
 
         model_events = ModelEventStream(safe_on_event if on_event else None, stopped=lambda: cancelled() or expired())
+        stream_event_seen = False
+        active_transport_id = task_id
 
         def emit(chunk):
+            nonlocal stream_event_seen
+            stream_event_seen = True
             with cleared_internal_image_scope():
                 try:
                     model_events.feed(chunk)
@@ -447,11 +494,15 @@ class AgentModelBridge:
         def cancel_transport():
             try:
                 if manager:
-                    manager.adapter.cancel(task_id)
+                    manager.adapter.cancel(active_transport_id)
                 else:
                     self.services["cancel_order"](task_id)
-            except Exception:
-                pass
+            except Exception as exc:
+                diagnostic_log.failure("inference_cancel", exc)
+                request_policy["cancel_failed"] = True
+                if on_request_policy:
+                    with cleared_internal_image_scope():
+                        on_request_policy(request_policy)
 
         def watch():
             while not done.wait(0.1):
@@ -461,6 +512,8 @@ class AgentModelBridge:
 
         watcher = threading.Thread(target=watch, name="ryn-agent-inference-cancel", daemon=True)
         acquired = False
+        learned_context = None
+        limit_retry_used = has_output_limit_feedback(messages)
         try:
             if manager:
                 wait_started = time.monotonic()
@@ -513,7 +566,6 @@ class AgentModelBridge:
                     raise err
                 with manager._lock:
                     manager._running += 1
-            watcher.start()
             if on_event:
                 safe_on_event({"type": "provider_selected", "model_id": model_id, "source": target["source"], "request_id": task_id})
             if cancelled():
@@ -527,6 +579,7 @@ class AgentModelBridge:
             if on_request_policy:
                 with cleared_internal_image_scope():
                     on_request_policy(request_policy)
+            watcher.start()
             if expired():
                 raise AgentError("agent_inference_timeout")
             check_data_release()
@@ -549,11 +602,100 @@ class AgentModelBridge:
                 if getattr(manager.adapter, "supports_conversation_scope", False) is True:
                     # This process is the authenticated requester of its own adapter.
                     options["conversation_scope"] = codex_threads.scope("local", window)
-                with internal_image_scope(image_profile), model_request_scope(restricted=restricted, before_dispatch=check_data_release):
-                    if expected_destination is not None and target["source"] == "local_service":
-                        result = manager.adapter.call_bound("chat", target["local_model_binding"], check_data_release, chat, **options)
-                    else:
-                        result = manager.adapter.chat(chat, **options)
+                for attempt in range(3):
+                    try:
+                        with internal_image_scope(image_profile), model_request_scope(restricted=restricted, before_dispatch=check_data_release):
+                            if expected_destination is not None and target["source"] == "local_service":
+                                result = manager.adapter.call_bound("chat", target["local_model_binding"], check_data_release, chat, **options)
+                            else:
+                                result = manager.adapter.chat(chat, **options)
+                        break
+                    except AdapterError as exc:
+                        diagnostics = exc.diagnostics
+                        stream_failure = (exc.code in {"upstream_stream_error", "upstream_stream_truncated"}
+                                          or diagnostics.get("streaming_unsupported") is True)
+                        if streaming and target["source"] == "local_api" and stream_failure:
+                            self.catalog.mark_streaming_unknown(target)
+                            if not stream_event_seen and not cancelled() and not expired():
+                                check_data_release()
+                                streaming = False
+                                chat.pop("stream", None)
+                                options["on_event"] = None
+                                if request_deadline is not None:
+                                    options["timeout_s"] = max(0.0, request_deadline - time.monotonic())
+                                continue
+                        if (limit_retry_used or cancelled() or expired() or model_events.text_chars or model_events.calls
+                                or model_events.completed):
+                            raise
+                        context_rejected = exc.code == "upstream_context_overflow" or diagnostics.get("network_reason") == "context_overflow"
+                        output_rejected = diagnostics.get("output_tokens_too_large") is True
+                        empty_length = exc.code in {"upstream_response_invalid", "upstream_output_limit_reached"} and exc.finish_reason == "length"
+                        if not (context_rejected or output_rejected or empty_length):
+                            raise
+                        if context_rejected and not diagnostics.get("context_window_limit"):
+                            # Unknown window failures belong to per-task compaction,
+                            # not the shared destination limit cache.
+                            raise
+                        check_data_release()
+                        old_window = output_policy.context_metadata(target)["context_window_tokens"]
+                        next_target = dict(target)
+                        if context_rejected or output_rejected:
+                            next_cap = min(maximum, diagnostics.get("output_tokens_limit") or max(1024, maximum // 2))
+                            if context_rejected:
+                                learned_context = min(old_window, diagnostics["context_window_limit"])
+                                next_target.update(context_window=learned_context, context_window_known=True,
+                                                   context_window_basis="upstream_rejection")
+                                next_cap = min(next_cap, max(1024, learned_context // 2))
+                                if diagnostics.get("context_window_limit"):
+                                    self.catalog.learn_context_limit(target, learned_context)
+                            if diagnostics.get("output_tokens_limit"):
+                                self.catalog.learn_output_limit(target, min(maximum, diagnostics["output_tokens_limit"]))
+                            event_type = "model_limit_adjusted"
+                        else:
+                            upper = old_window // 2
+                            vendor = model_settings._known_vendor_max_output_tokens(target.get("model_id") or target.get("cli_model"))
+                            if vendor is not None:
+                                upper = min(upper, vendor)
+                            if target.get("max_output_tokens_known") is not False:
+                                upper = min(upper, output_policy.configured_output(target))
+                            next_cap = min(2 * maximum, upper)
+                            if next_cap <= maximum:
+                                raise
+                            event_type = "output_limit_raised"
+                        next_target.update(max_output_tokens=next_cap, max_output_tokens_known=True)
+                        try:
+                            next_policy = output_policy.select(next_target, messages, tool_specs, request_cap=next_cap, bytes_per_token=bytes_per_token)
+                        except AgentError:
+                            # A smaller real window may require S01-I5 compaction,
+                            # rather than replaying an input that cannot fit.
+                            if context_rejected:
+                                safe_on_event({"type": "model_limit_adjusted", "basis": "upstream_rejection",
+                                    "old_context_window": old_window, "new_context_window": learned_context,
+                                    "old_max_output_tokens": maximum, "new_max_output_tokens": next_cap,
+                                    "request_id": task_id})
+                            raise exc
+                        adjustment = {"type": event_type, "basis": "upstream_rejection" if event_type == "model_limit_adjusted" else "empty_length",
+                            "old_context_window": old_window, "new_context_window": learned_context or old_window,
+                            "old_max_output_tokens": maximum, "new_max_output_tokens": next_policy["effective_cap"], "request_id": task_id}
+                        if event_type == "model_limit_adjusted":
+                            safe_on_event(adjustment)
+                        if on_limit_retry is not None:
+                            allowed = on_limit_retry(next_policy, exc.reported_usage or {"input_tokens": 0, "output_tokens": 0},
+                                                     maximum + 1 if event_type == "output_limit_raised" else 1)
+                            next_policy = output_policy.budgeted(next_policy, allowed)
+                        if event_type == "output_limit_raised":
+                            safe_on_event({**adjustment, "new_max_output_tokens": next_policy["effective_cap"]})
+                        limit_retry_used = True
+                        policy = next_policy
+                        maximum = policy["effective_cap"]
+                        chat["max_tokens"] = maximum
+                        # Source quotas count each dispatched request; cancellation
+                        # follows the active attempt while task evidence keeps its request ID.
+                        active_transport_id = "agent_" + uuid.uuid4().hex
+                        options["task_id"] = active_transport_id
+                        model_events = ModelEventStream(safe_on_event if on_event else None, stopped=lambda: cancelled() or expired())
+                        if request_deadline is not None:
+                            options["timeout_s"] = max(0.0, request_deadline - time.monotonic())
             else:
                 # execute_order seals the complete structured chat and uses the
                 # existing authenticated consumer transport and permission check.
@@ -602,7 +744,10 @@ class AgentModelBridge:
                 err.request_id = task_id
                 raise err
             response = {**self._response(result, target, tool_specs, policy), "request_policy": request_policy, "request_id": task_id,
-                        **({"shared_image_resize": shared_resize} if shared_resize and shared_resize.get("resized") else {})}
+                        **({"shared_image_resize": shared_resize} if shared_resize and (shared_resize.get("resized") or shared_resize.get("omitted")) else {})}
+            if response.get("server_model"):
+                response["requested_model"] = str(target.get("cli_model") or (
+                    getattr(manager.adapter, "model", "") if manager else target.get("model_id", "")))[:160]
             try:
                 model_events.finish(response)
             except ModelEventError:
@@ -634,7 +779,7 @@ class AgentModelBridge:
                 err = AgentError("agent_model_stream_interrupted")
                 err.request_id = task_id
                 raise err from None
-            raise AgentError("agent_model_destination_changed" if detail_code == "model_configuration_changed" else "agent_inference_failed") from None
+            raise AgentError(_PEER_ERROR_MAP.get(detail_code, "agent_inference_failed")) from None
         except AdapterError as exc:
             from .diagnostic_log import safe_diagnostics
             raw_diag = dict(getattr(exc, "diagnostics", None) or {})
@@ -674,7 +819,7 @@ class AgentModelBridge:
                 if diag:
                     err.diagnostics = diag
                 raise err from None
-            if exc.code == "upstream_output_limit_reached" and not cancelled() and not expired() and not has_output_limit_feedback(messages):
+            if exc.code == "upstream_output_limit_reached" and not cancelled() and not expired() and not limit_retry_used:
                 diag.setdefault("max_tokens", maximum)
                 rejected = AgentModelResponseError(exc.reported_usage, "length")
                 rejected.request_id = task_id
@@ -733,4 +878,6 @@ def build_agent_integrations(app, store, home):
     if services is None:
         raise ValueError("agent_inference_services_unavailable")
     catalog = ModelCatalog(services, store)
-    return AgentModelBridge(services, catalog), RynTools(app, store, services, catalog), catalog
+    native_model = getattr(app.state, "native_model", None)
+    return AgentModelBridge(services, catalog,
+                            local_model_status=native_model.status if native_model is not None else None), RynTools(app, store, services, catalog), catalog

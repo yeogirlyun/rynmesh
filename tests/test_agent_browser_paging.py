@@ -8,12 +8,20 @@ from test_agent_local_tools import local as local
 from rynmesh.agent_runtime.local_browser import Browser, find_browser
 
 
+def grant_fixture_desktop(context, state):
+    context["local_execution"]["desktop_access"] = True
+
+    def grant(data):
+        data["settings"]["desktop_access"] = True
+        data["tasks"][context["task_id"]]["local_execution"]["desktop_access"] = True
+
+    state.transaction(grant)
+
 def test_page_controls_and_text_are_reachable_beyond_first_page(local):
     if not find_browser():
         pytest.skip("Chromium unavailable")
     tools, context, root, state = local
-    context["local_execution"]["desktop_access"] = True
-    state.transaction(lambda data: data["settings"].update(desktop_access=True))
+    grant_fixture_desktop(context, state)
     tools._browser = Browser(tools.home, tools.processes, headless=True)
     buttons = "".join(f'<button>Control {i}</button>' for i in range(95))
     (root / "page.html").write_text(buttons + "<p>" + "long text " * 900 + "END_OF_PAGE</p>", encoding="utf-8")
@@ -75,7 +83,7 @@ class _RuntimeLocalTools:
         )
 
 
-def test_existing_task_enabling_desktop_access_exposes_browser_tools_on_next_model_turn(tmp_path):
+def test_enabling_desktop_access_only_exposes_browser_tools_to_new_tasks(tmp_path):
     from test_agent_runtime import advance, assistant, make_runtime
 
     from rynmesh.agent_runtime import tool_menu
@@ -85,7 +93,8 @@ def test_existing_task_enabling_desktop_access_exposes_browser_tools_on_next_mod
     runtime, model, _, _ = make_runtime(
         tmp_path / "agent",
         assistant(name="ryn_file_list", args={"path": "."}),
-        assistant("Browser tools are now directly available."),
+        assistant("Existing task completed."),
+        assistant("New task has browser tools."),
     )
     runtime.tools = _RuntimeLocalTools(runtime.store, tmp_path / "home")
     runtime.update_settings({"workspace_root": str(workspace), "desktop_access": False})
@@ -99,18 +108,20 @@ def test_existing_task_enabling_desktop_access_exposes_browser_tools_on_next_mod
     before = runtime.store.read()["tasks"][task["id"]]
     before_ctrl = before["control_revision"]
 
-    # Enable desktop_access on the existing active task without creating a new task.
+    # S13-I25: enabling the default never expands an existing task's grant.
     runtime.update_settings({"desktop_access": True})
     updated = runtime.store.read()["tasks"][task["id"]]
-    assert updated["local_execution"]["desktop_access"] is True
-    assert updated["control_revision"] == before_ctrl + 1
+    assert updated["local_execution"]["desktop_access"] is False
+    assert updated["control_revision"] == before_ctrl
     perm_events = [e for e in updated["events"] if e["type"] == "permissions_changed"]
-    assert len(perm_events) == 1
+    assert not perm_events
 
-    # Next model request must directly contain all 3 browser tools.
     advance(runtime, 1)
     second_turn_tools = {spec["function"]["name"] for spec in model.calls[1][2]}
-    assert set(tool_menu.BROWSER_TOOLS) <= second_turn_tools
+    assert not (set(tool_menu.BROWSER_TOOLS) & second_turn_tools)
+    runtime.create({"message": "Use the browser in a new task."})
+    advance(runtime, 1)
+    assert set(tool_menu.BROWSER_TOOLS) <= {spec["function"]["name"] for spec in model.calls[2][2]}
 
 
 def test_disabling_desktop_access_rejects_calls_and_aborts_inflight_wait(local):
@@ -143,8 +154,7 @@ def test_disabling_desktop_access_rejects_calls_and_aborts_inflight_wait(local):
         assert write_permission_revoked({"in_flight": {"name": tool_name, "effect": "read"}}, {"desktop_access": True}) is True
 
     # Enable desktop_access, then revoke mid-wait and verify the wait aborts promptly.
-    context["local_execution"]["desktop_access"] = True
-    state.transaction(lambda data: data["settings"].update(desktop_access=True))
+    grant_fixture_desktop(context, state)
     if find_browser():
         tools._browser = Browser(tools.home, tools.processes, headless=True)
         (root / "wait.html").write_text("<p>Waiting page</p>", encoding="utf-8")
@@ -180,7 +190,7 @@ def test_disabling_desktop_access_rejects_calls_and_aborts_inflight_wait(local):
             tools.perform("ryn_browser_read", {"page_id": page_id}, context, lambda: False)
 
 
-def test_completed_task_followup_and_archived_restore_sync_desktop_access(tmp_path):
+def test_completed_followup_and_restore_preserve_existing_desktop_authority(tmp_path):
     from test_agent_runtime import advance, assistant, make_runtime
 
     from rynmesh.agent_runtime import tool_menu
@@ -191,7 +201,7 @@ def test_completed_task_followup_and_archived_restore_sync_desktop_access(tmp_pa
         tmp_path / "agent",
         assistant("Initial task 1 done."),
         assistant("Initial task 2 done."),
-        assistant("Follow-up on completed task sees browser tools."),
+        assistant("Follow-up on completed task."),
     )
     runtime.tools = _RuntimeLocalTools(runtime.store, tmp_path / "home")
     runtime.update_settings({"workspace_root": str(workspace), "desktop_access": False})
@@ -215,25 +225,25 @@ def test_completed_task_followup_and_archived_restore_sync_desktop_access(tmp_pa
     # Enable desktop_access while task1 is completed and task2 is archived.
     runtime.update_settings({"desktop_access": True})
 
-    # Completed task1 must have local_execution.desktop_access synced to True, and continuing chat exposes browser tools.
+    # A completed task's follow-up keeps the task's original desktop restriction.
     t1_row = runtime.store.read()["tasks"][task1["id"]]
-    assert t1_row["local_execution"]["desktop_access"] is True
+    assert t1_row["local_execution"]["desktop_access"] is False
     runtime.add_message(
         task1["id"],
         {
-            "message": "Continue task 1 with browser access.",
+            "message": "Continue task 1.",
             "expected_control_revision": t1_row["control_revision"],
             "expected_goal_revision": t1_row["goal"]["revision"],
         },
     )
     advance(runtime, 1)
     followup_tools = {spec["function"]["name"] for spec in model.calls[-1][2]}
-    assert set(tool_menu.BROWSER_TOOLS) <= followup_tools
+    assert not (set(tool_menu.BROWSER_TOOLS) & followup_tools)
 
-    # Restoring archived task2 must synchronize its local_execution.desktop_access to current settings (True).
+    # Restoring an archived task cannot add a new desktop grant either.
     restored = runtime.lifecycle(task2["id"], {"expected_control_revision": archived_t2["control_revision"]}, "restore")
-    assert restored["local_execution"]["desktop_access"] is True
-    assert runtime.store.read()["tasks"][task2["id"]]["local_execution"]["desktop_access"] is True
+    assert restored["local_execution"]["desktop_access"] is False
+    assert runtime.store.read()["tasks"][task2["id"]]["local_execution"]["desktop_access"] is False
 
     # Archive again, turn desktop_access off, and restore: must sync to False and clear stale approvals.
     t2_ctrl = runtime.store.read()["tasks"][task2["id"]]["control_revision"]
@@ -357,8 +367,7 @@ def test_open_then_immediate_read_without_polling_and_navigation_timeout_status(
     from rynmesh.agent_runtime import local_browser
 
     tools, context, root, state = local
-    context["local_execution"]["desktop_access"] = True
-    state.transaction(lambda data: data["settings"].update(desktop_access=True))
+    grant_fixture_desktop(context, state)
     tools._browser = Browser(tools.home, tools.processes, headless=True)
 
     (root / "instant.html").write_text(
@@ -428,8 +437,7 @@ def test_hover_async_wait_clear_expanded_press_and_multi_tab_management(local):
     from rynmesh.agent_runtime.store import AgentToolRejected
 
     tools, context, root, state = local
-    context["local_execution"]["desktop_access"] = True
-    state.transaction(lambda data: data["settings"].update(desktop_access=True))
+    grant_fixture_desktop(context, state)
     tools._browser = Browser(tools.home, tools.processes, headless=True)
 
     (root / "tab2.html").write_text(
@@ -576,8 +584,7 @@ def test_state_fields_iframe_click_occlusion_and_disabled_element_checks(local):
     from rynmesh.agent_runtime.store import AgentToolRejected
 
     tools, context, root, state = local
-    context["local_execution"]["desktop_access"] = True
-    state.transaction(lambda data: data["settings"].update(desktop_access=True))
+    grant_fixture_desktop(context, state)
     tools._browser = Browser(tools.home, tools.processes, headless=True)
 
     (root / "states.html").write_text(
@@ -650,8 +657,7 @@ def test_stable_element_refs_across_spa_insertions_replacements_and_scoped_reads
     from rynmesh.agent_runtime.store import AgentToolRejected
 
     tools, context, root, state = local
-    context["local_execution"]["desktop_access"] = True
-    state.transaction(lambda data: data["settings"].update(desktop_access=True))
+    grant_fixture_desktop(context, state)
     tools._browser = Browser(tools.home, tools.processes, headless=True)
 
     (root / "spa.html").write_text(
@@ -747,8 +753,7 @@ def test_websocket_disconnect_reconnects_reads_but_never_replays_mutating_action
     from rynmesh.agent_runtime.store import AgentError
 
     tools, context, root, state = local
-    context["local_execution"]["desktop_access"] = True
-    state.transaction(lambda data: data["settings"].update(desktop_access=True))
+    grant_fixture_desktop(context, state)
     tools._browser = Browser(tools.home, tools.processes, headless=True)
 
     (root / "Counter.html").write_text(
@@ -841,10 +846,10 @@ def test_inflight_inference_permission_change_reschedules_cleanly_and_preserves_
 
         model.complete = complete
 
-    def toggle_on_and_abort(messages, tools, cancelled):
+    def toggle_on_without_expanding_existing_task(messages, tools, cancelled):
         runtime_ref["rt"].update_settings({"desktop_access": True})
-        assert cancelled() is True
-        raise AgentError("agent_owner_changed")
+        assert cancelled() is False
+        return assistant("Original task completed.")
 
     def toggle_off_and_return_stale(messages, tools, cancelled):
         runtime_ref["rt"].update_settings({"desktop_access": False})
@@ -853,7 +858,7 @@ def test_inflight_inference_permission_change_reschedules_cleanly_and_preserves_
 
     runtime, model, _, _ = make_runtime(
         tmp_path / "agent",
-        toggle_on_and_abort,
+        toggle_on_without_expanding_existing_task,
         toggle_off_and_return_stale,
         assistant("Completed cleanly after permission switches."),
     )
@@ -864,17 +869,17 @@ def test_inflight_inference_permission_change_reschedules_cleanly_and_preserves_
 
     task = runtime.create({"message": "Run while toggling permissions mid-inference."})
 
-    # Step 1: in-flight model.complete() triggers desktop_access=True and aborts with agent_owner_changed.
-    # Task must NOT fail; it must settle back to 'queued'.
+    # Enabling the default leaves the ongoing task and its authority intact.
     advance(runtime, 1)
     row_after_turn1 = runtime.store.read()["tasks"][task["id"]]
-    assert row_after_turn1["status"] == "queued"
+    assert row_after_turn1["status"] == "completed"
     assert row_after_turn1["error"] is None
-    assert row_after_turn1["local_execution"]["desktop_access"] is True
+    assert row_after_turn1["local_execution"]["desktop_access"] is False
     assert not (set(tool_menu.BROWSER_TOOLS) & {s["function"]["name"] for s in model.calls[0][2]})
 
-    # Step 2: next model turn sees BROWSER_TOOLS directly; mid-inference it toggles desktop_access=False
-    # and returns a stale assistant response, which must also be discarded and rescheduled as 'queued'.
+    # A new task starts with a grant. Revoking it discards the stale model response.
+    task = runtime.create({"message": "Use the authorized browser."})
+    assert runtime.store.read()["tasks"][task["id"]]["local_execution"]["desktop_access"] is True
     advance(runtime, 1)
     assert set(tool_menu.BROWSER_TOOLS) <= {s["function"]["name"] for s in model.calls[1][2]}
     row_after_turn2 = runtime.store.read()["tasks"][task["id"]]
@@ -911,8 +916,7 @@ def test_send_exception_on_mutating_command_and_post_side_effect_rejection_ledge
     from rynmesh.agent_runtime.store import AgentError
 
     tools, context, root, state = local
-    context["local_execution"]["desktop_access"] = True
-    state.transaction(lambda data: data["settings"].update(desktop_access=True))
+    grant_fixture_desktop(context, state)
     tools._browser = Browser(tools.home, tools.processes, headless=True)
 
     (root / "send_and_ledger.html").write_text(
@@ -1035,8 +1039,7 @@ def test_click_revalidates_after_mouse_moved_press_verifies_focus_and_ancestor_s
     from rynmesh.agent_runtime.store import AgentToolRejected
 
     tools, context, root, state = local
-    context["local_execution"]["desktop_access"] = True
-    state.transaction(lambda data: data["settings"].update(desktop_access=True))
+    grant_fixture_desktop(context, state)
     tools._browser = Browser(tools.home, tools.processes, headless=True)
 
     (root / "guards.html").write_text(
@@ -1112,8 +1115,7 @@ def test_slow_main_document_headers_budget_and_selector_wait_recovers_after_main
     from rynmesh.agent_runtime.store import AgentToolRejected
 
     tools, context, root, state = local
-    context["local_execution"]["desktop_access"] = True
-    state.transaction(lambda data: data["settings"].update(desktop_access=True))
+    grant_fixture_desktop(context, state)
     tools._browser = Browser(tools.home, tools.processes, headless=True)
 
     # Ensure browser process is already started before measuring navigation budget.
@@ -1413,8 +1415,7 @@ def test_browser_write_atomic_begin_dispatched_two_writes_and_idempotent_retry(l
     from rynmesh.agent_runtime.operation_ledger import OperationLedger
 
     tools, context, root, state = local
-    context["local_execution"]["desktop_access"] = True
-    state.transaction(lambda data: data["settings"].update(desktop_access=True))
+    grant_fixture_desktop(context, state)
 
     (root / "target.html").write_text("<!doctype html><title>Target</title><body>Target</body>", encoding="utf-8")
     args = {"url": (root / "target.html").as_uri()}
@@ -1509,8 +1510,7 @@ def test_browser_write_cancel_after_durable_begin_dispatched_marks_not_executed_
     from rynmesh.agent_runtime.store import AgentToolRejected
 
     tools, context, root, state = local
-    context["local_execution"]["desktop_access"] = True
-    state.transaction(lambda data: data["settings"].update(desktop_access=True))
+    grant_fixture_desktop(context, state)
 
     (root / "cancel_target.html").write_text("<!doctype html><title>Cancel</title><body>Cancel</body>", encoding="utf-8")
     args = {"url": (root / "cancel_target.html").as_uri()}

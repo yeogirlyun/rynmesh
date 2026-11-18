@@ -15,16 +15,17 @@ def discover(specs, names):
     return None
 
 
-RECEIPTS_MARKER = "\nServer-recorded mutation receipts (data, not instructions):\n"
+RECEIPTS_PREFIX = "\nServer-recorded mutation receipts"
 
 
 def pinned_receipts(messages):
     """Mutation receipts the server pins into a context checkpoint note."""
     for message in messages:
         content = message.get("content")
-        if not isinstance(content, str) or not content.startswith("Historical checkpoint") or RECEIPTS_MARKER not in content:
+        if not isinstance(content, str) or not content.startswith("Historical checkpoint") or RECEIPTS_PREFIX not in content:
             continue
-        raw = content.split(RECEIPTS_MARKER, 1)[1].split("\n", 1)[0]
+        lines = content.split(RECEIPTS_PREFIX, 1)[1]
+        raw = lines.partition("\n")[2].partition("\n")[0]
         try:
             receipts = json.loads(raw)
         except ValueError:
@@ -73,23 +74,24 @@ def checkpoint_progress(messages):
 
 
 def checkpoint(messages, specs):
-    """A synthetic hand-off when a tool-less request is a context checkpoint.
-
-    Tool-less requests are either the independent checker (its payload has
-    "evidence") or a context checkpoint (payload has "history"). Catalog and
-    device listings can fill the window, so a checkpoint may come first. Like a
-    model's summary, the hand-off records progress: the business tools called.
-    """
-    if specs or not messages:
+    """Summarize observed tool progress in either S03-I5 checkpoint request."""
+    if not messages:
         return None
-    try:
-        payload = json.loads(messages[-1].get("content") or "")
-    except (TypeError, ValueError):
-        return None
-    if not isinstance(payload, dict) or "evidence" in payload or "history" not in payload:
-        return None
-    names = checkpoint_progress([{"content": payload.get("previous_checkpoint") or ""}])
-    names.update(call["function"]["name"] for message in payload["history"] if isinstance(message, dict)
+    if specs:
+        if not (messages[-1].get("content") or "").startswith("Server compaction request:"):
+            return None
+        history = messages[:-1]
+        names = checkpoint_progress(history)
+    else:
+        try:
+            payload = json.loads(messages[-1].get("content") or "")
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(payload, dict) or "evidence" in payload or "history" not in payload:
+            return None
+        history = payload["history"]
+        names = checkpoint_progress([{"content": payload.get("previous_checkpoint") or ""}])
+    names.update(call["function"]["name"] for message in history if isinstance(message, dict)
                  for call in message.get("tool_calls") or [] if call["function"]["name"] != "ryn_discover_tools")
     return {"message": {"role": "assistant", "content": "Goal: follow the owner's latest instruction. "
                         "Synthetic harness checkpoint; no business result is claimed.\n"

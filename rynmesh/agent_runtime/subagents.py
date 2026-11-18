@@ -10,8 +10,10 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import PurePosixPath
 
+from ..llm_package.reasoning import validate_effort
+
 from . import budget
-from .control import close_queue, settle
+from .control import ambiguous, close_queue, settle
 from .protocol import event, event_result, now
 from .state import SCHEMA_VERSION, initialize, owner_update
 from .store import DEFAULT_SETTINGS, AgentError, AgentToolRejected
@@ -137,22 +139,7 @@ SUBAGENT_TOOL_SPECS: list[dict] = [
         "type": "function",
         "function": {
             "name": "ryn_spawn_agent",
-            "description": (
-                "Spawn a background subagent (returns agent_id, nickname, and agent_path immediately). "
-                "Keep critical-path work and anything blocking your immediate next step local. "
-                # The parent decides how much context a child gets, as in openai/codex
-                # rust-v0.167.0 multi-agent roles (Apache-2.0); wording is Ryn's.
-                "With fork_turns=none (default) the child sees only this prompt: state the concrete goal, "
-                "relevant paths, constraints, and what to report. "
-                "Assign disjoint write_scope sets across workers. "
-                "Do not redo work you already delegated; call ryn_wait_agent sparingly after completing non-overlapping local steps. "
-                "Only set model_id or reasoning_effort when the owner or active skill explicitly requests it.\n"
-                "Available roles:\n"
-                "- explorer: read-only fast codebase search and inspection that runs safely in parallel; trust its findings and reuse it.\n"
-                "- worker: scoped file implementation and verification; requires an explicit write_scope.\n"
-                "- awaiter: dedicated solely to monitoring long-running tests, builds, or background processes.\n"
-                "- default: general-purpose subtask execution when specialized constraints are unneeded."
-            ),
+            "description": "Spawn background subagent; returns agent_id/nickname/agent_path now. Keep critical-path work or anything blocking your immediate next step local. fork_turns=none (default) the child sees only this prompt: goal, paths, constraints, what to report. Assign disjoint write_scope; required for worker. Do not redo delegated work. Call ryn_wait_agent sparingly after independent work. Set model_id/reasoning_effort only if explicitly requested by owner/skill. Available roles: explorer: fast parallel read-only inspection/search, trust/reuse findings; worker: scoped edits/tests; awaiter: only monitor tests/builds/processes; default: general subtasks.",
             "parameters": {
                 "type": "object",
                 "additionalProperties": False,
@@ -161,14 +148,12 @@ SUBAGENT_TOOL_SPECS: list[dict] = [
                     "task_name": {"type": "string", "minLength": 1, "maxLength": 64},
                     "prompt": {"type": "string", "minLength": 1, "maxLength": MAX_SUBAGENT_PROMPT_CHARS},
                     "role": {
-                        "type": "string",
                         "enum": ["default", "explorer", "worker", "awaiter"],
-                        "description": "Subagent role preset; omit when no specialized role is needed (defaults to 'default').",
+                        "description": "Role preset; omit for default when specialization is unnecessary.",
                     },
                     "fork_turns": {
-                        "type": "string",
                         "enum": ["none", "all"],
-                        "description": "Context mode: 'none' (default) shows only prompt; 'all' inherits parent conversation text.",
+                        "description": "none: prompt only (default); all: parent conversation text.",
                     },
                     "write_scope": {
                         "type": "array",
@@ -176,7 +161,7 @@ SUBAGENT_TOOL_SPECS: list[dict] = [
                         "items": {"type": "string", "minLength": 1, "maxLength": 260},
                     },
                     "model_id": {"type": "string", "minLength": 1, "maxLength": 128},
-                    "reasoning_effort": {"type": "string", "enum": ["low", "medium", "high"]},
+                    "reasoning_effort": {"type": "string"},
                 },
             },
         },
@@ -185,10 +170,7 @@ SUBAGENT_TOOL_SPECS: list[dict] = [
         "type": "function",
         "function": {
             "name": "ryn_send_message",
-            "description": (
-                "Send supplemental context or a message to an existing subagent by nickname, task_name, agent_path, or agent_id. "
-                "Reuse an existing subagent instead of spawning a new one when follow-up work heavily depends on context it already holds."
-            ),
+            "description": "Send context via nickname/task_name/agent_path/agent_id. Reuse an existing subagent for its prior context.",
             "parameters": {
                 "type": "object",
                 "additionalProperties": False,
@@ -204,10 +186,7 @@ SUBAGENT_TOOL_SPECS: list[dict] = [
         "type": "function",
         "function": {
             "name": "ryn_followup_task",
-            "description": (
-                "Assign a new follow-up task prompt to an existing non-closed subagent and trigger its execution. "
-                "Reuse an existing subagent instead of spawning a new one when follow-up work heavily depends on context it already holds."
-            ),
+            "description": "Run a non-closed agent with new prompt. Reuse an existing subagent for its prior context.",
             "parameters": {
                 "type": "object",
                 "additionalProperties": False,
@@ -223,10 +202,7 @@ SUBAGENT_TOOL_SPECS: list[dict] = [
         "type": "function",
         "function": {
             "name": "ryn_wait_agent",
-            "description": (
-                "Wait for running subagents to complete or emit <subagent_notification> results. "
-                "Specify targets or omit to wait for any active subagent."
-            ),
+            "description": "Wait for unread result/all targets settled; omit targets: direct children; no children returns now. Default 30s; range 10-3600s.",
             "parameters": {
                 "type": "object",
                 "additionalProperties": False,
@@ -236,7 +212,7 @@ SUBAGENT_TOOL_SPECS: list[dict] = [
                         "maxItems": 20,
                         "items": {"type": "string", "minLength": 1, "maxLength": 128},
                     },
-                    "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 120},
+                    "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 3600},
                 },
             },
         },
@@ -245,7 +221,7 @@ SUBAGENT_TOOL_SPECS: list[dict] = [
         "type": "function",
         "function": {
             "name": "ryn_interrupt_agent",
-            "description": "Interrupt/pause a running subagent (or 'all') immediately.",
+            "description": "Immediately interrupt/pause running agent or all.",
             "parameters": {
                 "type": "object",
                 "additionalProperties": False,
@@ -260,7 +236,7 @@ SUBAGENT_TOOL_SPECS: list[dict] = [
         "type": "function",
         "function": {
             "name": "ryn_close_agent",
-            "description": "Close a completed or running subagent (or 'all') and release its resources.",
+            "description": "Close agent/all; release resources.",
             "parameters": {
                 "type": "object",
                 "additionalProperties": False,
@@ -275,7 +251,7 @@ SUBAGENT_TOOL_SPECS: list[dict] = [
         "type": "function",
         "function": {
             "name": "ryn_list_agents",
-            "description": "List live agents in the current root thread tree. Optionally filter by task-path prefix.",
+            "description": "List live agents in root tree; optional task-path prefix.",
             "parameters": {
                 "type": "object",
                 "additionalProperties": False,
@@ -290,7 +266,7 @@ SUBAGENT_TOOL_SPECS: list[dict] = [
         "type": "function",
         "function": {
             "name": "ryn_resume_agent",
-            "description": "Resume a previously closed, paused, or interrupted agent by target so it can receive messages and tasks.",
+            "description": "Resume closed/paused/interrupted target for messages/tasks.",
             "parameters": {
                 "type": "object",
                 "additionalProperties": False,
@@ -418,8 +394,11 @@ def validate_subagent_tool(name: str, arguments: dict) -> dict:
             write_scope = [item.strip().replace("\\", "/") for item in raw_scope[:32]]
         model_id = str(arguments.get("model_id") or "").strip() or None
         effort = str(arguments.get("reasoning_effort") or "").strip().lower() or None
-        if effort is not None and effort not in {"low", "medium", "high"}:
-            raise AgentToolRejected("agent_invalid_tool_arguments", correction="reasoning_effort must be low, medium, or high.")
+        if effort is not None:
+            try:
+                validate_effort(effort)
+            except ValueError:
+                raise AgentToolRejected("agent_invalid_tool_arguments", correction="reasoning_effort must be a supported effort name.") from None
         return {
             "task_name": _slug_task_name(task_name),
             "prompt": prompt,
@@ -464,9 +443,13 @@ def validate_subagent_tool(name: str, arguments: dict) -> dict:
             else:
                 raise AgentToolRejected("agent_invalid_tool_arguments", correction="targets must be an array of strings.")
         timeout = arguments.get("timeout_seconds", 30)
-        if type(timeout) is not int or timeout < 1 or timeout > 120:
-            timeout = 30
-        return {"targets": targets, "timeout_seconds": timeout}
+        if type(timeout) is not int or not 1 <= timeout <= 3600:
+            raise AgentToolRejected(
+                "agent_invalid_tool_arguments",
+                correction="timeout_seconds must be an integer from 1 to 3600; values below 10 use 10 seconds.",
+            )
+        return {"targets": targets, "timeout_seconds": max(10, timeout),
+                "timeout_note": "timeout_seconds raised to 10 seconds." if timeout < 10 else None}
     if name in {"ryn_interrupt_agent", "ryn_close_agent"}:
         target = str(arguments.get("target") or "").strip()
         if not target:
@@ -584,9 +567,15 @@ def _collect_tree_subagents(data: dict, row: dict) -> list[dict]:
     meta = row.get("subagent_meta") or {}
     root_id = str(meta.get("root_task_id") or row.get("id") or "")
     root_row = tasks.get(root_id) if isinstance(tasks.get(root_id), dict) else row
+    return _collect_descendants(data, root_row)
+
+
+def _collect_descendants(data: dict, row: dict) -> list[dict]:
+    """Collect only agents below this caller, never siblings or ancestors."""
+    tasks = data.get("tasks") or {}
     collected: list[dict] = []
-    seen: set[str] = {str(root_row.get("id") or "")}
-    queue: list[dict] = [root_row]
+    seen: set[str] = {str(row.get("id") or "")}
+    queue: list[dict] = [row]
     while queue:
         cur = queue.pop(0)
         for cid in list(cur.get("subagent_ids") or []):
@@ -598,14 +587,16 @@ def _collect_tree_subagents(data: dict, row: dict) -> list[dict]:
     return collected
 
 
-def resolve_subagent_targets(data: dict, parent_row: dict, targets: list[str] | str) -> list[dict]:
+def resolve_subagent_targets(data: dict, parent_row: dict, targets: list[str] | str,
+                             *, scope: str = "tree") -> list[dict]:
     """Resolve one or more target specifiers (id, nickname, task_name, canonical agent_path, or 'all') to subagent rows."""
     tasks = data.get("tasks") or {}
     direct_ids = list(parent_row.get("subagent_ids") or [])
     direct_children = [tasks[cid] for cid in direct_ids if isinstance(tasks.get(cid), dict)]
-    tree_children = _collect_tree_subagents(data, parent_row)
+    tree_children = (_collect_descendants(data, parent_row) if scope == "descendants"
+                     else _collect_tree_subagents(data, parent_row))
     caller_id = str(parent_row.get("id") or "")
-    all_candidates = direct_children if direct_children else [c for c in tree_children if str(c.get("id")) != caller_id]
+    all_candidates = direct_children
 
     if isinstance(targets, str):
         if targets.strip().lower() == "all":
@@ -648,12 +639,36 @@ def resolve_subagent_targets(data: dict, parent_row: dict, targets: list[str] | 
         if found is None:
             raise AgentToolRejected(
                 "agent_subagent_not_found",
-                correction=f"Subagent '{raw}' was not found in the current root thread tree.",
+                correction=("只能关闭/中断自己的子代理" if scope == "descendants"
+                            else f"Subagent '{raw}' was not found in the current root thread tree."),
             )
         if found["id"] not in seen_ids:
             seen_ids.add(found["id"])
             matched.append(found)
     return matched
+
+
+def _check_wait_state(data: dict, row: dict, targets: list[str]) -> dict:
+    children = resolve_subagent_targets(data, row, targets)
+    child_ids = {child["id"] for child in children}
+    unread = any(item.get("agent_id") in child_ids and not item.get("delivered")
+                 for item in row.get("subagent_notifications") or [])
+    return {"children": children,
+            "done": unread or all(child.get("status") not in {"queued", "running"} for child in children),
+            "steered": bool(row.get("pending_user_messages"))}
+
+
+def wait_ready(data: dict, row: dict) -> bool:
+    """Scheduler gate for a persisted wait; wall-clock deadlines survive restarts."""
+    waiting = row.get("subagent_wait")
+    if not waiting:
+        return True
+    if (not row.get("queue") or row["queue"][0]["call_id"] != waiting["call_id"]
+            or row.get("pending_user_messages") or row.get("pending_control")):
+        return True
+    if datetime.now(timezone.utc) >= datetime.fromisoformat(waiting["deadline"]):
+        return True
+    return _check_wait_state(data, row, waiting["targets"])["done"]
 
 
 def _new_user_msg(content: str, *, kind: str = "message") -> dict:
@@ -665,11 +680,22 @@ def _new_user_msg(content: str, *, kind: str = "message") -> dict:
     }
 
 
+def subagent_depth(row: dict) -> int:
+    path = str(((row or {}).get("subagent_meta") or {}).get("agent_path") or "/root")
+    return max(0, len([part for part in path.split("/") if part]) - 1)
+
+
+def at_max_depth(row: dict) -> bool:
+    return subagent_depth(row) >= MAX_SUBAGENT_DEPTH
+
+
 def spawn_agent_in_tx(data: dict, parent_row: dict, args: dict) -> dict:
     """Create and queue a new subagent child task linked to parent_row."""
     from .prompt import PROMPT_VERSION, select_base_instructions
 
     tasks = data.setdefault("tasks", {})
+    if len(tasks) >= 200:
+        raise AgentToolRejected("agent_task_limit", correction="Close or archive old tasks before spawning another agent.")
     settings = {**DEFAULT_SETTINGS, **(data.get("settings") or {})}
     tree_agents = _collect_tree_subagents(data, parent_row)
 
@@ -703,8 +729,7 @@ def spawn_agent_in_tx(data: dict, parent_row: dict, args: dict) -> dict:
     task_name = _slug_task_name(str(args.get("task_name") or nickname))
     parent_meta = parent_row.get("subagent_meta") or {}
     parent_path = str(parent_meta.get("agent_path") or "/root").rstrip("/")
-    parent_depth = max(0, len([seg for seg in parent_path.split("/") if seg]) - 1)
-    if parent_depth >= MAX_SUBAGENT_DEPTH:
+    if at_max_depth(parent_row):
         raise AgentToolRejected(
             "agent_subagent_depth_limit_reached",
             correction=f"Maximum subagent nesting depth ({MAX_SUBAGENT_DEPTH}) reached at {parent_path}. Handle this task directly.",
@@ -722,9 +747,9 @@ def spawn_agent_in_tx(data: dict, parent_row: dict, args: dict) -> dict:
     fork_turns = str(args.get("fork_turns") or "none")
     write_scope = list(args.get("write_scope") or [])
     prompt = str(args.get("prompt") or "").strip()
-    model_id = str(args.get("model_id") or parent_row.get("model_id") or settings.get("model_id") or "")
-    explicit_effort = args.get("reasoning_effort") or parent_row.get("reasoning_effort")
-    effort = explicit_effort or ("low" if role == "awaiter" else "medium")
+    model_id = str(args.get("resolved_model_id") or parent_row.get("model_id") or settings.get("model_id") or "")
+    explicit_effort = args.get("resolved_effort")
+    effort = args.get("effective_effort")
 
     parent_perm = str(parent_row.get("permission_mode") or settings.get("permission_mode") or "workspace")
     if role == "explorer" or parent_perm == "read_only":
@@ -821,11 +846,14 @@ def spawn_agent_in_tx(data: dict, parent_row: dict, args: dict) -> dict:
     )
     if parent_row.get("project"):
         child_row["project"] = copy.deepcopy(parent_row["project"])
+    if parent_row.get("workspace_instructions"):
+        child_row["workspace_instructions"] = copy.deepcopy(parent_row["workspace_instructions"])
     child_row["skills"] = copy.deepcopy(parent_row.get("skills") or [])
     child_row["verify_text_responses"] = False
     child_row["response_language"] = parent_row.get("response_language") or "zh-CN"
-    child_row["model_destination"] = copy.deepcopy(parent_row.get("model_destination"))
-    if parent_row.get("model_destination_confirmed"):
+    same_model = model_id == parent_row.get("model_id")
+    child_row["model_destination"] = copy.deepcopy(parent_row.get("model_destination") if same_model else args["resolved_destination"])
+    if same_model and parent_row.get("model_destination_confirmed"):
         child_row["model_destination_confirmed"] = True
     if parent_row.get("scope"):
         child_row["scope"] = copy.deepcopy(parent_row["scope"])
@@ -946,23 +974,36 @@ def followup_task_in_tx(data: dict, parent_row: dict, args: dict) -> dict:
     }
 
 
+def _stop_child_in_tx(data, child, *, kind, close):
+    """Keep dispatched operations accountable until their real response settles."""
+    if close:
+        child.setdefault("subagent_meta", {})["closed"] = True
+    if ambiguous(child):
+        child["pending_control"] = {"kind": kind}
+        return True
+    active = {"queued", "running", "waiting_approval", "waiting_input", "pausing"}
+    if close:
+        active.add("paused")
+    if child.get("status") not in active and not child.get("in_flight"):
+        return False
+    close_queue(child, event, "agent_cancelled")
+    child.update(pause_requested=True, status="cancelled" if kind == "cancel" else "paused",
+                 pending_control={"kind": kind}, pending_approval=None, pending_input=None,
+                 updated_at=now_iso())
+    event(child, "cancelled" if kind == "cancel" else "paused", operation_in_flight=bool(child.get("in_flight")))
+    settle(child, event, data=data)
+    on_subagent_settled_in_tx(data, child)
+    return True
+
+
 def interrupt_agent_in_tx(data: dict, parent_row: dict, args: dict) -> dict:
-    targets = resolve_subagent_targets(data, parent_row, args["target"])
+    targets = resolve_subagent_targets(data, parent_row, args["target"], scope="descendants")
     interrupted: list[dict] = []
     now = now_iso()
     for child in targets:
         meta = child.setdefault("subagent_meta", {})
         prev_status = child.get("status")
-        if prev_status in {"queued", "running", "waiting_approval", "waiting_input", "pausing"}:
-            close_queue(child, event, "agent_cancelled", keep_flight=False)
-            child["pause_requested"] = True
-            child["status"] = "paused"
-            child["in_flight"] = None
-            child["pending_approval"] = None
-            child["pending_input"] = None
-            child["updated_at"] = now
-            meta["settled_at_ms"] = now_ms()
-            on_subagent_settled_in_tx(data, child)
+        if _stop_child_in_tx(data, child, kind="pause", close=False):
             cascade_stop_subagents_in_tx(data, child, reason="subagent_interrupted", close=False)
         interrupted.append({
             "agent_id": child["id"],
@@ -976,23 +1017,13 @@ def interrupt_agent_in_tx(data: dict, parent_row: dict, args: dict) -> dict:
 
 
 def close_agent_in_tx(data: dict, parent_row: dict, args: dict) -> dict:
-    targets = resolve_subagent_targets(data, parent_row, args["target"])
+    targets = resolve_subagent_targets(data, parent_row, args["target"], scope="descendants")
     closed_list: list[dict] = []
     now = now_iso()
     for child in targets:
         meta = child.setdefault("subagent_meta", {})
         prev_status = child.get("status")
-        meta["closed"] = True
-        if prev_status in {"queued", "running", "waiting_approval", "waiting_input", "pausing", "paused"}:
-            close_queue(child, event, "agent_cancelled", keep_flight=False)
-            child["pause_requested"] = True
-            child["status"] = "cancelled"
-            child["in_flight"] = None
-            child["pending_approval"] = None
-            child["pending_input"] = None
-            child["updated_at"] = now
-            meta["settled_at_ms"] = now_ms()
-            on_subagent_settled_in_tx(data, child)
+        _stop_child_in_tx(data, child, kind="cancel", close=True)
         cascade_stop_subagents_in_tx(data, child, reason="subagent_closed", close=True)
         closed_list.append({
             "agent_id": child["id"],
@@ -1163,6 +1194,8 @@ def format_notification_tag(notif: dict) -> str:
     }
     if notif.get("diff_stats"):
         payload["diff_stats"] = notif["diff_stats"]
+    if notif.get("operation_in_flight"):
+        payload["operation_in_flight"] = True
     return f"<subagent_notification>\n{json.dumps(payload, ensure_ascii=False)}\n</subagent_notification>"
 
 
@@ -1466,7 +1499,7 @@ def project_subagent_summary(child_row: dict) -> dict:
         "is_waiting": is_waiting,
         "closed": bool(meta.get("closed")),
         "model_id": str(child_row.get("model_id") or ""),
-        "reasoning_effort": str(child_row.get("reasoning_effort") or meta.get("display_effort") or "medium"),
+        "reasoning_effort": str(child_row.get("reasoning_effort") or meta.get("display_effort") or ""),
         "steps": steps,
         "step_index": step_index,
         "estimated_total_steps": est_total,
@@ -1518,6 +1551,14 @@ def on_subagent_settled_in_tx(data: dict, child_row: dict) -> dict | None:
                 if isinstance(msg, dict) and msg.get("role") == "assistant" and str(msg.get("content") or "").strip():
                     summary_text = str(msg.get("content")).strip()
                     break
+    operation_in_flight = bool(child_row.get("in_flight"))
+    if operation_in_flight:
+        summary_text += "\n最后一个操作仍在完成，结果稍后补报"
+    elif status in {"paused", "cancelled"}:
+        receipt = next((entry for entry in reversed(child_row.get("receipts", []))
+                        if entry.get("status") == "confirmed" and "result" in entry), None)
+        if receipt is not None:
+            summary_text = "Last operation result: " + json.dumps(receipt["result"], ensure_ascii=False)
     notif = {
         "id": f"subnotif_{uuid.uuid4().hex[:12]}",
         "agent_id": str(child_row.get("id") or ""),
@@ -1529,6 +1570,7 @@ def on_subagent_settled_in_tx(data: dict, child_row: dict) -> dict | None:
         "diff_stats": diff_stats,
         "created_at": now_iso(),
         "delivered": False,
+        **({"operation_in_flight": True} if operation_in_flight else {}),
     }
     meta["last_notification"] = notif
     parent_row = (data.get("tasks") or {}).get(parent_id)
@@ -1550,31 +1592,14 @@ def cascade_stop_subagents_in_tx(data: dict, parent_row: dict, *, reason: str = 
     """Stop/interrupt all active subagents belonging to parent_row (recursively)."""
     tasks = data.get("tasks") or {}
     stopped_ids: list[str] = []
-    now = now_iso()
 
     def _stop_tree(row: dict):
         for cid in list(row.get("subagent_ids") or []):
             child = tasks.get(cid)
             if not isinstance(child, dict):
                 continue
-            meta = child.setdefault("subagent_meta", {})
-            if close:
-                meta["closed"] = True
-            target_statuses = (
-                {"queued", "running", "waiting_approval", "waiting_input", "pausing", "paused"}
-                if close
-                else {"queued", "running", "waiting_approval", "waiting_input", "pausing"}
-            )
-            if child.get("status") in target_statuses:
-                child["pause_requested"] = True
-                child["status"] = "cancelled" if close else "paused"
-                child["in_flight"] = None
-                child["pending_approval"] = None
-                child["pending_input"] = None
-                child["updated_at"] = now
-                meta["settled_at_ms"] = now_ms()
+            if _stop_child_in_tx(data, child, kind="cancel" if close else "pause", close=close):
                 stopped_ids.append(cid)
-                on_subagent_settled_in_tx(data, child)
             _stop_tree(child)
 
     _stop_tree(parent_row)

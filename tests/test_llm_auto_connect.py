@@ -35,6 +35,10 @@ class Adapter:
     def shutdown(self):
         pass
 
+    def context_metadata_for_model(self, model=""):
+        # CLI-shaped services ask their adapter for the model window; never spawn a real CLI.
+        return {"context_window": 128000}
+
     def infer_stream(self, *, on_delta, **kwargs):
         result = self.infer(**kwargs)
         on_delta("Private ")
@@ -381,7 +385,7 @@ def test_auto_stream_uses_real_ice_when_http_unreachable(mesh):
 
 
 def test_partial_http_stream_is_not_replayed_over_p2p(mesh, monkeypatch):
-    def interrupted(_url, payload, *, timeout_s, on_event):
+    def interrupted(_url, payload, *, timeout_s, on_event, **_kwargs):
         mesh.apps[0].state.llm_provider.handle(payload, on_event)
         raise OSError("lost stream after a delta")
 

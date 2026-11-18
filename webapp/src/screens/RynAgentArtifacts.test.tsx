@@ -151,7 +151,7 @@ it("links confirmed absolute paths, inline code and filenames to the same previe
 
 it("shows saved files for an unfinished task and uses the bound id for desktop open/reveal", async () => {
   const user = userEvent.setup(); const actions: unknown[] = [];
-  vi.stubGlobal("__TAURI_INTERNALS__", {});
+  vi.stubGlobal("__TAURI_INTERNALS__", { invoke: vi.fn(async () => "launch-token") });
   server.use(http.get("*/api/local/agent/tasks/file-task/artifacts", () => HttpResponse.json({ artifacts: [], files: [pelican] })),
     http.post("*/api/local/agent/tasks/file-task/files/file_pelican/actions", async ({ request }) => { actions.push(await request.json()); return HttpResponse.json({ opened: true }); }));
   render(<TaskArtifacts task={{ ...done, status: "failed", result: "Saved pelican.svg, remaining work failed." }} />);
@@ -322,7 +322,7 @@ it("keeps a temporarily locked file visible and automatically rechecks it", asyn
 
 it("keeps native open/reveal available for a file above the preview limit", async () => {
   const user = userEvent.setup(); const actions: unknown[] = [];
-  vi.stubGlobal("__TAURI_INTERNALS__", {});
+  vi.stubGlobal("__TAURI_INTERNALS__", { invoke: vi.fn(async () => "launch-token") });
   server.use(http.get("*/api/local/agent/tasks/file-task/artifacts", () => HttpResponse.json({ artifacts: [], files: [{ ...pelican, status: "too_large" }] })),
     http.post("*/api/local/agent/tasks/file-task/files/file_pelican/actions", async ({ request }) => { actions.push(await request.json()); return HttpResponse.json({ opened: true }); }));
   render(<TaskArtifacts task={done} />);

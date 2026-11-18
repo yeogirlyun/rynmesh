@@ -171,7 +171,10 @@ def test_t1_6000_entries_paginates_completely_without_duplicates(tmp_path, monke
         context=ctx,
         cancelled=lambda: False,
     )
-    assert [e["name"] for e in first_agent_page["entries"]] == expected_names[:10]
+    # S06-I12: a page holds up to 50 entries, trimmed to a 16 KiB byte budget.
+    names = [e["name"] for e in first_agent_page["entries"]]
+    assert 10 <= len(names) <= 50
+    assert names == expected_names[:len(names)]
     assert first_agent_page["truncated"] is True
     assert first_agent_page["next_cursor"]
 

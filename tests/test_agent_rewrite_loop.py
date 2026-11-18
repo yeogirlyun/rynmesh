@@ -5,7 +5,7 @@ import threading
 
 import pytest
 from test_agent_codex_loop import workstation
-from test_agent_runtime import advance, assistant, compaction_history, make_runtime
+from test_agent_runtime import advance, assistant, compaction_history, fit_window, make_runtime
 
 
 def test_router_rejections_return_to_model_then_valid_tool_executes_once(tmp_path):
@@ -92,6 +92,7 @@ def test_incomplete_checkpoint_never_replaces_original_evidence(tmp_path, incomp
     runtime, _, tools, _ = make_runtime(tmp_path, {**assistant("Only partial summary"), **incomplete})
     runtime.update_settings({"max_context_chars": 12000})
     row = runtime.create({"message": "Inspect A. Never change B."})
+    fit_window(runtime, row["id"], 12000, small_window=True)
     original = compaction_history(runtime, row["id"])
     advance(runtime)
     saved = runtime.store.read()["tasks"][row["id"]]

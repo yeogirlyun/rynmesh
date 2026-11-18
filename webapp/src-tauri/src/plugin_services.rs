@@ -137,11 +137,12 @@ fn spawn(root: &Path, service: &Service, credentials: Option<&serde_json::Value>
     let log_err = log.try_clone().map_err(|_| "plugin_service_log_unavailable")?;
     let mut command = Command::new(&program);
     command.current_dir(program.parent().unwrap()).envs(&service.environment)
+        .env("RYNMESH_LOCAL_TOKEN", crate::node::local_token())
+        .env("RYN_PLUGIN_HOST_PORT", node_port.to_string())
         .stdin(Stdio::null()).stdout(log).stderr(log_err);
     if let Some(value) = credentials {
         command.env("RYN_PLUGIN_SERVICE_TOKEN", value["credential"].as_str().ok_or("plugin_service_credentials_invalid")?)
-            .env("RYN_PLUGIN_SERVICE_GENERATION", value["generation"].as_str().ok_or("plugin_service_credentials_invalid")?)
-            .env("RYN_PLUGIN_HOST_PORT", node_port.to_string());
+            .env("RYN_PLUGIN_SERVICE_GENERATION", value["generation"].as_str().ok_or("plugin_service_credentials_invalid")?);
     }
     #[cfg(windows)]
     { use std::os::windows::process::CommandExt; command.creation_flags(0x08000000); }

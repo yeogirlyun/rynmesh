@@ -13,9 +13,10 @@ from rynmesh.llm_package import codex_tools
 
 
 def _eval_specs_with_os_name(monkeypatch, os_name: str) -> dict:
-    monkeypatch.setattr(os, "name", os_name)
-    ns = runpy.run_path(str(Path(local_specs.__file__)))
-    return ns["SPECS"]
+    path = str(Path(local_specs.__file__))
+    with monkeypatch.context() as patched:
+        patched.setattr(os, "name", os_name)
+        return runpy.run_path(path, run_name="rynmesh.agent_runtime._test_local_specs")["SPECS"]
 
 
 def test_t1_shell_description_contains_universal_destructive_safety_rules():

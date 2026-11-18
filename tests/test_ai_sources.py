@@ -41,6 +41,7 @@ def test_invalid_source_configuration(tmp_path, updates):
 def test_vendor_path_and_parameters_are_not_rewritten(monkeypatch):
     requests = []
     class Response:
+        headers = {}
         def read(self, _limit):
             return json.dumps({"choices": [{"message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
                                "usage": {"prompt_tokens": 2, "completion_tokens": 1}}).encode()

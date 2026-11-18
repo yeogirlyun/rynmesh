@@ -24,7 +24,12 @@ MAX_IMPORT_BYTES = 32 * 1024 * 1024
 MAX_IMPORT_TOTAL_BYTES = 256 * 1024 * 1024
 VERSION = "ryn.library-import.v2"
 _ID = re.compile(r"^imp_[a-f0-9]{32}(?:[a-f0-9]{32})?$")
-_SUFFIXES = {".txt", ".md", ".markdown", ".pdf"}
+_OFFICE_MIMES = {
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+}
+_SUFFIXES = {".txt", ".md", ".markdown", ".csv", ".pdf", *_OFFICE_MIMES}
 
 
 class LibraryImportError(ValueError):
@@ -159,7 +164,10 @@ class LibraryImportStore:
         if suffix == ".pdf":
             if mime != "application/pdf" or not data.startswith(b"%PDF-"):
                 raise LibraryImportError("library_import_mime_mismatch")
-        elif mime not in {"text/plain", "text/markdown", "application/octet-stream"} or data.startswith(b"%PDF-"):
+        elif suffix in _OFFICE_MIMES:
+            if mime not in {_OFFICE_MIMES[suffix], "application/octet-stream"}:
+                raise LibraryImportError("library_import_mime_mismatch")
+        elif mime not in {"text/plain", "text/markdown", "text/csv", "application/octet-stream"} or data.startswith(b"%PDF-"):
             raise LibraryImportError("library_import_mime_mismatch")
         digest = hashlib.sha256(data).hexdigest()
         # Keep attribution attached to its source; equal bytes received from a
@@ -210,6 +218,8 @@ class LibraryImportStore:
             blob = directory / ("original" + suffix)
             atomic_write_bytes(blob, data, max_bytes=MAX_IMPORT_BYTES)
             extracted = extract_document(blob, max_input_bytes=MAX_IMPORT_BYTES)
+            if extracted["status"] == "failed:encoding_unknown":
+                raise LibraryImportError("library_import_encoding_unknown")
             if extracted["status"] not in {"parsed", "truncated"} or not extracted.get("text", "").strip():
                 raise LibraryImportError("library_import_extract_unavailable")
             text = str(extracted["text"])

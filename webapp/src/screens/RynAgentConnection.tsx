@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Check, LoaderCircle, Pause, WifiOff } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { canUseAgentAction, type AgentTaskSummary } from "../domain/rynAgent";
+import { canUseAgentAction, type AgentEvent, type AgentTaskSummary } from "../domain/rynAgent";
 
 export function hasConnectionRecovery(task: AgentTaskSummary) {
   const state = task.connection_recovery?.state;
@@ -11,7 +11,31 @@ export function hasConnectionRecovery(task: AgentTaskSummary) {
   return (state === "retrying" ? ["queued", "running"] : ["queued", "running", "completed", "waiting_approval", "waiting_input"]).includes(task.status);
 }
 
-export default function RynAgentConnection({ task, modelName, busy, enabled, onAction }: {
+type ConnectionProps = {
+  task: AgentTaskSummary & { events?: AgentEvent[] }; modelName: string; busy: boolean; enabled: boolean;
+  onAction: (action: "pause" | "resume") => void;
+};
+
+export default function RynAgentConnection(props: ConnectionProps) {
+  const { i18n } = useTranslation();
+  const zh = i18n.language.startsWith("zh");
+  const { task } = props;
+  const mismatch = task.events?.find(event => event.type === "model_mismatch");
+  const continued = task.events?.some(event => event.type === "interrupted" && event.continued === true);
+  const failure = task.error ? [...(task.events || [])].reverse().find(event => event.type === "failed") : undefined;
+  const diagnostics = failure?.diagnostics as { network_reason?: string; reset_at?: number } | undefined;
+  const reset = diagnostics?.reset_at;
+  const seconds = typeof reset === "number" && Number.isFinite(reset) ? Math.max(0, Math.ceil(reset - Date.now() / 1000)) : null;
+  return <>
+    {continued && <p role="status">{zh ? "已自动续跑" : "Interrupted work resumed automatically"}</p>}
+    {mismatch && <p role="note">{zh ? "服务端返回的模型与请求不同" : "The server returned a different model"}: {String(mismatch.requested_model)} → {String(mismatch.server_model)}</p>}
+    {diagnostics?.network_reason === "quota" && seconds !== null && <p role="status">{zh ? `模型额度已用完，约 ${seconds} 秒后恢复。` : `Model quota exhausted; expected to recover in about ${seconds}s.`}</p>}
+    {diagnostics?.network_reason === "region_blocked" && <p role="status">{zh ? "该线路在当前地区被拦截，请换线路" : "This route is blocked in your region. Choose another route."}</p>}
+    <ConnectionRecovery {...props} />
+  </>;
+}
+
+function ConnectionRecovery({ task, modelName, busy, enabled, onAction }: {
   task: AgentTaskSummary; modelName: string; busy: boolean; enabled: boolean;
   onAction: (action: "pause" | "resume") => void;
 }) {
@@ -54,7 +78,13 @@ export default function RynAgentConnection({ task, modelName, busy, enabled, onA
   } else if (stopped) {
     description = zh ? "当前进度已保留，等待你继续。" : "Your progress is saved. Continue when you are ready.";
   } else if (reason === "quota") {
-    description = zh ? "模型服务额度不足。请检查余额或额度设置后继续。" : "Model service quota exhausted. Check your balance or quota settings before continuing.";
+    const reset = recovery.diagnostics?.reset_at;
+    const seconds = typeof reset === "number" && Number.isFinite(reset) ? Math.max(0, Math.ceil(reset - Date.now() / 1000)) : null;
+    description = seconds !== null
+      ? (zh ? `模型服务额度不足，约 ${seconds} 秒后恢复。` : `Model service quota exhausted; expected to recover in about ${seconds}s.`)
+      : (zh ? "模型服务额度不足。请检查余额或额度设置后继续。" : "Model service quota exhausted. Check your balance or quota settings before continuing.");
+  } else if (reason === "region_blocked") {
+    description = zh ? "该线路在当前地区被拦截，请换线路" : "This route is blocked in your region. Choose another route.";
   } else if (reason === "context_overflow") {
     description = zh ? "请求内容超过模型上下文长度限制。请缩短内容或切换更大上下文模型后继续。" : "The request exceeded the model's context length. Shorten the content or switch to a larger-context model.";
   } else if (reason === "tls_certificate" || reason === "tls") {

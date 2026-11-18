@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Callable, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse
-from urllib.request import Request, urlopen
+from urllib.request import HTTPSHandler, ProxyHandler, Request, build_opener
 
 from .crypto import SignatureError, SignedPayload, sign_payload, verify_signed_payload
 from .jobs import (
@@ -928,14 +928,18 @@ def _signed_payload_list(
 
 
 def _open_registry_request(req: Request, *, timeout_s: float):
-    from .transport import network_key_header
+    from .transport import network_key_header, resolve_profile
 
     for name, value in network_key_header().items():
         req.add_header(name, value)
-    kwargs: dict[str, Any] = {"timeout": timeout_s}
-    if str(req.full_url).startswith("https://"):
-        kwargs["context"] = _https_context()
-    return urlopen(req, **kwargs)
+    # No Ryn proxy configured: keep urllib's environment-proxy behaviour,
+    # which registry requests have always relied on.
+    proxies = resolve_profile().proxies
+    opener = build_opener(
+        ProxyHandler(proxies) if proxies else ProxyHandler(),
+        HTTPSHandler(context=_https_context()),
+    )
+    return opener.open(req, timeout=timeout_s)
 
 
 def _https_context() -> ssl.SSLContext:

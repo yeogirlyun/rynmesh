@@ -4,7 +4,6 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
-from cryptography.exceptions import InvalidTag
 
 from rynmesh.crypto import SignedPayload, sign_payload
 from rynmesh.jobs import verify_work_result
@@ -243,7 +242,7 @@ def test_encrypted_recovery_preserves_identity_and_refuses_overwrite(nodes, tmp_
     join(root, child)
     backup = root.backup("a long recovery password")
     assert root.store.peer_id not in json.dumps(backup)
-    with pytest.raises(InvalidTag):
+    with pytest.raises(SpaceError, match="恢复文件无效或密码错误"):
         restore_backup(backup, "wrong password", tmp_path / "bad")
     restore_backup(backup, "a long recovery password", tmp_path / "recovered")
     store = RynmeshStore(home=tmp_path / "recovered", network_dir=tmp_path / "network")

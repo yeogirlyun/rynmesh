@@ -39,6 +39,7 @@ def test_restricted_adapter_preserves_real_provider_cancel(modules):
         SimpleNamespace(add=lambda *args, **kwargs: None))
     gate = object.__new__(ModelDispatchAdapter)
     gate.inner = wrapper
+    gate.sources = SimpleNamespace()  # S01-I19: cancel records the task in the shared dispatch state
     provider = object.__new__(ProviderService)
     provider.adapter = gate
     provider.task_store = SimpleNamespace(get=lambda task: None)

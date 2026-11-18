@@ -67,7 +67,7 @@ def test_t1_describe_http_table(status, envelope, expected_reason, expected_over
         ({"type": "rate_limit_error", "code": "rate_limit_exceeded", "message": "PRIVATE_RL"}, "upstream_stream_error", "http", False),
         ({"type": "invalid_request_error", "message": "PRIVATE_INVALID"}, "upstream_request_rejected", "request_rejected", False),
         ({"code": "invalid_request", "message": "PRIVATE_INVALID_CODE"}, "upstream_request_rejected", "request_rejected", False),
-        ({"code": "context_length_exceeded", "type": "invalid_request_error", "message": "PRIVATE_CTX"}, "upstream_request_rejected", "context_overflow", False),
+        ({"code": "context_length_exceeded", "type": "invalid_request_error", "message": "PRIVATE_CTX"}, "upstream_context_overflow", "context_overflow", False),
     ],
 )
 def test_t1_classify_stream_error_table(stream_event, expected_code, expected_reason, expected_overloaded):

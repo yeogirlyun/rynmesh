@@ -154,12 +154,12 @@ def test_context_budget_follows_a_declared_window(tmp_path):
     task = runtime.create({"message": "Hi."})
     row = runtime.store.read()["tasks"][task["id"]]
     assert row["limits"]["max_context_chars"] is None
-    assert runtime._context_limit(row) == (output_policy.UNKNOWN_CONTEXT_WINDOW_TOKENS - 4096 - 512) * 3
+    assert runtime._context_limit(row) == (output_policy.UNKNOWN_CONTEXT_WINDOW_TOKENS - 8192 - 512) * 3
     assert runtime._context_policy(row)["context_window_known"] is False
     runtime.catalog = WindowCatalog(200000)
-    assert runtime._context_limit(row) == (200000 - 4096 - 512) * 3
+    assert runtime._context_limit(row) == (200000 - 16384 - 512) * 3
     runtime.catalog = WindowCatalog(8000)
-    assert runtime._context_limit(row) == (8000 - 4096 - 512) * 3
+    assert runtime._context_limit(row) == (8000 - 2000 - 512) * 3
 
 
 def test_ambiguous_old_ceiling_is_preserved_and_later_explicit_values_stay():
@@ -172,15 +172,16 @@ def test_ambiguous_old_ceiling_is_preserved_and_later_explicit_values_stay():
 
 def test_finished_command_output_shows_head_and_tail():
     processes = Processes()
-    script = "import sys; sys.stdout.write('H' * 3000 + 'M' * 9000 + 'FAILED summary at the end')"
+    script = f"import sys; sys.stdout.write('H' * {HEAD_CHARS + 1000} + 'M' * 9000 + 'FAILED summary at the end')"
     ident = processes.start([sys.executable, "-c", script], os.getcwd(), "t", 30, lambda: True, lambda: False)
     result = processes.wait(ident, "t", lambda: False)
-    processes.close()
     assert result["output"].startswith("H" * HEAD_CHARS) and result["output"].endswith("FAILED summary at the end")
     assert "characters omitted" in result["output"] and result["next_offset"] == HEAD_CHARS
     assert len(result["output"]) < PAGE_CHARS + 200
     page = processes.read(ident, "t", HEAD_CHARS)
-    assert page["output"] == ("H" * 1000 + "M" * 9000)[:PAGE_CHARS]
+    expected = "H" * 1000 + "M" * 9000 + "FAILED summary at the end"
+    assert page["output"] == expected[:PAGE_CHARS]
+    processes.close()
 
 
 def test_window_id_reaches_conversation_aware_models(tmp_path):

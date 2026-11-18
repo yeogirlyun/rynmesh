@@ -5,6 +5,7 @@ All model responses are authored fixtures; no provider or network is invoked.
 import base64
 import copy
 import io
+import math
 from types import SimpleNamespace
 
 import pytest
@@ -109,7 +110,8 @@ def test_unknown_window_uses_labelled_conservative_fallback(tmp_path, metadata):
     policy = runtime.settings()["context_budget_policy"]
     assert policy["context_window_tokens"] == 32768
     assert policy["context_window_known"] is False and policy["context_window_basis"] == "unknown_fallback"
-    assert runtime._context_limit({"model_id": "local:test", "limits": {"max_context_chars": None}}) == (32768 - 4096 - 512) * 3
+    reserve = 4096 if "max_output_tokens" in metadata else 8192
+    assert runtime._context_limit({"model_id": "local:test", "limits": {"max_context_chars": None}}) == (32768 - reserve - 512) * 3
     assert policy["effective_max_context_bytes"] < 120000
 
 
@@ -156,7 +158,9 @@ def test_full_request_accounting_includes_roles_history_tools_utf8_and_framing()
     policy = output_policy.select(window_model(), messages, specs)
     size = len(encoded(messages)) + len(encoded(specs))
     assert policy["estimated_input_utf8_bytes"] == size
-    assert policy["estimated_input_tokens"] == (size + 2) // 3 + 512
+    chars = len(encoded(messages).decode("utf-8")) + len(encoded(specs).decode("utf-8"))
+    share = min(1.0, ((size - chars) // 2) * 3 / size)
+    assert policy["estimated_input_tokens"] == math.ceil(size / (3 - share)) + 512
     assert "heuristic" in policy["estimate_basis"] and policy["token_count_is_estimate"] is True
     assert output_policy.select(window_model(), messages, [])["estimated_input_tokens"] < policy["estimated_input_tokens"]
     assert output_policy.select(window_model(), messages[:1], specs)["estimated_input_tokens"] < policy["estimated_input_tokens"]
@@ -258,7 +262,7 @@ def _png_attachment(name: str, width: int = 1280, height: int = 1280, color: tup
 def test_s03_i10_t1_image_token_estimates_across_dimensions_and_formula_version():
     assert output_policy.IMAGE_ANALYSIS_VERSION == "canonical-image-heuristic-v2"
     assert output_policy.IMAGE_ESTIMATE_BASIS == (
-        "text_utf8_div_3_ceil_plus_512_and_image_area_div_750_capped_10000_plus_85_heuristic"
+        "text_utf8_div_cjk_density_ceil_plus_512_and_image_area_div_750_capped_10000_plus_85_heuristic"
     )
     assert output_policy.IMAGE_TOKEN_FORMULA_BASIS == (
         "heuristic_min_10000_ceil_w_times_h_div_750_plus_85_not_provider_tokenizer"

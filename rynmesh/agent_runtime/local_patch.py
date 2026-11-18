@@ -19,14 +19,78 @@ anything is written, so a patch that does not apply changes no file.
 """
 from __future__ import annotations
 
+import posixpath
+import re
+import shlex
+from pathlib import PureWindowsPath
+
 from .protocol import sanitized
 from .store import AgentToolRejected
 
 BEGIN, END = "*** Begin Patch", "*** End Patch"
 ADD, DELETE, UPDATE, MOVE, EOF = "*** Add File: ", "*** Delete File: ", "*** Update File: ", "*** Move to: ", "*** End of File"
-MAX_FILES = 32
+MAX_FILES = 128
 MAX_SNIPPET_LINES = 15
 MAX_SNIPPET_CHARS = 1600
+
+
+def shell_patch(command: str, shell: str):
+    """Recognize a single literal patch invocation without executing shell text."""
+    command = command.replace("\r\n", "\n").strip()
+    wrapper = re.fullmatch(r"(?:bash|sh|zsh|pwsh|powershell|cmd)(?:\.exe)?\s+(?:-c|-lc|-Command|/c)\s+([\s\S]+)", command, re.I)
+    if wrapper:
+        command = wrapper.group(1)
+        if command[:1] in {"'", '"'}:
+            try:
+                words = shlex.split(command)
+            except ValueError:
+                return None
+            if len(words) != 1:
+                return None
+            command = words[0]
+        return shell_patch(command, shell)
+    if command.startswith(BEGIN):
+        return {"error": "implicit_patch"}
+    cd = None
+    prefix = re.match(r"cd\s+([^\n]+?)\s+&&\s*", command)
+    if prefix:
+        try:
+            words = shlex.split(prefix.group(1), posix=False)
+        except ValueError:
+            return None
+        if len(words) != 1:
+            return None
+        cd = words[0]
+        if cd[:1] in {"'", '"'} and cd[-1:] == cd[:1]:
+            cd = cd[1:-1]
+        if not cd or re.search(r"[$`*?(){}\[\]&|;<>]", cd):
+            return None
+        command = command[prefix.end():]
+    lines = command.split("\n")
+    if len(lines) < 3:
+        return None
+    heredoc = re.fullmatch(r"(?:apply_patch|applypatch)\s+<<\s*(?:'([A-Za-z_][A-Za-z_0-9]*)'|\"([A-Za-z_][A-Za-z_0-9]*)\"|([A-Za-z_][A-Za-z_0-9]*))\s*", lines[0])
+    if heredoc:
+        delimiter = next(group for group in heredoc.groups() if group is not None)
+        if lines[-1] == delimiter and delimiter not in lines[1:-1]:
+            return {"patch": "\n".join(lines[1:-1]), "cd": cd}
+    if lines[0] == "@'" and re.fullmatch(r"'@\s*\|\s*(?:apply_patch|applypatch)", lines[-1]) and "'@" not in lines[1:-1]:
+        return {"patch": "\n".join(lines[1:-1]), "cd": cd}
+    return None
+
+
+def rebase_paths(patch: str, base: str) -> str:
+    """Rebase only operation headers; patch content and absolute paths stay literal."""
+    lines = patch.splitlines(keepends=True)
+    for index, line in enumerate(lines):
+        for header in (ADD, UPDATE, DELETE, MOVE):
+            if line.startswith(header):
+                path = line[len(header):].rstrip("\r\n")
+                if not posixpath.isabs(path) and not PureWindowsPath(path).is_absolute():
+                    rebased = posixpath.normpath(posixpath.join(base.replace("\\", "/"), path.replace("\\", "/")))
+                    lines[index] = header + rebased + line[len(line.rstrip("\r\n")):]
+                break
+    return "".join(lines)
 
 
 def reject(code: str, *, correction: str | None = None, details: dict | None = None):

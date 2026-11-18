@@ -105,7 +105,7 @@ def test_bridge_structural_rejections_retain_only_safe_accounting(bad):
     result = {"message": {"role": "assistant", "content": "ok"}, "reported_usage": {"input_tokens": 11, "output_tokens": 8000},
               "finish_reason": "length"}
     if bad == "overflow":
-        result["message"]["content"] = "PRIVATE" * 40000
+        result["message"]["content"] = "PRIVATE" * (output_policy.MAX_RAW_RESPONSE_BYTES // len("PRIVATE") + 1)
     elif bad == "role":
         result["message"]["role"] = "user"
     elif bad == "calls_type":

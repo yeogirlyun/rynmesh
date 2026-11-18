@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 
 from rynmesh.agent_runtime.routes import install_agent
 from rynmesh.agent_runtime.runtime import AgentRuntime
+from rynmesh.agent_runtime.output_policy import MAX_RAW_RESPONSE_BYTES
 from rynmesh.agent_runtime.store import AgentError, AgentStore, AgentToolRejected
 from rynmesh.background_workers import BackgroundWorkerRegistry
 
@@ -157,8 +158,8 @@ def test_read_only_and_live_permission_change_enforced(tmp_path):
     advance(runtime, 2)
     result = runtime.get(row["id"])["events"][-1]["result"]
     assert result["error"] == "agent_permission_denied"
-    from rynmesh.agent_runtime.execution_policy import PERMISSION_DENIED_CORRECTION
-    assert result["correction"] == PERMISSION_DENIED_CORRECTION
+    from rynmesh.agent_runtime.execution_policy import PERMISSION_DENIED_CORRECTIONS
+    assert result["correction"] == PERMISSION_DENIED_CORRECTIONS["read_only"]
     assert tools.calls == []
 
 
@@ -261,8 +262,8 @@ def test_restart_preserves_waiting_approval_but_revokes_queued_approval(tmp_path
     approve(restarted, row["id"])
     restarted.reconcile()
     interrupted = restarted.get(row["id"])
-    assert interrupted["status"] == "interrupted"
-    restarted.action(row["id"], {"action": "resume", "expected_revision": interrupted["revision"]})
+    assert interrupted["status"] == "queued" and interrupted["error"] is None
+    assert restarted.store.read()["tasks"][row["id"]]["approved"] is None
     advance(restarted)
     assert restarted.get(row["id"])["status"] == "waiting_approval"
     assert tools.calls == []
@@ -339,7 +340,7 @@ def test_cancel_during_write_retains_late_evidence(tmp_path):
 @pytest.mark.parametrize("response,error", [
     (assistant(name="shell", args={}), "agent_unknown_tool"),
     (assistant(name="share_service", args={"service_id": "svc1", "shell": "bad"}), "agent_tool_arguments_invalid"),
-    ({"message": {"role": "assistant", "content": "ok", "reasoning_content": "x" * (256 * 1024 + 1)}}, "agent_model_output_limit"),
+    ({"message": {"role": "assistant", "content": "ok", "reasoning_content": "x" * (MAX_RAW_RESPONSE_BYTES + 1)}}, "agent_model_output_limit"),
 ])
 def test_untrusted_model_output_cannot_bypass_tool_boundary(tmp_path, response, error):
     runtime, _, tools, _ = make_runtime(tmp_path, response)
@@ -407,8 +408,9 @@ def test_automatic_never_silently_elevates_task_or_ignores_revocation(tmp_path, 
     row = runtime.create({"message": "share"})
     runtime.update_settings({"permission_mode": later})
     advance(runtime, 2)
-    assert runtime.get(row["id"])["status"] == "waiting_approval"
-    assert tools.calls == []
+    # Global defaults no longer revoke an existing task's selected mode.
+    assert runtime.get(row["id"])["status"] == ("queued" if created == "automatic" else "waiting_approval")
+    assert len(tools.calls) == (1 if created == "automatic" else 0)
 
 
 def test_unsupported_catalog_model_rejected_by_backend(tmp_path):
@@ -653,7 +655,7 @@ def test_read_failure_is_model_visible_and_can_be_corrected(tmp_path):
 def test_revocation_after_authorization_consumed_stops_write_under_business_lock(tmp_path, automatic, settings_change):
     runtime, _, tools, _ = make_runtime(tmp_path, assistant(name="share_service", args={"service_id": "A"}))
     if automatic:
-        runtime.update_settings({"permission_mode": "automatic", "allowed_write_tools": ["share_service"]})
+        runtime.update_settings({"permission_mode": "automatic", "allowed_write_tools": []})
     entered, release = threading.Event(), threading.Event()
     execute = tools.execute
 
@@ -681,10 +683,10 @@ def test_revocation_after_authorization_consumed_stops_write_under_business_lock
     assert not thread.is_alive()
     done = runtime.get(row["id"])
     assert done["status"] == "queued"
-    assert done["events"][-1]["result"]["error"] == "agent_permission_denied"
-    assert done["events"][-1]["result"]["not_executed"]
+    # These are changes to future-task defaults, not explicit task revocations.
+    assert done["events"][-1]["result"]["shared"] is True
     assert runtime.store.read()["tasks"][row["id"]]["in_flight"] is None
-    assert not tools.shared and not tools.calls
+    assert tools.shared and len(tools.calls) == 1
 
 
 def test_active_time_budget_rejects_a_late_model_success(tmp_path, monkeypatch):

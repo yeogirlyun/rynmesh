@@ -171,7 +171,7 @@ def test_command_manifest_tracks_binary_deliverables_and_survives_repeated_proce
     before = workspace_artifacts.snapshot(tmp_path)
     path = tmp_path / "机械板块（预估）-合并 汇总.xlsx"
     path.write_bytes(b"PK\x03\x04binary workbook")
-    files = workspace_artifacts.command_files(tmp_path, before)
+    files = workspace_artifacts.command_files(tmp_path, before)["files"]
     assert len(files) == 1 and files[0]["created"] and files[0]["sha256"] == sha(path.read_bytes())
     command = receipt("op1", "ryn_shell_execute", {}, {"running": False, "exit_code": 0, "workspace_files": files})
     repeat = receipt("op2", "ryn_process_read", {}, {"running": False, "workspace_files": files}, effect="read")
@@ -182,7 +182,7 @@ def test_command_manifest_tracks_binary_deliverables_and_survives_repeated_proce
     assert item["attribution"] == "observed_during_command"
     assert item["media_type"].endswith("spreadsheetml.sheet") and listing["unbacked_mentions"] == []
     assert workspace_artifacts.read(row, item["id"])["bytes"] == path.read_bytes()
-    assert workspace_artifacts.command_files(tmp_path, {"files": {}, "complete": False}) == []
+    assert workspace_artifacts.command_files(tmp_path, {"files": {}, "complete": False})["files"] == []
 
 
 def test_artifacts_survive_encrypted_large_command_output(tmp_path):
@@ -207,7 +207,7 @@ def test_concurrent_project_file_change_is_not_claimed_as_a_task_deliverable(tmp
     path.write_text("before", encoding="utf-8")
     before = workspace_artifacts.snapshot(tmp_path)
     path.write_text("changed by another editor", encoding="utf-8")
-    files = workspace_artifacts.command_files(tmp_path, before)
+    files = workspace_artifacts.command_files(tmp_path, before)["files"]
     row = {"project": {"id": "project"}, "local_execution": {"workspace_root": str(tmp_path)},
            "receipts": [receipt("op1", "ryn_shell_execute", {}, {"workspace_files": files})],
            "result": "Tests finished.", "messages": []}
@@ -258,9 +258,9 @@ def test_command_output_over_preview_limit_is_listed_instead_of_dropped(tmp_path
     before = workspace_artifacts.snapshot(tmp_path)
     path = tmp_path / "large.xlsx"
     with path.open("wb") as stream:
-        stream.seek(workspace_artifacts.MAX_ARTIFACT_BYTES)
+        stream.seek(workspace_artifacts.MAX_HASH_BYTES)
         stream.write(b"x")
-    files = workspace_artifacts.command_files(tmp_path, before)
+    files = workspace_artifacts.command_files(tmp_path, before)["files"]
     assert files[0]["path"] == str(path) and files[0]["sha256"] is None
     row = {"local_execution": {"workspace_root": str(tmp_path)}, "receipts": [
         receipt("op1", "ryn_shell_execute", {}, {"workspace_files": files})], "result": "Saved large.xlsx", "messages": []}
@@ -275,7 +275,7 @@ def test_temporarily_locked_output_is_retained_then_becomes_openable(tmp_path, m
     path.write_bytes(b"workbook")
     original = workspace_artifacts._digest
     monkeypatch.setattr(workspace_artifacts, "_digest", lambda _: (_ for _ in ()).throw(PermissionError("file held by another app")))
-    files = workspace_artifacts.command_files(tmp_path, before)
+    files = workspace_artifacts.command_files(tmp_path, before)["files"]
     assert files[0]["path"] == str(path)
     row = {"local_execution": {"workspace_root": str(tmp_path)}, "receipts": [
         receipt("op1", "ryn_shell_execute", {}, {"workspace_files": files})], "result": "Saved held.xlsx", "messages": []}
@@ -293,7 +293,7 @@ def test_unmentioned_shell_scratch_files_are_supporting_until_named_in_answer(tm
     listing_json = tmp_path / "skills_list.json"
     brief.write_text("brief", encoding="utf-8")
     listing_json.write_text("[]", encoding="utf-8")
-    files = workspace_artifacts.command_files(tmp_path, before)
+    files = workspace_artifacts.command_files(tmp_path, before)["files"]
     row = {"local_execution": {"workspace_root": str(tmp_path)},
            "receipts": [receipt("op1", "ryn_shell_execute", {}, {"workspace_files": files})],
            "result": "", "messages": []}
@@ -315,7 +315,7 @@ def test_helper_scripts_stay_supporting_and_turn_deliverables_survive_multi_turn
     probe_py.write_text("import fitz", encoding="utf-8")
     probe_json.write_text('{"ok": true}', encoding="utf-8")
     out_pdf.write_bytes(b"%PDF-1.4 fixed")
-    files = workspace_artifacts.command_files(tmp_path, before)
+    files = workspace_artifacts.command_files(tmp_path, before)["files"]
     row = {
         "local_execution": {"workspace_root": str(tmp_path)},
         "receipts": [

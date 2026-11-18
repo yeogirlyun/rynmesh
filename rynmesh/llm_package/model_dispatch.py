@@ -107,8 +107,16 @@ class ModelDispatchAdapter:
                     except (ValueError, OSError):
                         raise AdapterError("ai_permission_denied", code="ai_permission_denied") from None
                 policy = model_settings.effective(record, self.model)
+                output_ceiling = policy["max_output_tokens"]
+                if policy.get("max_output_tokens_known") is False:
+                    context = model_settings.context_metadata(record, self.model)
+                    window = context["context_window"] if context["context_window_known"] else model_settings.FALLBACK_CONTEXT_WINDOW
+                    output_ceiling = max(output_ceiling, window // 2)
+                    vendor = model_settings._known_vendor_max_output_tokens(self.model)
+                    if vendor is not None:
+                        output_ceiling = min(output_ceiling, vendor)
                 requested_max = (
-                    min(max_tokens, policy["max_output_tokens"])
+                    min(max_tokens, output_ceiling)
                     if type(max_tokens) is int and max_tokens >= 1
                     else policy["max_output_tokens"]
                 )

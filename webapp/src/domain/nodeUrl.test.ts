@@ -4,7 +4,7 @@ beforeEach(() => { vi.stubEnv("VITE_RYN_NODE_BASE_URL", ""); });
 afterEach(() => { vi.unstubAllEnvs(); delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__; });
 it("keeps browser APIs same-origin", () => { expect(nodeApiUrl("/api/example/info")).toBe("/api/example/info"); });
 it("sends desktop node APIs to the managed node port rather than tauri.localhost", async () => {
-  const invoke = vi.fn().mockResolvedValue(18131);
+  const invoke = vi.fn(async (name: string) => name === "local_token" ? "test-launch-token" : 18131);
   (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = { invoke };
   await initializeDesktopConnection();
   expect(invoke.mock.calls[0]?.[0]).toBe("desktop_node_port");

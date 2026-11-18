@@ -47,7 +47,7 @@ def add_source(app, *, support="supported", models=None):
     return record, "local/" + sources.model_service_id(record, record["models"][0])
 
 
-def fake_upstream(monkeypatch, messages, *, json_only=False, finish_reason=None, usage="default"):
+def fake_upstream(monkeypatch, messages, *, json_only=False, finish_reason=None, usage="default", compaction_summary=None):
     requests = []
     returned_usage = {"prompt_tokens": 20, "completion_tokens": 10} if usage == "default" else usage
 
@@ -76,6 +76,9 @@ def fake_upstream(monkeypatch, messages, *, json_only=False, finish_reason=None,
     @contextmanager
     def urlopen(request, **kwargs):
         requests.append(json.loads(request.data))
+        if compaction_summary is not None and str(requests[-1]["messages"][-1].get("content") or "").startswith("Server compaction request:"):
+            yield Response({"role": "assistant", "content": compaction_summary})
+            return
         message = messages.pop(0)
         yield Response(message(requests[-1]) if callable(message) else message)
 
@@ -124,7 +127,7 @@ def test_empty_model_response_keeps_safe_usage_and_stop_reason_without_reasoning
     app, store = node
     _, model_id = add_source(app)
     bridge, tools, catalog = build_agent_integrations(app, store, store.home)
-    requests = fake_upstream(monkeypatch, [{"role": "assistant", "content": "", "reasoning_content": "PRIVATE_PROVIDER_THOUGHTS"}],
+    requests = fake_upstream(monkeypatch, [{"role": "assistant", "content": "", "reasoning_content": "PRIVATE_PROVIDER_THOUGHTS"}] * (2 if finish_reason == "length" else 1),
                              json_only=True, finish_reason=finish_reason)
     key = peer_box.load_or_create_messaging_key(store.home / "messaging.x25519")
     runtime = AgentRuntime(AgentStore(store.home / "empty-response-agent", key), bridge, tools, catalog)
@@ -132,11 +135,17 @@ def test_empty_model_response_keeps_safe_usage_and_stop_reason_without_reasoning
     task = runtime.create({"message": "Inspect model settings."})
     runtime.run_once()
     row = runtime.get(task["id"])
-    assert row["status"] == "queued" and len(requests) == 1, row.get("error")
+    assert row["status"] == ("failed" if finish_reason == "length" else "queued"), row.get("error")
+    assert len(requests) == (2 if finish_reason == "length" else 1)
+    if finish_reason == "length":
+        assert row["error"] == "agent_model_output_limit_reached"
+        assert [r["max_tokens"] for r in requests] == [8192, 16384]
+        assert sum(e["type"] == "output_limit_raised" for e in row["events"]) == 1
+        assert not any(e["type"] == "model_retry_scheduled" for e in row["events"])
     rejected = next(event for event in row["events"] if event["type"] == "model_response_rejected")
     assert rejected["finish_reason"] == ("length" if finish_reason == "length" else "unknown")
     assert rejected["usage"] == {"input_tokens": 20, "output_tokens": 10}
-    assert row["budget"]["lifetime"]["total_tokens"] == 30
+    assert row["budget"]["lifetime"]["total_tokens"] == (60 if finish_reason == "length" else 30)
     assert "PRIVATE_PROVIDER_THOUGHTS" not in json.dumps(row) and "private-upstream-stop" not in json.dumps(row)
 
 
@@ -375,6 +384,14 @@ def test_revalidated_changed_source_keeps_model_id_but_cannot_reuse_old_destinat
 def test_runtime_real_tools_preview_approval_change_and_verify(node, monkeypatch):
     app, store = node
     record, model_id = add_source(app, models=["model-a", "model-b"])
+    # This scripted scenario tests approval and verification, not checkpoint
+    # generation. Declare room for its two complete model-catalog receipts;
+    # unknown output now correctly reserves 8192 and compacts earlier.
+    sources = app.state.llm_agent_services["source_store"]
+    record.update(context_window=128000, context_window_mode="manual")
+    sources.save(record)
+    record.update(status="ready", tool_support=dict.fromkeys(record["models"], "supported"))
+    sources.save(record)
     store.personal_space.create("Integration space")
     store.personal_space.set_policy("space")
     model, tools, catalog = build_agent_integrations(app, store, store.home)
@@ -382,7 +399,9 @@ def test_runtime_real_tools_preview_approval_change_and_verify(node, monkeypatch
         call("ryn_list_models", call_id="inspect"),
         call("ryn_set_model_sharing", json.dumps({"model_id": model_id, "enabled": True}), call_id="change"),
         call("ryn_list_models", call_id="verify"), {"role": "assistant", "content": "Verified model-a shared; model-b private."},
-        passed_checker], json_only=True)
+        passed_checker], json_only=True,
+        # S12-I16 retains usage fields, so these real model listings can trigger compaction.
+        compaction_summary="Owner requested sharing only model-a. Inspection and approved sharing change succeeded; verify current sharing.")
     runtime = AgentRuntime(AgentStore(store.home / "agent-test", peer_box.load_or_create_messaging_key(store.home / "messaging.x25519")), model, tools, catalog)
     runtime.update_settings({"enabled": True, "model_id": model_id, "verify_text_responses": True})
     task = runtime.create({"message": "Inspect and share only model-a"})
@@ -402,7 +421,9 @@ def test_runtime_real_tools_preview_approval_change_and_verify(node, monkeypatch
     done = runtime.get(task["id"])
     assert done["status"] == "completed", done
     assert sources.read()[record["id"]]["shared_models"] == ["model-a"]
-    evidence = json.loads(requests[-2]["messages"][-2]["content"])
+    evidence = next(json.loads(message["content"]) for request in reversed(requests)
+                    for message in reversed(request["messages"])
+                    if message.get("role") == "tool" and message.get("tool_call_id") == "verify")
     assert [row["sharing"] for row in evidence["models"]] == [True, False]
     assert "secret-do-not-export" not in json.dumps(done)
     assert all(not request.get("stream") for request in requests)
@@ -496,10 +517,13 @@ def test_per_model_share_immediately_publishes_and_last_delete_withdraws(node):
         # The stable service IDs make the explicit model selection observable in discovery.
         advertised = [service for capacity in capacities for service in capacity.get("metadata", {}).get("llm_services", [])]
         assert [service["service"]["model_alias"] for service in advertised] == ["Owner API · model-b"]
+        advertised_hash = capacities[0]["record_hash"]
         assert not (store.home / "llm" / "publication-pending.json").exists()
         assert client.delete(f"/api/local/llm/sources/{record['id']}").json()["publication"] == "published"
         capacities = store.list_job_capacities(network_id="rynmesh-main", capability=CAPABILITY, max_age_hours=1)["capacities"]
-        assert not [service for capacity in capacities for service in capacity.get("metadata", {}).get("llm_services", [])]
+        # S13-I58: the last owner stops renewing; its signed record expires naturally.
+        assert CAPABILITY not in store._advertised_capacity.get("rynmesh-main", {})
+        assert capacities[0]["record_hash"] == advertised_hash
         assert not (store.home / "llm" / "publication-pending.json").exists()
 
 
@@ -508,27 +532,31 @@ def test_failed_last_model_withdrawal_retries_from_existing_publication_worker(n
     record, _ = add_source(app)
     store.personal_space.create("Test space")
     store.personal_space.set_policy("space")
-    original = store.register_job_capacity
+    original = store.registry.publish_job_capacity
     with TestClient(app) as client:
         assert client.put(f"/api/local/llm/sources/{record['id']}", json={"shared_models": ["model-a"]}).json()["publication"] == "published"
+        # A remaining owner requires an immediate signed replacement on withdrawal.
+        store.register_job_capacity(owner="manual", capabilities=["other-service"], metadata={"manual": True})
         failed_publications = []
-        def offline(**payload):
+        def offline(payload):
             failed_publications.append(payload)
             raise OSError("registry offline")
-        monkeypatch.setattr(store, "register_job_capacity", offline)
+        monkeypatch.setattr(store.registry, "publish_job_capacity", offline)
         assert client.delete(f"/api/local/llm/sources/{record['id']}").json()["publication"] == "pending"
         assert len(failed_publications) == 1
-        assert failed_publications[0]["metadata"]["llm_services"] == []
+        assert failed_publications[0].payload["capabilities"] == ["other-service"]
+        assert failed_publications[0].payload["metadata"] == {"manual": True}
         pending = store.home / "llm" / "publication-pending.json"
         assert pending.exists()
         capacities = store.list_job_capacities(network_id="rynmesh-main", capability=CAPABILITY, max_age_hours=1)["capacities"]
         advertised = [service for capacity in capacities for service in capacity.get("metadata", {}).get("llm_services", [])]
         assert [service["service"]["model_alias"] for service in advertised] == ["Owner API · model-a"]
-        monkeypatch.setattr(store, "register_job_capacity", original)
+        monkeypatch.setattr(store.registry, "publish_job_capacity", original)
         app.state.background_workers._specs["llm.publish-refresh"].run_once()
         assert not pending.exists()
         capacities = store.list_job_capacities(network_id="rynmesh-main", capability=CAPABILITY, max_age_hours=1)["capacities"]
         assert not [service for capacity in capacities for service in capacity.get("metadata", {}).get("llm_services", [])]
+        assert store.list_job_capacities()["capacities"][0]["capabilities"] == ["other-service"]
 
 
 def test_native_service_probe_persists_verified_capability_without_guessing(node, monkeypatch):
@@ -679,7 +707,7 @@ def test_cli_setup_uses_bridge_contract_without_implicit_tool_probe(node, monkey
     monkeypatch.setattr(CLIAgentAdapter, "health", lambda _: {"ok": True})
     monkeypatch.setattr(CLIAgentAdapter, "_command_path", lambda _: sys.executable)
     monkeypatch.setattr(CLIAgentAdapter, "chat", lambda *args, **kwargs: pytest.fail("setup must not run a tool probe"))
-    monkeypatch.setattr(cli_models, "list_models", lambda *args: [{"id": "untested", "name": "Untested", "default": True}])
+    monkeypatch.setattr(cli_models, "list_models", lambda *args, **kwargs: [{"id": "untested", "name": "Untested", "default": True}])
     monkeypatch.setattr(cli_models, "cached_models", cli_models.list_models)
     with TestClient(app) as client:
         result = client.post(f"/api/local/llm/cli-services/{kind}/setup")
@@ -691,6 +719,8 @@ def test_cli_setup_uses_bridge_contract_without_implicit_tool_probe(node, monkey
         # Older releases normalized this manifest before generating persistent
         # CLI bindings. Contract publication must not change that fingerprint.
         assert manager.manifest.capabilities == ["text-generation", "buffered-streaming"]
+    if kind != "claude_cli":
+        manager.adapter.refresh_inventory()
     binding = manager.adapter.binding_for_model("untested") if kind != "claude_cli" else None
     status = manager.public_status(cached_cli_models=True)
     assert ("client-tools" in status["service"]["capabilities"]) == (kind != "claude_cli")

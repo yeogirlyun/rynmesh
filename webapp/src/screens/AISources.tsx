@@ -33,6 +33,7 @@ export default function AISources() {
   const [device, setDevice] = useState(tr("本机"));
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [storageWarning, setStorageWarning] = useState("");
   const [modal, setModal] = useState<"choose" | "source" | "cli" | "native" | "manage" | null>(null);
   const [native, setNative] = useState<NativeModelStatus | null>(null);
   const [nativeLoadError, setNativeLoadError] = useState("");
@@ -59,9 +60,10 @@ export default function AISources() {
   const refresh = useCallback(async () => {
     try {
       const [data, cliData, services] = await Promise.all([
-        sourceRequest<{ sources: AISource[]; node_name: string; peer_id: string }>(), client.getCLIServices(), client.listLLMServices(),
+        sourceRequest<{ sources: AISource[]; node_name: string; peer_id: string; storage_warning?: { backup: string } | null }>(), client.getCLIServices(), client.listLLMServices(),
       ]);
       setSources(data.sources); setDevice(data.node_name); setCLI(cliData);
+      setStorageWarning(data.storage_warning?.backup ?? "");
       setPeers(services.filter(s => s.peer_id !== data.peer_id)); setError("");
       return data.sources;
     } catch (e) { setError((e as Error).message); return []; }
@@ -82,9 +84,9 @@ export default function AISources() {
     setBusy(true); setMessage("");
     try { await task(); } catch (e) { setMessage((e as Error).message); } finally { setBusy(false); }
   };
-  const sourceLimitsValid = Number.isInteger(draft.max_output_tokens) && draft.max_output_tokens >= 1 && draft.max_output_tokens <= 393216 &&
+  const sourceLimitsValid = (draft.max_output_tokens === null || (Number.isInteger(draft.max_output_tokens) && draft.max_output_tokens >= 1 && draft.max_output_tokens <= 393216)) &&
     (draft.context_window_mode === "auto" || (Number.isInteger(draft.context_window) && draft.context_window >= 256 &&
-      draft.context_window <= 2000000 && draft.max_output_tokens <= draft.context_window));
+      draft.context_window <= 2000000 && (draft.max_output_tokens === null || draft.max_output_tokens <= draft.context_window)));
   const payload = () => {
     const models = [...new Set(modelText.split(/[\n,]/).map(v => v.trim()).filter(Boolean))];
     const shared = draft.shared_models ?? (draft.sharing ? draft.models : []);
@@ -107,6 +109,7 @@ export default function AISources() {
   const openCLI = () => { setKind("codex_cli"); setMessage(""); setModal("cli"); };
   const addSourceButton = <button className="rf-btn rf-btn-p" onClick={() => { setMessage(""); setModal("choose"); }}><Plus size={17} /> {tr("添加模型")}</button>;
   return <div className="ais-page rf rd-svc rd-models">
+    {storageWarning && <p className="ais-error" role="alert">{tr("模型来源配置无法读取，已备份到 {{path}}，请重新添加", { path: storageWarning })}</p>}
     <header className="sv-head ais-header"><div className="sv-head-text"><h1 className="sv-title">{tr("Models")}</h1><p className="sv-lead">{tr("接入一次，自己使用，也可以分享给其他设备。")}</p></div><div className="sv-head-actions ais-header-actions"><button className="rf-btn" onClick={() => setModal("manage")}>{tr("管理来源")}</button>{!isEmpty && addSourceButton}</div></header>
     {isEmpty && <section className="ais-onboarding" aria-labelledby="ais-connect-title">
       <div className="ais-onboarding-heading"><div>
@@ -156,7 +159,7 @@ export default function AISources() {
           <button className="ais-secondary" disabled={busy} onClick={() => void perform(async () => { const result = await sourceRequest<{ models: string[] }>("/models", payload()); setFoundModels(result.models); setMessage(result.models.length ? tr("已读取模型，点击名称添加") : tr("未返回模型，请手动填写 ID")); })}><RefreshCw size={14} /> {tr("读取模型")}</button>
           {!!foundModels.length && <div className="ais-models">{foundModels.map(m => <button key={m} onClick={() => setModelText([...new Set([...modelText.split(/\n/).filter(Boolean), m])].join("\n"))}>{m}</button>)}</div>}
           <label className="ais-check"><input type="checkbox" checked={draft.context_window_mode === "auto"} onChange={e => setDraft({ ...draft, context_window_mode: e.target.checked ? "auto" : "manual" })} />{tr("自动使用已发现的模型上下文窗口")}</label>
-          <div className="ais-limits"><label className="ais-field">{tr("上下文窗口")}<input type="number" min={256} max={2000000} disabled={draft.context_window_mode === "auto"} placeholder={draft.context_window_mode === "auto" ? tr("按模型分别读取") : undefined} value={draft.context_window_mode === "auto" ? "" : draft.context_window} onChange={e => setDraft({ ...draft, context_window: Number(e.target.value), context_window_mode: "manual" })} /></label><label className="ais-field">{tr("最大输出 Token")}<input type="number" min={1} max={393216} value={draft.max_output_tokens} onChange={e => setDraft({ ...draft, max_output_tokens: Number(e.target.value) })} /></label></div>
+          <div className="ais-limits"><label className="ais-field">{tr("上下文窗口")}<input type="number" min={256} max={2000000} disabled={draft.context_window_mode === "auto"} placeholder={draft.context_window_mode === "auto" ? tr("按模型分别读取") : undefined} value={draft.context_window_mode === "auto" ? "" : draft.context_window} onChange={e => setDraft({ ...draft, context_window: Number(e.target.value), context_window_mode: "manual" })} /></label><label className="ais-field">{tr("最大输出 Token")}<input type="number" min={1} max={393216} placeholder={tr("按模型分别读取")} value={draft.max_output_tokens ?? ""} onChange={e => setDraft({ ...draft, max_output_tokens: e.target.value === "" ? null : Number(e.target.value), max_output_tokens_explicit: e.target.value !== "" })} /></label></div>
           {draft.context_window_mode === "auto" && <p className="ais-muted">{tr("读取模型列表后保存以应用容量。来源未提供容量时按未知处理并保守回退，可取消自动后手动填写。")}</p>}
           {!sourceLimitsValid && <p role="alert">{tr("上下文窗口和输出上限必须为有效范围内的整数，手动输出上限不能超过上下文窗口。")}</p>}
           <p className="ais-muted">{tr("当前工作台支持文本；图片、视频、PDF 不会因厂商支持而自动启用。")}</p>

@@ -122,8 +122,8 @@ def test_old_checkpoint_inside_tool_exchange_retains_the_whole_exchange():
 def test_malformed_checkpoint_or_ambiguous_call_ids_are_not_guessed():
     with pytest.raises(ValueError, match="checkpoint"):
         build_context([], [], checkpoint={"through": True, "content": "summary"})
-    with pytest.raises(ValueError, match="call ids"):
-        normalize_history([call("same", "same")])
+    normalized = normalize_history([call("same", "same")])
+    assert normalized == [{"role": "assistant", "content": "[tool calls with invalid ids omitted]", "context_epoch": 0}]
 
 
 def test_control_state_carries_todays_local_date_at_day_precision(monkeypatch):
@@ -227,4 +227,7 @@ def test_s03_i4_project_guidance_rules_live_in_user_instruction_layer(tmp_path):
         assert "AGENTS.md rules apply to their directory tree;" not in msg["content"]
 
     plain_layers = instruction_layers(row(), project_guidance=projects.guidance(row()))
-    assert all(msg["role"] == "developer" for msg in plain_layers)
+    # S12-I11: a non-project task gets only the environment block, never the project rules.
+    assert all(msg["role"] == "developer" for msg in plain_layers[:-1])
+    assert plain_layers[-1]["role"] == "user" and plain_layers[-1]["content"].startswith("<environment_context>")
+    assert "Git repository: do not commit" not in plain_layers[-1]["content"]

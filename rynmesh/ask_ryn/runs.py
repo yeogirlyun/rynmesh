@@ -92,7 +92,9 @@ class AskRunService:
                    "state": "queued", "cancel_requested": False, "last_checked": 0,
                    "body": {"task_id": task_id, "idempotency_key": task_id, "provider_peer_id": preview["provider_peer_id"],
                             "service_id": preview["service_id"], "network_id": row["networkId"], "transport": "auto", "response_mode": "stream-v1",
-                            "prompt": preview["prompt"], "prompt_format": preview.get("prompt_format", "text"),
+                            "prompt": preview["prompt"],
+                            "prompt_format": "text" if preview.get("chat") else preview.get("prompt_format", "text"),
+                            **({"chat": {**preview["chat"], "stream": True}} if preview.get("chat") else {}),
                             **({"cli_model": preview["cli_model"]} if preview.get("cli_model") else {}),
                             "service_review_token": intent["service_review_token"],
                             **({"ai_permission": intent["ai_permission"]} if "ai_permission" in intent else {}),
@@ -131,6 +133,8 @@ class AskRunService:
         update = {"status": status, "content": content}
         if result:
             update.update({target: result[source] for source, target in (("input_tokens", "inputTokens"), ("output_tokens", "outputTokens"), ("amount", "cost")) if result.get(source) is not None})
+            if isinstance(result.get("finish_reason"), str):
+                update["finishReason"] = result["finish_reason"]
         if all(message.get(key) == value for key, value in update.items()):
             return False
         message.update(update)
@@ -198,7 +202,9 @@ class AskRunService:
             self._message(data, run, "complete" if state == "succeeded" else "cancelled" if state == "cancelled" else "interrupted" if state == "interrupted" else "failed", content, result)
             self.history._write(envelope, data)
 
-    def run_once(self) -> WorkerRunResult:
+    def run_once(self, cancelled=None) -> WorkerRunResult:
+        if cancelled is not None and cancelled.is_set():
+            return WorkerRunResult()
         commands = self.commands()
         if commands is None:
             return WorkerRunResult()

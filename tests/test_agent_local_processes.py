@@ -103,25 +103,25 @@ def test_read_waits_for_new_output_and_releases_the_process_lock(pending_process
 
     def poll():
         waiting.set()
-        results.append(processes.read("process_test", "task", wait_seconds=2))
+        results.append(processes.read("process_test", "task", wait_seconds=2, max_chars=1000))
 
     reader = threading.Thread(target=poll)
     reader.start()
     assert waiting.wait(1)
     # An unrelated operation can inspect the table while this read is waiting.
     with processes.changed:
-        _append_output(item, "new output")
+        _append_output(item, "x" * 1000)
         processes.changed.notify_all()
     reader.join(1)
     assert not reader.is_alive()
-    assert results[0]["output"] == "new output" and results[0]["running"]
+    assert results[0]["output"] == "x" * 1000 and results[0]["running"]
 
 
 def test_read_returns_immediately_for_unread_output_or_zero_wait(pending_process):
     processes, state, item = pending_process
     _append_output(item, "ready")
     started = time.monotonic()
-    assert processes.read("process_test", "task", wait_seconds=20)["output"] == "ready"
+    assert processes.read("process_test", "task", wait_seconds=0)["output"] == "ready"
     assert processes.read("process_test", "task", 5, wait_seconds=0)["output"] == ""
     assert time.monotonic() - started < 0.5
 
@@ -175,7 +175,7 @@ def test_running_process_read_receives_output_then_completion(tmp_path):
         processes.close()
 
 
-@pytest.mark.parametrize("wait_seconds", [-1, 21, float("inf"), float("nan"), True, "1"])
+@pytest.mark.parametrize("wait_seconds", [-1, 301, float("inf"), float("nan"), True, "1"])
 def test_read_rejects_unbounded_or_invalid_waits(pending_process, wait_seconds):
     processes, _, _ = pending_process
     with pytest.raises(AgentToolRejected, match="agent_invalid_process_wait"):

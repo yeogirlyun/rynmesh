@@ -5,6 +5,7 @@ import copy
 import hashlib
 import json
 import threading
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -41,7 +42,7 @@ class CLISources:
         runtime = self.owner.runtime()
         data = runtime.store.read()
         row = self.owner.row(runtime, data, context)
-        if not data["settings"]["enabled"] or data["settings"]["permission_mode"] == "read_only" and context.get("_cli_write"):
+        if not data["settings"]["enabled"] or row["permission_mode"] == "read_only" and context.get("_cli_write"):
             raise AgentToolRejected("agent_permission_denied")
         return row
 
@@ -50,7 +51,11 @@ class CLISources:
             raise AgentToolRejected("agent_cli_configuration_unavailable")
         if not self.path.exists():
             return {}
-        value = json.loads(self.path.read_text(encoding="utf-8"))
+        try:
+            value = json.loads(self.path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            self.path.replace(self.path.with_name(f"cli-services.json.corrupt-{int(time.time())}"))
+            raise AgentToolRejected("agent_cli_configuration_invalid") from None
         if not isinstance(value, dict):
             raise AgentToolRejected("agent_cli_configuration_invalid")
         return value

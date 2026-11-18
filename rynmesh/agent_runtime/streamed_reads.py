@@ -2,7 +2,7 @@
 
 Workers never change model history, its in-flight marker, or the pending queue.
 The host must accept the final assistant before publish, and remove the consumed
-queue prefix itself. Abort joins every admitted worker, including on mismatch.
+queue prefix itself. Abort bounds its wait; abandoned reads cannot republish a discarded journal.
 """
 from __future__ import annotations
 
@@ -14,10 +14,11 @@ import uuid
 
 from jsonschema import ValidationError, validate
 
-from . import budget, diagnostic_log, output_policy, results, verification
-from .execution_policy import classify_operation, decide
+from . import budget, diagnostic_log, output_policy, results, tool_menu, verification
+from .execution_policy import classify_operation, decide, parallel_read
+from .read_reliability import check_shell_retry
 from .prompt import INTERNAL_NAMES
-from .protocol import digest, event, model_retry_authority, now, sanitized, task
+from .protocol import digest, event, model_retry_authority, now, sanitized, sanitized_tool_result, task
 from .store import AgentError, AgentToolRejected, encoded
 from .stream_tools import StreamToolCoordinator
 from .tool_dispatch import MAX_PARALLEL_TOOLS
@@ -42,12 +43,12 @@ def _safe_error(exc):
     return code if isinstance(exc, AgentError) and re.fullmatch(r"agent_[a-z0-9_]{1,100}", code) else "agent_operation_failed"
 
 
-def _tool_message(record, *, server_note=None):
-    result = record["result"]
-    shown = {**result, "server_note": server_note} if server_note and isinstance(result, dict) else result
+def _tool_message(record, *, notice=None):
     message = {"role": "tool", "tool_call_id": record["call"]["call_id"],
-               "content": encoded(shown).decode(),
+               "content": encoded(record["result"]).decode(),
                "context_epoch": record["stamp"]["context_epoch"]}
+    if notice:
+        message["host_budget_notice"] = notice
     if record.get("origin"):
         message["resource_origin"] = copy.deepcopy(record["origin"])
     return message
@@ -88,7 +89,7 @@ def _publish(row, records, *, recover=False):
     unanswered = [record for record in records if record["call"]["call_id"] not in answered]
     notice = budget.notice(row) if unanswered else None
     for index, record in enumerate(unanswered):
-        messages.append(_tool_message(record, server_note=notice if index == len(unanswered) - 1 else None))
+        messages.append(_tool_message(record, notice=notice if index == len(unanswered) - 1 else None))
         _apply_observed(row, record)
         event(row, "tool_result", tool=record["call"]["name"], call_id=record["call"]["call_id"],
               operation_id=record["call"]["operation_id"], result=record["result"], streamed=True)
@@ -110,16 +111,27 @@ class StreamedReads:
         self.raw, self.records = {}, None
         self.existing_ids = {call["id"] for message in selected.get("messages", [])
                              for call in message.get("tool_calls", [])}
-        self.coordinator = StreamToolCoordinator(self._normalize, self._admit, self._run,
-            parallel_reads=parallel_reads, internal_names=INTERNAL_NAMES, cancelled=cancelled)
+        self.normalized_ids = set(self.existing_ids)
+        self.coordinator = StreamToolCoordinator(
+            lambda raw: self._normalize(raw, index=self.coordinator.next_index), self._admit, self._run,
+            parallel_reads=parallel_reads, internal_names=INTERNAL_NAMES, cancelled=cancelled,
+            metadata=self.metadata, workspace_root=(self.stamp.get("local_execution") or {}).get("workspace_root"))
 
     def _event_context(self):
         return ({"source": "code_mode", "parent_operation_id": self.parent_operation_id}
                 if self.parent_operation_id else {"streamed": True})
 
-    def _normalize(self, raw):
-        call = normalize_tool_calls([raw], self.specs, existing_call_ids=self.existing_ids,
-                                    metadata=self.metadata, internal_names=INTERNAL_NAMES)[0]
+    def _normalize(self, raw, *, index=0):
+        call = normalize_tool_calls([raw], self.specs, existing_call_ids=self.normalized_ids,
+                                    metadata=self.metadata, internal_names=INTERNAL_NAMES,
+                                    rewrite_ids_seed=self.request_id, index_offset=index,
+                                    workspace_root=(self.stamp.get("local_execution") or {}).get("workspace_root"))[0]
+        self.normalized_ids.add(call["call_id"])
+        if "provider_call_id" in call:
+            # Keep the original wire item in the coordinator for reconciliation,
+            # but persist host ids for recovery of an interrupted read exchange.
+            self.raw[index] = {"id": call["call_id"], "type": "function",
+                               "function": {"name": call["name"], "arguments": call["arguments_json"]}}
         call["raw_arguments_sha256"] = call["arguments_sha256"]
         call["arguments_sha256"] = digest(call["arguments"])
         call.update(operation_id="op_" + uuid.uuid4().hex, internal=call["name"] in INTERNAL_NAMES,
@@ -140,7 +152,9 @@ class StreamedReads:
         if "extension_binding" in call and hasattr(self.runtime.tools, "verify_extension_binding"):
             self.runtime.tools.verify_extension_binding(call)
         meta = self.runtime.tools.metadata(call["name"])
-        if meta.get("effect") != "read" or meta.get("requires_explicit_approval"):
+        if meta.get("requires_explicit_approval") or (meta.get("effect") != "read" and not parallel_read(
+                call["name"], call["arguments"], meta,
+                workspace_root=(row.get("local_execution") or {}).get("workspace_root"))):
             return None
         if "extension_binding" in call and meta.get("extension_binding") != call["extension_binding"]:
             return None
@@ -154,6 +168,7 @@ class StreamedReads:
         assert_schema_unchanged(call, spec)
         validate(call["arguments"], spec["parameters"])
         self.runtime._validate_context(row, cheap_only=True, control_state=data)
+        check_shell_retry(row, call)
         if decide(call, meta, row, data["settings"]).action != "execute":
             return None
         if self.runtime._read_retries_exhausted(row, call):
@@ -206,13 +221,34 @@ class StreamedReads:
                 entry["parent_operation_id"] = self.parent_operation_id
                 flight.update(self._event_context())
             journal.append(entry)
+            if "provider_call_id" in call:
+                event(row, "tool_call_id_rewritten", call_id=call["call_id"],
+                      request_id=self.request_id, index=index, hidden=True)
             verification.record(row, call, "intent", now(), flight=flight)
             event(row, "tool_started", tool=call["name"], call_id=call["call_id"], operation_id=call["operation_id"],
                   effect="read", step=row["steps"], **self._event_context())
             return {**copy.deepcopy(entry), "meta": copy.deepcopy(meta), "classification": classification}
         return self.runtime.store.transaction(admit)
 
-    def _complete_record(self, prepared, outcome, elapsed):
+    def _complete_record(self, prepared, outcome, elapsed, *, invoked=False):
+        value = copy.deepcopy(outcome)
+        if len(encoded(value["result"])) > self.selected["limits"]["max_output_chars"]:
+            try:
+                reference = results.seal(self.runtime.store, self.selected, prepared["call"], value["result"])
+                if value.get("origin"):
+                    reference["resource_origin"] = value["origin"]
+                value.update(
+                    reference=reference,
+                    result=results.format_reference_result(
+                        prepared["call"]["name"],
+                        value["result"],
+                        reference,
+                        max_bytes=self.selected["limits"]["max_output_chars"],
+                        note="Full output is encrypted locally. Use ryn_read_result for bounded pages.",
+                    ),
+                )
+            except AgentError as exc:
+                value.update(failed=True, result={"error": _safe_error(exc), "not_executed": False, "no_mutation": True})
         def finish(data):
             row = data["tasks"].get(self.selected["id"])
             if row is None:
@@ -222,28 +258,13 @@ class StreamedReads:
             budget.settle(row, prepared["reservation_id"], elapsed_seconds=0 if self.parent_operation_id else elapsed)
             if entry is None or entry.get("state") == "complete":
                 return
-            value = copy.deepcopy(outcome)
-            if len(encoded(value["result"])) > self.selected["limits"]["max_output_chars"]:
-                try:
-                    reference = results.save(self.runtime.store, self.selected, prepared["call"], value["result"])
-                    if value.get("origin"):
-                        reference["resource_origin"] = value["origin"]
-                    row.setdefault("result_refs", []).append(reference)
-                    value.update(
-                        reference=reference,
-                        result=results.format_reference_result(
-                            prepared["call"]["name"],
-                            value["result"],
-                            reference,
-                            max_bytes=self.selected["limits"]["max_output_chars"],
-                            note="Full output is encrypted locally. Use ryn_read_result for bounded pages.",
-                        ),
-                    )
-                except AgentError as exc:
-                    value.update(failed=True, result={"error": _safe_error(exc), "not_executed": False, "no_mutation": True})
+            if value.get("reference"):
+                row.setdefault("result_refs", []).append(value["reference"])
             if value["failed"]:
                 self.runtime._note_last_read_attempt(row, prepared["call"], value["result"])
             entry.update(value, state="complete")
+            if invoked:
+                tool_menu.record_usage(row, [prepared["call"]["name"]], epoch=self.stamp["context_epoch"])
             verification.record(row, prepared["call"], "failed" if value["failed"] else "confirmed", now(), result=value["result"])
             event(row, "tool_execution_completed", tool=prepared["call"]["name"], call_id=prepared["call"]["call_id"],
                   operation_id=prepared["call"]["operation_id"], result=value["result"],
@@ -256,8 +277,10 @@ class StreamedReads:
 
     def _run(self, prepared):
         started, deferred = time.monotonic(), {}
+        invoked = False
         call = prepared["call"]
-        deadline = float("inf") if self.parent_operation_id else started + prepared["reserved_seconds"]
+        deadline = started + (min(self.selected["limits"]["max_seconds"], 600)
+                              if self.parent_operation_id else prepared["reserved_seconds"])
         def cancelled():
             if self.cancelled() or (prepared.get("_nested_cancelled") and prepared["_nested_cancelled"]()):
                 cancelled.reason = getattr(self.cancelled, "reason", "agent_cancelled")
@@ -281,12 +304,13 @@ class StreamedReads:
                     context["extension_binding"] = copy.deepcopy(call["extension_binding"])
                 options["context"] = context
             with diagnostic_log.context_scope(task_id=self.selected["id"], operation_id=call["operation_id"]):
-                result = sanitized(self.runtime._execute_business_tool(self.selected, call["name"], copy.deepcopy(call["arguments"]), **options))
+                invoked = True
+                result = sanitized_tool_result(self.runtime._execute_business_tool(self.selected, call["name"], copy.deepcopy(call["arguments"]), **options))
             outcome = {"result": result, "failed": False, "deferred": deferred,
                        "origin": copy.deepcopy(result.get("origin")) if isinstance(result, dict) and prepared["meta"].get("scope_context_supported") else None}
         except Exception as exc:
             extra = {}
-            if isinstance(exc, AgentToolRejected):
+            if isinstance(exc, AgentError):
                 if getattr(exc, "correction", None):
                     extra["correction"] = sanitized(exc.correction[:1600])
                 if getattr(exc, "details", None):
@@ -296,7 +320,7 @@ class StreamedReads:
             outcome["result"].update(extra)
         prepared["_outcome"] = outcome
         prepared["_elapsed"] = max(0.0, time.monotonic() - started)
-        self._complete_record(prepared, outcome, prepared["_elapsed"])
+        self._complete_record(prepared, outcome, prepared["_elapsed"], invoked=invoked)
         return outcome
 
     def on_event(self, item):
@@ -307,9 +331,19 @@ class StreamedReads:
     def _collect(self, records):
         if self.records is None:
             self.records = []
+            if not records:
+                return []
+            def snapshot():
+                try:
+                    current = self.runtime.store.read()["tasks"].get(self.selected["id"], {})
+                    return {entry["call"]["operation_id"]: entry
+                            for entry in current.get("stream_read_journal", [])}, None
+                except Exception as exc:
+                    return {}, _safe_error(exc)
+            entries, read_error = snapshot()
             for record in records:
                 prepared = record["admission"]
-                persistence_error = None
+                persistence_error = read_error
                 if record["error"] is not None:
                     outcome = prepared.get("_outcome") or {"result": {"error": "agent_stream_read_interrupted", "no_mutation": True},
                                                            "failed": True, "deferred": {}, "origin": None}
@@ -317,12 +351,10 @@ class StreamedReads:
                         self._complete_record(prepared, outcome, prepared.get("_elapsed", 0.0))
                     except Exception as exc:
                         persistence_error = _safe_error(exc)
-                try:
-                    current = self.runtime.store.read()["tasks"].get(self.selected["id"], {})
-                except Exception as exc:
-                    current, persistence_error = {}, _safe_error(exc)
-                entry = next((entry for entry in current.get("stream_read_journal", [])
-                              if entry["call"]["operation_id"] == prepared["call"]["operation_id"]), None)
+                    entries, read_error = snapshot()
+                    if read_error:
+                        persistence_error = read_error
+                entry = entries.get(prepared["call"]["operation_id"])
                 if entry is not None and entry.get("state") == "complete":
                     self.records.append(copy.deepcopy(entry))
                 else:

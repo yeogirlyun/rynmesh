@@ -261,7 +261,12 @@ def test_read_only_shell_exception_and_timeout_produce_error_receipt_and_continu
     assert shell_receipts[0]["status"] == "failed"
     assert shell_receipts[0]["result"] == {"error": "agent_read_interrupted", "not_executed": False, "no_mutation": True}
     assert shell_receipts[1]["status"] == "failed"
-    assert shell_receipts[1]["result"] == {"error": "agent_shell_timeout", "not_executed": False, "no_mutation": True}
+    from rynmesh.agent_runtime.store import REJECTION_CORRECTIONS
+    timed_out = shell_receipts[1]
+    raw_output = tools.local.ledger_factory().get(timed_out["operation_id"])["result"]["output"]
+    assert timed_out["result"] == {"error": "agent_shell_timeout", "not_executed": False, "no_mutation": True,
+        "correction": REJECTION_CORRECTIONS["agent_shell_timeout"],
+        "details": {"output": raw_output[-4000:], "stop_reason": "timeout", "timeout_seconds": 5}}
     for r in shell_receipts:
         ledger_entry = tools.local.ledger_factory().get(r["operation_id"])
         assert ledger_entry["status"] == "failed"
@@ -273,7 +278,16 @@ def test_read_only_shell_exception_and_timeout_produce_error_receipt_and_continu
     assert any("agent_shell_timeout" in str(m.get("content", "")) for m in requests[2]["messages"])
 
 
+def _serial_read_shell(monkeypatch):
+    """These tests probe the queued (serial) read-shell recovery path; S06-I1 streams read-only shell by default."""
+    from rynmesh.agent_runtime import stream_tools
+    real = stream_tools.parallel_read
+    monkeypatch.setattr(stream_tools, "parallel_read",
+        lambda name, *a, **k: False if name == "ryn_shell_execute" else real(name, *a, **k))
+
+
 def test_restart_during_read_only_shell_settles_error_receipt_and_continues(node, monkeypatch, tmp_path):
+    _serial_read_shell(monkeypatch)
     runtime, store, bridge, tools, catalog, _ = _make_node_runtime(node, tmp_path, "restart-read-shell")
     (tmp_path / "info.txt").write_text("ok=1\n", encoding="utf-8")
     read_cmd = "Get-Location" if os.name == "nt" else "pwd"
@@ -710,6 +724,7 @@ def test_legacy_migrated_task_read_shell_restart_recovery(node, tmp_path):
 
 
 def test_read_recovery_rejects_still_running_or_cleanup_exception_and_retains_reserve(node, monkeypatch, tmp_path):
+    _serial_read_shell(monkeypatch)
     from rynmesh.agent_runtime import verification
     from rynmesh.agent_runtime.execution_policy import classify_operation
     from rynmesh.agent_runtime.protocol import digest, model_retry_authority, now

@@ -6,7 +6,10 @@ import hashlib
 import json
 import uuid
 
+from .reasoning import EFFORTS
+
 FIELDS = {
+    "supported_reasoning_efforts",
     "context_window",
     "max_output_tokens",
     "request_defaults",
@@ -29,50 +32,50 @@ KNOWN_VENDOR_IMAGE_INPUT: tuple[str, ...] = ()
 DESTINATION_FIELDS = {"context_window", "max_output_tokens", "request_defaults"}
 FALLBACK_CONTEXT_WINDOW = 32768
 KNOWN_VENDOR_CONTEXT_WINDOWS = (
-    ("deepseek-", 1048576),
-    ("glm-5.3", 1048576),
-    ("glm-5", 202752),
-    ("glm-4", 128000),
-    ("gpt-6.1", 872000),
-    ("gpt-6", 872000),
-    ("gpt-5.6", 872000),
-    ("gpt-5", 272000),
-    ("gpt-4.1", 1047576),
-    ("gpt-4o", 128000),
-    ("gpt-oss-", 131072),
-    ("o1-", 200000),
-    ("o3-", 200000),
-    ("o4-", 200000),
-    ("gemini-", 1048576),
-    ("claude-opus-5", 1000000),
-    ("claude-sonnet-5", 1000000),
-    ("claude-", 200000),
-    ("qwen-", 128000),
-    ("qwen2.5", 128000),
-    ("qwen3", 128000),
-    ("kimi-", 128000),
-    ("moonshot-", 128000),
+    ("deepseek-", 1048576, False),
+    ("glm-5.3", 1048576, True),
+    ("glm-5", 202752, False),
+    ("glm-4", 128000, False),
+    ("gpt-6.1", 872000, True),
+    ("gpt-6", 872000, False),
+    ("gpt-5.6", 872000, True),
+    ("gpt-5", 272000, False),
+    ("gpt-4.1", 1047576, True),
+    ("gpt-4o", 128000, True),
+    ("gpt-oss-", 131072, False),
+    ("o1-", 200000, False),
+    ("o3-", 200000, False),
+    ("o4-", 200000, False),
+    ("gemini-", 1048576, False),
+    ("claude-opus-5", 1000000, True),
+    ("claude-sonnet-5", 1000000, True),
+    ("claude-", 200000, False),
+    ("qwen-", 128000, False),
+    ("qwen2.5", 128000, False),
+    ("qwen3", 128000, False),
+    ("kimi-", 128000, False),
+    ("moonshot-", 128000, False),
 )
 KNOWN_VENDOR_MAX_OUTPUT_TOKENS = (
-    ("deepseek-", 393216),
-    ("glm-5", 131072),
-    ("glm-4", 128000),
-    ("gpt-6", 128000),
-    ("gpt-5", 128000),
-    ("gpt-4.1", 32768),
-    ("gpt-4o", 16384),
-    ("gpt-oss-", 131072),
-    ("o1-", 100000),
-    ("o3-", 100000),
-    ("o4-", 100000),
-    ("gemini-", 65536),
-    ("claude-opus-5", 128000),
-    ("claude-sonnet-5", 128000),
-    ("claude-", 64000),
-    ("qwen3", 65536),
-    ("qwen-", 32768),
-    ("kimi-", 65536),
-    ("moonshot-", 65536),
+    ("deepseek-", 393216, False),
+    ("glm-5", 131072, False),
+    ("glm-4", 128000, False),
+    ("gpt-6", 128000, False),
+    ("gpt-5", 128000, False),
+    ("gpt-4.1", 32768, True),
+    ("gpt-4o", 16384, True),
+    ("gpt-oss-", 131072, False),
+    ("o1-", 100000, False),
+    ("o3-", 100000, False),
+    ("o4-", 100000, False),
+    ("gemini-", 65536, False),
+    ("claude-opus-5", 128000, True),
+    ("claude-sonnet-5", 128000, True),
+    ("claude-", 64000, False),
+    ("qwen3", 65536, False),
+    ("qwen-", 32768, False),
+    ("kimi-", 65536, False),
+    ("moonshot-", 65536, False),
 )
 KNOWN_VENDOR_MAX_CONCURRENT = (
     ("deepseek-flash", 2500),
@@ -83,18 +86,47 @@ KNOWN_VENDOR_MAX_CONCURRENT = (
 )
 
 
-def _known_vendor_value(model, table) -> int | None:
+def _known_vendor_match(model, table):
     if not isinstance(model, str) or not model:
         return None
     normalized = model.strip().lower().rsplit("/", 1)[-1]
-    for prefix, value in table:
+    for entry in table:
+        prefix, value = entry[:2]
         if normalized.startswith(prefix):
-            return value
+            return value, len(entry) == 3 and entry[2] and normalized == prefix
     return None
 
 
-def _known_vendor_context_window(model) -> int | None:
+def _known_vendor_value(model, table) -> int | None:
+    match = _known_vendor_match(model, table)
+    return match[0] if match is not None else None
+
+
+def known_vendor_context_metadata(model):
+    match = _known_vendor_match(model, KNOWN_VENDOR_CONTEXT_WINDOWS)
+    if match is None:
+        return None
+    value, exact = match
+    return {"context_window": value, "context_window_known": bool(exact),
+            "context_window_basis": "vendor_family_default" if exact else "vendor_family_guess"}
+
+
+def known_vendor_output_metadata(model):
+    match = _known_vendor_match(model, KNOWN_VENDOR_MAX_OUTPUT_TOKENS)
+    if match is None:
+        return None
+    value, exact = match
+    return {"max_output_tokens": value if exact else min(value, 16384), "max_output_tokens_known": bool(exact),
+            "max_output_basis": "vendor_family_default" if exact else "vendor_family_guess"}
+
+
+def known_vendor_context_window(model) -> int | None:
+    """Return the existing family default; deployments may declare a smaller window."""
     return _known_vendor_value(model, KNOWN_VENDOR_CONTEXT_WINDOWS)
+
+
+# Existing API/CLI callers still use the private name.
+_known_vendor_context_window = known_vendor_context_window
 
 
 def _known_vendor_max_output_tokens(model) -> int | None:
@@ -119,38 +151,62 @@ def context_metadata(record, model=None, *, overrides=True):
     window = metadata.get("context_window")
     if type(window) is int and 256 <= window <= 2000000:
         return {"context_window": window, "context_window_basis": "provider_model_metadata", "context_window_known": True}
-    inferred = _known_vendor_context_window(model)
+    inferred = known_vendor_context_metadata(model)
     if inferred is not None:
-        return {"context_window": inferred, "context_window_basis": "vendor_family_default", "context_window_known": True}
+        return inferred
     return {"context_window": FALLBACK_CONTEXT_WINDOW, "context_window_basis": "unknown_fallback", "context_window_known": False}
+
+
+def output_metadata(record, model, *, overrides=True):
+    manual = record.get("model_settings", {}).get(model, {}).get("overrides", {}) if overrides else {}
+    if "max_output_tokens" in manual:
+        return {"max_output_tokens": manual["max_output_tokens"], "max_output_tokens_known": True,
+                "max_output_basis": "model_override"}
+    window = context_metadata(record, model, overrides=overrides)["context_window"]
+    metadata = record.get("model_metadata", {}).get(model, {})
+    meta_output = metadata.get("max_output_tokens") if isinstance(metadata, dict) else None
+    vendor = known_vendor_output_metadata(model)
+    vendor_output = vendor["max_output_tokens"] if vendor else None
+    source_output = record.get("max_output_tokens")
+    explicit_output = record.get("max_output_tokens_explicit")
+    basis = "unknown_fallback"
+    if explicit_output is True and type(source_output) is int:
+        max_output = source_output
+        basis = "source_configuration"
+    elif explicit_output is False:
+        if type(meta_output) is int and 1 <= meta_output <= min(393216, window):
+            max_output = meta_output
+            basis = "provider_model_metadata"
+        elif vendor_output is not None and vendor_output <= window:
+            max_output = vendor_output
+            basis = vendor["max_output_basis"]
+        else:
+            max_output = source_output if type(source_output) is int else 4096
+            if type(source_output) is int and source_output != 4096:
+                basis = "legacy_source_configuration"
+    else:
+        if type(source_output) is int and source_output != 4096:
+            max_output = source_output
+            basis = "legacy_source_configuration"
+        elif type(meta_output) is int and 1 <= meta_output <= min(393216, window):
+            max_output = meta_output
+            basis = "provider_model_metadata"
+        elif vendor_output is not None and vendor_output <= window:
+            max_output = vendor_output
+            basis = vendor["max_output_basis"]
+        else:
+            max_output = source_output if type(source_output) is int else 4096
+    if basis == "unknown_fallback":
+        context = context_metadata(record, model, overrides=overrides)
+        max_output = min(16384, context["context_window"] // 4) if context["context_window_known"] else 8192
+    return {"max_output_tokens": max_output, "max_output_tokens_known": basis not in {"unknown_fallback", "vendor_family_guess"},
+            "max_output_basis": basis}
 
 
 def defaults(record, model=None):
     model = model if model is not None else next(iter(record.get("models", [])), "")
     window = context_metadata(record, model, overrides=False)["context_window"]
-    metadata = record.get("model_metadata", {}).get(model, {})
-    meta_output = metadata.get("max_output_tokens") if isinstance(metadata, dict) else None
-    vendor_output = _known_vendor_max_output_tokens(model)
-    source_output = record.get("max_output_tokens")
-    explicit_output = record.get("max_output_tokens_explicit")
-    if explicit_output is True and type(source_output) is int:
-        max_output = source_output
-    elif explicit_output is False:
-        if type(meta_output) is int and 1 <= meta_output <= min(393216, window):
-            max_output = meta_output
-        elif vendor_output is not None and vendor_output <= window:
-            max_output = vendor_output
-        else:
-            max_output = source_output if type(source_output) is int else 4096
-    else:
-        if type(source_output) is int and source_output != 4096:
-            max_output = source_output
-        elif type(meta_output) is int and 1 <= meta_output <= min(393216, window):
-            max_output = meta_output
-        elif vendor_output is not None and vendor_output <= window:
-            max_output = vendor_output
-        else:
-            max_output = source_output if type(source_output) is int else 4096
+    max_output = output_metadata(record, model, overrides=False)["max_output_tokens"]
     source_idle = record.get("stream_idle_seconds")
     source_max_request = record.get("max_request_seconds")
     source_stream_retries = record.get("stream_max_retries")
@@ -179,6 +235,12 @@ def defaults(record, model=None):
 def validate(values):
     if not isinstance(values, dict) or set(values) - FIELDS:
         raise ValueError("model_configuration_invalid")
+    if "supported_reasoning_efforts" in values:
+        levels = values["supported_reasoning_efforts"]
+        if (not isinstance(levels, list) or len(levels) > 8
+                or any(not isinstance(level, str) or level not in EFFORTS for level in levels)
+                or len(set(levels)) != len(levels)):
+            raise ValueError("model_supported_reasoning_efforts_invalid")
     for key, low, high in (
         ("context_window", 256, 2000000),
         ("max_output_tokens", 1, 393216),
@@ -209,10 +271,15 @@ def validate(values):
         raise ValueError("model_temperature_invalid")
     if "top_p" in request and (type(request["top_p"]) not in (int, float) or not 0 < request["top_p"] <= 1):
         raise ValueError("model_top_p_invalid")
-    if "reasoning_effort" in request and (not isinstance(request["reasoning_effort"], str) or request["reasoning_effort"] not in {"none", "minimal", "low", "medium", "high", "xhigh", "max"}):
+    if "reasoning_effort" in request and (not isinstance(request["reasoning_effort"], str) or request["reasoning_effort"] not in EFFORTS):
         raise ValueError("model_reasoning_effort_invalid")
-    if "thinking" in request and request["thinking"] not in ({"type": "enabled"}, {"type": "disabled"}):
-        raise ValueError("model_thinking_invalid")
+    if "thinking" in request:
+        thinking = request["thinking"]
+        if thinking not in ({"type": "enabled"}, {"type": "disabled"}):
+            if (not isinstance(thinking, dict) or set(thinking) != {"type", "budget_tokens"}
+                    or thinking["type"] != "enabled" or type(thinking["budget_tokens"]) is not int
+                    or not 1024 <= thinking["budget_tokens"] < values.get("max_output_tokens", 393216)):
+                raise ValueError("model_thinking_invalid")
     if values.get("max_output_tokens", 1) > values.get("context_window", 2000000):
         raise ValueError("model_output_exceeds_context")
     return copy.deepcopy(values)
@@ -221,7 +288,7 @@ def validate(values):
 def effective(record, model):
     row = record.get("model_settings", {}).get(model, {})
     overrides = row.get("overrides", {})
-    return {**defaults(record, model), **copy.deepcopy(overrides)}
+    return {**defaults(record, model), **copy.deepcopy(overrides), **output_metadata(record, model)}
 
 
 def reconcile(record, old):
@@ -234,12 +301,12 @@ def reconcile(record, old):
         prior = old.get("model_settings", {}).get(model, {})
         proposed = record.get("model_settings", {}).get(model, prior)
         overrides = validate(proposed.get("overrides", {}))
-        values = {**defaults(record, model), **overrides}
+        values = {key: value for key, value in effective(record, model).items() if key in FIELDS}
         # Existing source defaults may contain vendor-specific historical values.
         # Migration must not make the node unloadable; new per-model overrides
         # are strictly validated above and by the owner configuration endpoint.
         validate({k: v for k, v in values.items() if k != "request_defaults"})
-        prior_values = effective(old, model)
+        prior_values = {key: value for key, value in effective(old, model).items() if key in values}
         exists = model in old.get("models", [])
         inference_same = exists and common_same and all(values[k] == prior_values[k] for k in DESTINATION_FIELDS)
         rules_same = inference_same and values == prior_values and (model in record.get("shared_models", [])) == (model in old.get("shared_models", []))

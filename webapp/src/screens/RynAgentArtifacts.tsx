@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Check, ChevronDown, Copy, Download, ExternalLink, FileText, FolderOpen, Image as ImageIcon, File as FileIcon, RefreshCw, Sheet, TriangleAlert } from "lucide-react";
-import { AgentAPIError, agentReadBackoff, isTransientAgentReadError, agentFileUrl, agentTaskState, isAgentActive, rynAgent, type AgentArtifact, type AgentArtifactListing, type AgentFileArtifact, type AgentTask } from "../domain/rynAgent";
+import { AgentAPIError, agentReadBackoff, isTransientAgentReadError, agentFileUrl, agentTaskState, isAgentActive, rynAgent, type AgentArtifact, type AgentArtifactListing, type AgentFileArtifact, type AgentInventoryNotice, type AgentTask } from "../domain/rynAgent";
 import { isTauriDesktop } from "../domain/nodeUrl";
 import { NasPreview } from "../personal/NasPreview";
 import { decodeAgentFileText, isOfficePreview, type OfficePreviewLoader, readAgentFilePreview } from "../domain/agentFilePreview";
@@ -18,6 +18,8 @@ export function latestFileToolResultSeq(task: Pick<AgentTask, "events">): number
   return task.events.filter(e => e.type === "tool_result" && e.tool && FILE_TOOLS.has(e.tool)).at(-1)?.seq;
 }
 const EMPTY_FILES: AgentFileArtifact[] = [];
+const EXECUTABLE = new Set([".bat", ".cmd", ".ps1", ".vbs", ".js", ".jse", ".wsf", ".hta", ".exe", ".msi",
+  ".lnk", ".scr", ".com", ".sh", ".command", ".app", ".jar", ".py", ".pyw"]);
 // A listing error that is not a connection or server failure is retried this often, then left to Refresh.
 const ARTIFACT_PERSISTENT_RETRY_MS = 15000;
 const ARTIFACT_PERSISTENT_RETRIES = 4;
@@ -48,6 +50,7 @@ const TaskTurnDeliverablesContext = createContext<{
   task: AgentTask;
   maxTurnIndex: number;
   deliverablesByTurn: Map<number, AgentFileArtifact[]>;
+  inventoryByTurn?: Record<string, AgentInventoryNotice>;
   openFile: (file: AgentFileArtifact) => void;
 } | null>(null);
 
@@ -104,6 +107,7 @@ function FileCard({ task, file, onOpen }: { task: AgentTask; file: AgentFileArti
   }, [menuOpen, positionMenu]);
   const openable = fileAvailable(file);
   const onDisk = file.status !== "missing";
+  const executable = EXECUTABLE.has(file.name.slice(file.name.lastIndexOf(".")).toLowerCase());
   const extension = file.name.split(".").pop()?.toLowerCase();
   const format = /^(xlsx?|csv)$/.test(extension || "") ? "Excel" : extension === "docx" ? "Word" : extension === "pptx" ? "PowerPoint" : extension?.toUpperCase();
   const Icon = format === "Excel" ? Sheet : file.preview === "image" ? ImageIcon : file.preview === "text" || format === "Word" ? FileText : FileIcon;
@@ -130,7 +134,9 @@ function FileCard({ task, file, onOpen }: { task: AgentTask; file: AgentFileArti
         {openable && <span className="ra-file-hover-hint" aria-hidden="true">{zh ? "打开预览 · " : "Open preview · "}</span>}
         <span>{format}{file.bytes ? ` · ${size(file.bytes)}` : ""}{file.revisions > 1 ? ` · ${t("fileVersions", { count: file.revisions })}` : ""}</span>
       </small>
-      {file.status !== "current" ? <small className="ra-file-warning"><TriangleAlert size={13} />{t(`fileStatus_${file.status}`)}</small>
+      {file.status !== "current" ? <small className="ra-file-warning"><TriangleAlert size={13} />{file.status === "too_large"
+        ? (zh ? `超过 ${(file.limit_bytes ?? 256 * 1048576) / 1048576} MiB，不能预览或传输` : `Exceeds ${(file.limit_bytes ?? 256 * 1048576) / 1048576} MiB; cannot preview or transfer`)
+        : t(`fileStatus_${file.status}`)}</small>
         : null}
       {saveError && <small role="alert" className="ra-file-warning">{t("artifactReadError")}</small>}
       {copied && <small role="status">{t("filePathCopied")}</small>}
@@ -143,8 +149,8 @@ function FileCard({ task, file, onOpen }: { task: AgentTask; file: AgentFileArti
         <summary aria-label={t("openWaysNamed", { name: file.name })}>{t("openWays")}<ChevronDown size={13} /></summary>
         {menuOpen && createPortal(<div ref={panel} className="ra-file-open-options ra-file-open-floating" style={menuPosition}>
           <button disabled={!openable} onClick={() => { menu.current?.removeAttribute("open"); onOpen(file); }}><FileText size={15} />{t("previewFile")}</button>
-          {isTauriDesktop() ? <><button disabled={!onDisk} onClick={() => void action(() => rynAgent.openFile(task.id, file.id, "open"))}><ExternalLink size={15} />{t("openDefaultApp")}</button>
-            <button disabled={!onDisk} onClick={() => void action(() => rynAgent.openFile(task.id, file.id, "reveal"))}><FolderOpen size={15} />{t("revealFile")}</button></>
+          {isTauriDesktop() ? <><button disabled={!onDisk} onClick={() => void action(() => rynAgent.openFile(task.id, file.id, executable ? "reveal" : "open"))}>{executable ? <FolderOpen size={15} /> : <ExternalLink size={15} />}{t(executable ? "revealFile" : "openDefaultApp")}</button>
+            {!executable && <button disabled={!onDisk} onClick={() => void action(() => rynAgent.openFile(task.id, file.id, "reveal"))}><FolderOpen size={15} />{t("revealFile")}</button>}</>
             : openable && <a href={agentFileUrl(task.id, file)} target="_blank" rel="noopener noreferrer" aria-label={t("openInNewTabNamed", { name: file.name })}><ExternalLink size={15} />{t("openInNewTab")}</a>}
           <button disabled={!openable} aria-label={t("downloadNamed", { name: file.name })} onClick={() => void action(() => saveCopy(task, file))}><Download size={15} />{t("downloadFile")}</button>
           <button onClick={() => void action(async () => { await navigator.clipboard.writeText(path); setCopied(true); })}><Copy size={15} />{t("copyFilePath")}</button>
@@ -156,15 +162,27 @@ function FileCard({ task, file, onOpen }: { task: AgentTask; file: AgentFileArti
   </div>;
 }
 
+function InventoryNotice({ notice }: { notice?: AgentInventoryNotice }) {
+  const { i18n } = useTranslation("rynAgent");
+  const zh = i18n.language.startsWith("zh");
+  if (!notice?.incomplete_inventory && !notice?.additional_changes) return null;
+  return <div className="ra-file-warning" role="status" aria-live="polite">
+    {notice.incomplete_inventory && <p>{zh ? "命令产生的文件可能未列全" : "Files produced by the command may be missing from this list"}</p>}
+    {!!notice.additional_changes && <p>{zh ? `另有 ${notice.additional_changes} 个文件变化` : `${notice.additional_changes} more file changes`}</p>}
+  </div>;
+}
+
 export function TurnDeliverables({ turnIndex }: { turnIndex: number }) {
   const ctx = useContext(TaskTurnDeliverablesContext);
   const { t } = useTranslation("rynAgent");
   if (!ctx || turnIndex >= ctx.maxTurnIndex) return null;
-  const turnFiles = ctx.deliverablesByTurn.get(turnIndex);
-  if (!turnFiles?.length) return null;
+  const turnFiles = ctx.deliverablesByTurn.get(turnIndex) || EMPTY_FILES;
+  const notice = ctx.inventoryByTurn?.[String(turnIndex)];
+  if (!turnFiles.length && !notice?.incomplete_inventory && !notice?.additional_changes) return null;
   const available = turnFiles.filter(f => f.status !== "missing").length;
   return <section className="ra-files ra-turn-files" aria-label={t("resultFiles")}>
-    {!available && <div className="ra-files-head"><span role="status" aria-live="polite"><TriangleAlert size={15} />{t("filesUnavailable", { count: 0 })}</span></div>}
+    <InventoryNotice notice={notice} />
+    {!!turnFiles.length && !available && <div className="ra-files-head"><span role="status" aria-live="polite"><TriangleAlert size={15} />{t("filesUnavailable", { count: 0 })}</span></div>}
     {turnFiles.map(item => <FileCard key={item.id} task={ctx.task} file={item} onOpen={ctx.openFile} />)}
   </section>;
 }
@@ -280,7 +298,8 @@ export function TaskArtifacts({ task, maxTurnIndex = 0, children }: { task: Agen
     }
     return map;
   }, [resultFiles, maxTurnIndex]);
-  const turnContext = useMemo(() => ({ task, maxTurnIndex, deliverablesByTurn, openFile }), [task, maxTurnIndex, deliverablesByTurn, openFile]);
+  const turnContext = useMemo(() => ({ task, maxTurnIndex, deliverablesByTurn, openFile, inventoryByTurn: listing?.inventory_by_turn }), [task, maxTurnIndex, deliverablesByTurn, openFile, listing?.inventory_by_turn]);
+  const currentInventory = listing?.inventory_by_turn ? listing.inventory_by_turn[String(maxTurnIndex)] : listing || undefined;
   const currentTurnFiles = resultFiles.filter(item => fileTurnIndex(item, maxTurnIndex) === maxTurnIndex);
   const deliverables = useMemo(() => deduplicateByName(currentTurnFiles.filter(item => item.role === "deliverable")), [currentTurnFiles]);
   const deliverableNames = useMemo(() => new Set(deliverables.map(item => item.name.trim().toLowerCase())), [deliverables]);
@@ -312,6 +331,7 @@ export function TaskArtifacts({ task, maxTurnIndex = 0, children }: { task: Agen
   }, [chosenFile, chosen]);
   return <AgentFileContext.Provider value={fileContext}><TaskTurnDeliverablesContext.Provider value={turnContext}>
     {children}
+    <InventoryNotice notice={currentInventory} />
     {showResultFiles && <section className="ra-files" aria-label={t(finished ? "resultFiles" : "filesSoFar")}>
       {error && items.length === 0 && <p role="alert">{t("artifactListError")} <button onClick={() => setReload(n => n + 1)}>{t("retry")}</button></p>}
       {(!finished || pendingFiles || (hasCurrentFiles && (!availableCount || partial))) && <div className="ra-files-head">

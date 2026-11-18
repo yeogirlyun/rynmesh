@@ -19,6 +19,7 @@ import re
 import shutil
 import struct
 import sys
+import tomllib
 import zlib
 from pathlib import Path
 from typing import Any, Sequence
@@ -181,7 +182,8 @@ def test_extract_repo_contract_versions_matches_actual_rust_and_python_sources_a
     assert versions.wire_version == 1
     assert versions.target_triple == "x86_64-pc-windows-msvc"
     assert versions.installed_filename == "ryn_computer_use.exe"
-    assert versions.rynmesh_package_version == "0.8.0"
+    with (REPO_ROOT / "pyproject.toml").open("rb") as package:
+        assert versions.rynmesh_package_version == tomllib.load(package)["project"]["version"]
 
     # Build a minimal mirror of the contract files in tmp_path to test version/constant drift rejection
     fake_repo = tmp_path / "repo"

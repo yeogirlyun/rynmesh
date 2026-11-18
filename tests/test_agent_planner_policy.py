@@ -54,7 +54,7 @@ def test_mapping_precedes_snapshot_and_real_outer_gate_enforces_it(node, tmp_pat
         helper.assert_mapping(world.sources, selected, policy)
         before = world.sources.path.read_bytes()
         mapping = world.planner_policy_mapping[0]
-        assert mapping["before"]["max_output_tokens"] == 4096 and mapping["after"] == policy["generation"]
+        assert mapping["before"]["max_output_tokens"] == 8192 and mapping["after"] == policy["generation"]
         bridge, tools, catalog = build_agent_integrations(app, store, store.home)
         row = catalog.resolve(selected)
         assert row["max_output_tokens"] == 128000 and row["context_window"] == 1000000
@@ -136,6 +136,6 @@ def test_reference_documents_dispatch_honors_same_policy_and_lower_request(node,
 def test_policy_uses_effective_overrides_and_hash_excludes_credentials(planner, tmp_path):
     helper, policy, source, _ = planner
     assert model_settings.effective(source, helper.MODEL_ID)["max_output_tokens"] == policy["generation"]["max_output_tokens"]
-    assert source["max_output_tokens"] == 4096
+    assert source["max_output_tokens"] is None and source["max_output_tokens_explicit"] is False
     with pytest.raises(ValueError, match="configured_glm_source_required"):
         helper.read_planner(tmp_path, "some-other-source")

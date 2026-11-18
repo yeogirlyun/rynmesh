@@ -292,7 +292,12 @@ def test_permission_revocation_at_the_boundary_blocks_the_queued_write(tmp_path,
     advance(runtime, 3)  # model, tool, model -> the write is queued at the segment boundary
     queued = stored(runtime, row["id"])
     assert queued["steps"] == 2 and queued["queue"] and queued["queue"][0]["name"] == "share_service"
+    # S13-I25: the global choice only affects new tasks; the owner's "also switch
+    # running tasks" path pauses the task and changes its own permission.
     runtime.update_settings({"permission_mode": "read_only"})
+    for body in ({"action": "pause"}, {"action": "set_permission", "permission_mode": "read_only"},
+                 {"action": "resume"}):
+        runtime.action(row["id"], {**body, "expected_control_revision": runtime.get(row["id"])["control_revision"]})
     advance(runtime, 10)
     done = runtime.get(row["id"])
     assert tools.shared is False and [call[0] for call in tools.calls] == ["inspect_service"]

@@ -30,19 +30,37 @@ def bound_preview(preview: Any) -> Any:
     return copied
 
 
-def sanitized(value: Any, depth: int = 0) -> Any:
+def sanitized(value: Any, depth: int = 0, *, on_depth="raise", on_unsupported="raise", marks=None) -> Any:
     """Defense in depth; integrations must also expose only explicit safe fields."""
     if depth > 20:
+        if on_depth == "mark":
+            if marks is not None:
+                marks.append("depth_limit")
+            return "[depth limit: nested value omitted]"
         raise AgentError("agent_output_limit")
     if isinstance(value, dict):
-        return {str(key): "[redacted]" if SENSITIVE.fullmatch(str(key)) else sanitized(item, depth + 1) for key, item in value.items()}
-    if isinstance(value, list):
-        return [sanitized(item, depth + 1) for item in value]
+        return {str(key): "[redacted]" if SENSITIVE.fullmatch(str(key)) else sanitized(
+            item, depth + 1, on_depth=on_depth, on_unsupported=on_unsupported, marks=marks) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [sanitized(item, depth + 1, on_depth=on_depth, on_unsupported=on_unsupported, marks=marks) for item in value]
     if isinstance(value, str):
         return re.sub(r"(?i)\bBearer\s+[A-Za-z0-9._~+/-]+=*", "Bearer [redacted]", value)
     if value is None or type(value) in (int, float, bool):
         return value
+    if on_unsupported == "mark":
+        if marks is not None:
+            marks.append("unsupported_type")
+        return f"[unsupported:{type(value).__name__}]"
     raise AgentError("agent_invalid_output")
+
+
+def sanitized_tool_result(value):
+    """Only tool observations may retain safe partial data after sanitizing loss."""
+    marks = []
+    result = sanitized(value, on_depth="mark", on_unsupported="mark", marks=marks)
+    if isinstance(result, dict) and marks:
+        result["sanitized_partial"] = sorted(set(marks))
+    return result
 
 
 # A tool result is already kept verbatim on its operation's receipt. These
@@ -107,9 +125,13 @@ def hydrated_events(row: dict, events: list) -> list:
 
 
 def event(row: dict, kind: str, **fields) -> None:
+    # Every stop path (including budget/recovery stops) preserves owner follow-ups.
+    if row.get("queued_messages") and (row.get("status") in {"failed", "paused", "interrupted", "cancelled"}
+                                       or kind == "paused"):
+        row["queued_messages_paused_reason"] = row["status"] if kind != "paused" else "paused"
     fields = _receipt_backed(row, kind, fields)
     row["event_cursor"] += 1
-    if kind in CONTROL_EVENTS:
+    if kind in CONTROL_EVENTS and not (kind == "input_answered" and fields.get("blocking") is False):
         row["control_revision"] += 1
     elapsed = row.get("elapsed_seconds")
     timing = ({"run_elapsed_seconds": elapsed}
@@ -129,4 +151,5 @@ def task(data: dict, task_id: str) -> dict:
 def model_retry_authority(settings: dict) -> dict:
     """A queued inference retry cannot outlive an owner permission change."""
     return {"permission_mode": settings["permission_mode"],
-            "allowed_write_tools": sorted(settings.get("allowed_write_tools", []))}
+            "allowed_write_tools": sorted(settings.get("allowed_write_tools", [])),
+            "denied_tools": sorted(settings.get("denied_tools", []))}

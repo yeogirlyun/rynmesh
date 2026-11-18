@@ -11,6 +11,7 @@ from .state import record_goal_history
 from .store import AgentError, AgentStore, encoded
 
 BRANCH_METADATA_LIMIT = 20
+RETIRED_WRITE_LIMIT = 20
 _BRANCH_META_KEYS = (
     "revision",
     "message_index",
@@ -84,10 +85,25 @@ def rewrite(row: dict, control: dict, emit, *, data: dict | None = None, store: 
     """
     from . import memory, memory_integration
 
-    index, replacement = control["message_index"], control["message"]
+    row.pop("retired_writes", None)
+    row.pop("task_grants", None)
+    index, replacement = control["message_index"], control.get("message")
     messages = row["messages"]
     previous_revision = row.get("conversation_revision", 0)
     retired_messages = copy.deepcopy(messages[index:])
+    retired_call_ids = {call["id"] for message in retired_messages for call in message.get("tool_calls", [])}
+    statuses = {receipt["operation_id"]: receipt["status"] for receipt in row.get("receipts", [])
+                if receipt.get("status") in {"confirmed", "unknown"}}
+    writes = {}
+    for item in row["events"]:
+        if (item["type"] == "tool_started" and item.get("effect") == "write"
+                and item.get("call_id") in retired_call_ids and item.get("operation_id") in statuses):
+            operation_id = item["operation_id"]
+            writes[operation_id] = {"tool": item["tool"], "operation_id": operation_id,
+                                    "status": statuses[operation_id]}
+    if writes:
+        row["retired_writes"] = {"items": list(writes.values())[-RETIRED_WRITE_LIMIT:],
+                                 "omitted": max(0, len(writes) - RETIRED_WRITE_LIMIT)}
     active_store = store if isinstance(store, AgentStore) else _enclosing_store()
     can_archive = active_store is not None and isinstance(row.get("id"), str) and bool(row["id"])
 
@@ -141,8 +157,10 @@ def rewrite(row: dict, control: dict, emit, *, data: dict | None = None, store: 
     epoch = previous_epoch + 1
     row["context_epoch"] = epoch
     row["conversation_revision"] = previous_revision + 1
-    row["messages"] = [*messages[:index], replacement]
-    replacement["context_epoch"] = epoch
+    row["messages"] = messages[:index]
+    if replacement is not None:
+        row["messages"].append(replacement)
+        replacement["context_epoch"] = epoch
     for message in row["messages"]:
         # Keep prior model/scope exclusions closed. Only the active prefix
         # becomes replacement context; response provenance remains immutable.
@@ -193,7 +211,8 @@ def rewrite(row: dict, control: dict, emit, *, data: dict | None = None, store: 
         memory_integration.apply_owner_turn_memory_in_tx(None, data, row)
     row["observed_files"] = {}
     record_goal_history(row)
-    owners = [message for message in row["messages"] if message["role"] == "user"]
+    owners = [message for message in row["messages"]
+              if message["role"] == "user" and not message.get("ui", {}).get("hidden")]
     revision = row["goal"]["revision"] + 1
     first = owners[0]
     old_constraints = {item.get("message_id") for item in row["goal"].get("constraints", [])}
@@ -216,8 +235,10 @@ def rewrite(row: dict, control: dict, emit, *, data: dict | None = None, store: 
     row["outcome"] = {"status": "unverified", "goal_revision": revision, "criteria_results": [], "summary": "",
                       "evidence_refs": [], "uncertainties": ["Current owner requirements have not been independently verified."]}
     budget.new_round(row)
-    row.update(status="paused" if control.get("remain_paused") else "queued", error=None, result="", steps=0,
+    row.update(status="completed" if replacement is None else "paused" if control.get("remain_paused") else "queued", error=None, result="", steps=0,
                elapsed_seconds=0.0, model_retry_count=0, approved=None, pending_approval=None, pending_input=None)
-    emit(row, "message_edited", message_index=index, message_id=replacement["message_id"],
-         user_turn_index=len(owners) - 1, conversation_revision=row["conversation_revision"], goal_revision=revision)
+    emit(row, "message_rolled_back" if replacement is None else "message_edited", message_index=index,
+         message_id=messages[index]["message_id"] if replacement is None else replacement["message_id"],
+         user_turn_index=len(owners) if replacement is None else len(owners) - 1,
+         conversation_revision=row["conversation_revision"], goal_revision=revision)
     row["conversation_event_cursor"] = row["event_cursor"]

@@ -1,5 +1,6 @@
-import { nodeControlUrl } from "./nodeUrl";
-import { applyAgentAttachmentLimits, type AgentAttachmentInput, type AgentMessageAttachment, type ServerAttachmentLimits } from "./agentAttachments";
+import type { AgentStorageHealth } from "./agentStorageHealth";
+import { isTauriDesktop, localControlHeaders, nodeControlUrl } from "./nodeUrl";
+import { applyAgentAttachmentLimits, type AgentAttachmentInput, type AgentDraftAttachment, type AgentMessageAttachment, type ServerAttachmentLimits } from "./agentAttachments";
 import type { ModelTokenUsage } from "./aiSources";
 
 export type AgentStatus = "queued" | "running" | "waiting_approval" | "waiting_input" | "pausing" | "reconciling" | "paused" | "completed" | "cancelled" | "failed" | "interrupted";
@@ -33,6 +34,7 @@ export interface AgentOutcome {
 export interface AgentAllowedAction { enabled: boolean; reason: string | null; requires_control_revision: boolean; }
 export type AgentMessageIntent = "steer" | "information";
 export interface AgentPendingInput {
+  blocking?: boolean;
   id: string; kind: "information" | "choice" | "credential_ref"; prompt: string;
   fields: Array<{ id: string; label: string; type: "text" | "choice" | "credential_ref"; required: boolean; options?: Array<{ value: string; label: string }> }>;
   goal_revision: number; control_revision: number; scope_revision: number; business_revision: unknown; created_at: number | string;
@@ -78,11 +80,17 @@ export interface AgentContextBudgetPolicy {
   token_count_is_estimate?: boolean;
   manual_max_context_bytes?: number | null;
 }
+export interface AgentShellPrefixRule { prefix: string[]; options: string[] }
 export interface AgentSettings {
+  storage_health?: AgentStorageHealth;
   enabled: boolean;
   model_id: string;
+  default_subagent_model_id?: string;
+  default_subagent_reasoning_effort?: string | null;
   permission_mode: "workspace" | "read_only" | "confirm_changes" | "automatic";
   allowed_write_tools: string[];
+  shell_allow_prefixes?: AgentShellPrefixRule[];
+  denied_tools?: string[];
   workspace_root?: string;
   desktop_access?: boolean;
   max_steps: number;
@@ -149,6 +157,9 @@ export interface AgentRunTiming {
   measurement: "live" | "recorded" | "pending" | "unknown";
 }
 export interface AgentApproval {
+  remember_prefix_candidate?: AgentShellPrefixRule;
+  reason?: "dangerous_command";
+  dangerous_reason?: "forced_rm" | "force_delete" | "open_url" | "wrapper_depth";
   id: string;
   tool: string;
   arguments: Record<string, unknown>;
@@ -166,7 +177,7 @@ export interface AgentMessage {
   content: string | null;
   tool_call_id?: string;
   tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }>;
-  ui?: { kind: "input_answer" | "source_credential" | "verification_feedback" | "change_review" | "steer" | "information" | "message" | "heartbeat" | "silent_heartbeat" | "partial_recovery"; text?: string; prompt?: string; pending_input_id?: string; fields?: Array<{ label: string; value: string }>; endpoint?: string; has_credential?: boolean; hidden?: boolean; automation_id?: string; automation_name?: string };
+  ui?: { kind: "turn_aborted" | "input_answer" | "source_credential" | "verification_feedback" | "change_review" | "steer" | "information" | "message" | "heartbeat" | "silent_heartbeat" | "partial_recovery"; text?: string; prompt?: string; pending_input_id?: string; fields?: Array<{ label: string; value: string }>; endpoint?: string; has_credential?: boolean; hidden?: boolean; automation_id?: string; automation_name?: string };
 }
 export interface AgentEvent {
   seq: number;
@@ -184,9 +195,10 @@ export interface AgentConnectionRecovery {
   next_retry_at?: number;
   recovered_at?: number;
   error_code?: string;
-  diagnostics?: { network_reason?: string; network_phase?: string; http_status?: number; retry_after_seconds?: number; stream_max_retries?: number; overloaded?: boolean };
+  diagnostics?: { network_reason?: string; network_phase?: string; http_status?: number; retry_after_seconds?: number; reset_at?: number; upstream_request_id?: string; stream_max_retries?: number; overloaded?: boolean };
 }
 export interface AgentTaskSummary {
+  context_usage?: { request_bytes?: number; capacity_bytes?: number; bytes_per_token?: number; step?: number; context_epoch?: number };
   fork?: { source_task_id: string; source_title: string; message_count: number; shared_workspace: boolean; awaiting_instruction: boolean };
   connection_recovery?: AgentConnectionRecovery;
   conversation_revision?: number;
@@ -222,6 +234,7 @@ export interface AgentTaskSummary {
   execution_segment?: { index: number; started_seq: number };
   allowed_actions?: Record<string, AgentAllowedAction>;
   pending_input?: AgentPendingInput | null;
+  open_questions?: AgentPendingInput[];
   scope_revision?: number;
   model_destination?: AgentModelDestination;
   archived?: boolean;
@@ -229,6 +242,7 @@ export interface AgentTaskSummary {
   /** A conversation that grew too long continues in a linked new one. */
   continued_from?: string;
   continued_to?: string;
+  context_exhausted?: boolean;
   result_refs?: AgentResultRef[];
   file_artifact_revision?: number;
   budget?: AgentBudget;
@@ -328,15 +342,19 @@ export interface AgentArtifact { id: string; name: string; bytes: number; sha256
 export interface AgentFileArtifact {
   id: string; name: string; path: string; absolute_path?: string; operation_id?: string; source?: "write" | "command" | "read" | "computer_observation"; media_type: string; preview: "image" | "text" | "download";
   role: "deliverable" | "supporting" | "helper"; status: "current" | "changed_outside_task" | "missing" | "too_large" | "unavailable" | "unverified";
-  bytes?: number; sha256?: string | null; receipt_sha256?: string | null; created_by_task: boolean; revisions: number;
+  bytes?: number; limit_bytes?: number; sha256?: string | null; receipt_sha256?: string | null; created_by_task: boolean; revisions: number;
   attribution?: "observed_during_command"; turn_index?: number;
   goal_revisions: number[]; created_at?: string; updated_at?: string; mentioned_in_answer: boolean;
   render_inspected?: { at?: string; findings: number };
 }
-export interface AgentArtifactListing { artifacts: AgentArtifact[]; files?: AgentFileArtifact[]; unbacked_mentions?: string[]; pending_files?: boolean; }
+export interface AgentInventoryNotice { incomplete_inventory?: boolean; additional_changes?: number; }
+export interface AgentArtifactListing extends AgentInventoryNotice { artifacts: AgentArtifact[]; files?: AgentFileArtifact[]; unbacked_mentions?: string[]; pending_files?: boolean;
+  inventory_by_turn?: Record<string, AgentInventoryNotice>; }
 export type AgentRecordOperation = "archive" | "restore" | "delete";
 export interface AgentDeleteResult { id: string; deleted: true; cleanup_pending: boolean; }
 export interface AgentTask extends AgentTaskSummary {
+  queued_messages?: AgentQueuedMessage[];
+  queued_messages_paused_reason?: string | null;
   /** Live model text is projected from memory independently of durable checkpoints. */
   streaming?: { step: number; context_epoch: number; text: string } | null;
   messages: AgentMessage[];
@@ -344,7 +362,7 @@ export interface AgentTask extends AgentTaskSummary {
   events: AgentEvent[];
   limits: Partial<AgentSettings>;
 }
-export type AgentAction = "pause" | "resume" | "stop" | "cancel" | "approve" | "deny";
+export type AgentAction = "pause" | "resume" | "stop" | "cancel" | "approve" | "deny" | "compact";
 
 export class AgentAPIError extends Error {
   constructor(
@@ -462,13 +480,14 @@ async function request<T>(path: string, method = "GET", body?: unknown, signal?:
   const send = async (requestSignal?: AbortSignal): Promise<T> => {
     const response = await fetch(nodeControlUrl(`/agent${path}`), {
       method, credentials: "include", cache: "no-store", signal: requestSignal,
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(isTauriDesktop() ? await localControlHeaders() : {}) },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
     if (!response.ok) {
       const data = await response.json().catch(() => ({}));
       const code = typeof data.detail === "string" ? data.detail : typeof data.error === "string" ? data.error : "agent_request_failed";
-      const details = data.details && typeof data.details === "object" ? (data.details as Record<string, unknown>) : undefined;
+      const originalDetails = data.details && typeof data.details === "object" ? data.details as Record<string, unknown> : undefined;
+      const details = data.storage_health ? { ...originalDetails, storage_health: data.storage_health } : originalDetails;
       throw new AgentAPIError(code, response.status, details);
     }
     return response.json() as Promise<T>;
@@ -481,7 +500,7 @@ export function agentFileUrl(taskID: string, file: Pick<AgentFileArtifact, "id" 
 }
 async function fileContent(taskID: string, file: Pick<AgentFileArtifact, "id" | "sha256" | "media_type">, signal?: AbortSignal): Promise<Blob> {
   return readWithRecovery(async requestSignal => {
-    const response = await fetch(agentFileUrl(taskID, file), { credentials: "include", cache: "no-store", signal: requestSignal });
+    const response = await fetch(agentFileUrl(taskID, file), { credentials: "include", cache: "no-store", signal: requestSignal, headers: isTauriDesktop() ? await localControlHeaders() : {} });
     if (!response.ok) {
       const data = await response.json().catch(() => ({}));
       throw new AgentAPIError(typeof data.detail === "string" ? data.detail : "agent_request_failed", response.status);
@@ -492,7 +511,24 @@ async function fileContent(taskID: string, file: Pick<AgentFileArtifact, "id" | 
 }
 
 /** Mutations are sent once. An uncertain response is reconciled by reading server state. */
+export interface AgentQueuedMessage {
+  skill_ids?: string[];
+  id: string;
+  seq: number;
+  message: string;
+  intent: AgentMessageIntent;
+  created_at: string;
+  reasoning_effort?: string;
+  attachments?: AgentDraftAttachment[];
+}
+
 export const rynAgent = {
+  queue: (id: string) => request<Pick<AgentTask, "queued_messages" | "queued_messages_paused_reason">>(`/tasks/${encodeURIComponent(id)}/queue`),
+  queueMessage: (id: string, body: Record<string, unknown>) => request<AgentTask>(`/tasks/${encodeURIComponent(id)}/queue`, "POST", body),
+  updateQueued: (id: string, item: string, body: Record<string, unknown>) => request<AgentTask>(`/tasks/${encodeURIComponent(id)}/queue/${encodeURIComponent(item)}`, "PATCH", body),
+  deleteQueued: (id: string, item: string) => request<AgentTask>(`/tasks/${encodeURIComponent(id)}/queue/${encodeURIComponent(item)}`, "DELETE"),
+  reorderQueued: (id: string, ids: string[]) => request<AgentTask>(`/tasks/${encodeURIComponent(id)}/queue/reorder`, "POST", { ids }),
+  openStorageBackups: () => request<{ opened: boolean }>("/storage/backups/open", "POST"),
   projects: (signal?: AbortSignal) => request<{ projects: AgentProject[]; selected_project_id?: string }>("/projects", "GET", undefined, signal),
   selectProject: (project_id: string) => request<{ selected_project_id: string }>("/projects/selection", "POST", { project_id }),
   loadProject: (path: string) => request<AgentProject>("/projects", "POST", { path }),
@@ -520,13 +556,16 @@ export const rynAgent = {
     .then(value => mergeUnchangedTask(cached, value)),
   create: (message: string, model_id: string, client_request_id: string, scope?: AgentScopeSelection, expected_destination_revision?: string, skill_ids?: string[], response_language?: "zh-CN" | "en", project_id?: string, reasoning_effort?: string, attachments?: AgentAttachmentInput[]) => request<AgentTask>("/tasks", "POST", { message, model_id, client_request_id, ...(attachments?.length ? { attachments } : {}), ...(project_id ? { project_id } : {}), ...(response_language ? { response_language } : {}), ...(scope ? { scope, expected_destination_revision } : {}), ...(skill_ids?.length ? { skill_ids } : {}), ...(reasoning_effort ? { reasoning_effort } : {}) }),
   control: (id: string, route: "messages" | "actions" | "scope" | "workspace", body: Record<string, unknown>) => request<AgentTask>(`/tasks/${encodeURIComponent(id)}/${route}`, route === "scope" ? "PUT" : "POST", body),
-  message: (task: AgentTask, message: string, intent: AgentMessageIntent = "information", client_request_id: string = crypto.randomUUID(), reasoning_effort?: string, attachments?: AgentAttachmentInput[]) => request<AgentTask>(`/tasks/${encodeURIComponent(task.id)}/messages`, "POST", task.allowed_actions ? {
-    message, intent, expected_goal_revision: task.goal?.revision, expected_control_revision: task.control_revision, client_request_id, ...(reasoning_effort ? { reasoning_effort } : {}), ...(attachments?.length ? { attachments } : {}),
-  } : { message, expected_revision: task.revision, ...(reasoning_effort ? { reasoning_effort } : {}), ...(attachments?.length ? { attachments } : {}) }),
-  action: (task: AgentTask, action: AgentAction) => request<AgentTask>(`/tasks/${encodeURIComponent(task.id)}/actions`, "POST", {
+  message: (task: AgentTask, message: string, intent: AgentMessageIntent = "information", client_request_id: string = crypto.randomUUID(), reasoning_effort?: string, attachments?: AgentAttachmentInput[], skill_ids?: string[]) => request<AgentTask>(`/tasks/${encodeURIComponent(task.id)}/messages`, "POST", task.allowed_actions ? {
+    message, intent, expected_goal_revision: task.goal?.revision, expected_control_revision: task.control_revision, client_request_id, ...(reasoning_effort ? { reasoning_effort } : {}), ...(attachments?.length ? { attachments } : {}), ...(skill_ids?.length ? { skill_ids } : {}),
+  } : { message, expected_revision: task.revision, ...(reasoning_effort ? { reasoning_effort } : {}), ...(attachments?.length ? { attachments } : {}), ...(skill_ids?.length ? { skill_ids } : {}) }),
+  action: (task: AgentTask, action: AgentAction, remember?: "task" | "always" | "prefix") => request<AgentTask>(`/tasks/${encodeURIComponent(task.id)}/actions`, "POST", {
     action, ...(task.allowed_actions ? { expected_control_revision: task.control_revision, client_request_id: crypto.randomUUID() } : { expected_revision: task.revision }),
+    ...(action === "approve" && remember ? remember === "prefix" ? { remember_prefix: true } : { remember } : {}),
     ...((action === "approve" || action === "deny") && task.pending_approval ? { approval_id: task.pending_approval.id } : {}),
   }),
+  compact: (task: AgentTask) => request<AgentTask>(`/tasks/${encodeURIComponent(task.id)}/compact`, "POST", task.allowed_actions
+    ? agentActionBody(task, "compact") : { action: "compact", expected_revision: task.revision }),
   answer: (task: AgentTask, answers: Record<string, string>, client_request_id: string) => request<AgentTask>(`/tasks/${encodeURIComponent(task.id)}/actions`, "POST", {
     action: "answer", pending_input_id: task.pending_input?.id, expected_goal_revision: task.pending_input?.goal_revision,
     expected_control_revision: task.control_revision, answers, client_request_id,
@@ -551,15 +590,16 @@ export const rynAgent = {
   }),
 };
 
-export function agentMessageBody(task: AgentTask, message: string, intent: AgentMessageIntent, reasoning_effort?: string, attachments?: AgentAttachmentInput[]): Record<string, unknown> {
-  return { message, intent, expected_goal_revision: task.goal?.revision, expected_control_revision: task.control_revision, client_request_id: crypto.randomUUID(), ...(reasoning_effort ? { reasoning_effort } : {}), ...(attachments?.length ? { attachments } : {}) };
+export function agentMessageBody(task: AgentTask, message: string, intent: AgentMessageIntent, reasoning_effort?: string, attachments?: AgentAttachmentInput[], skill_ids?: string[]): Record<string, unknown> {
+  return { message, intent, expected_goal_revision: task.goal?.revision, expected_control_revision: task.control_revision, client_request_id: crypto.randomUUID(), ...(reasoning_effort ? { reasoning_effort } : {}), ...(attachments?.length ? { attachments } : {}), ...(skill_ids?.length ? { skill_ids } : {}) };
 }
-export function agentActionBody(task: AgentTask, action: AgentAction): Record<string, unknown> {
+export function agentActionBody(task: AgentTask, action: AgentAction, remember?: "task" | "always" | "prefix"): Record<string, unknown> {
   return { action, expected_control_revision: task.control_revision, client_request_id: crypto.randomUUID(),
+    ...(action === "approve" && remember ? remember === "prefix" ? { remember_prefix: true } : { remember } : {}),
     ...((action === "approve" || action === "deny") && task.pending_approval ? { approval_id: task.pending_approval.id } : {}) };
 }
-export function agentAnswerBody(task: AgentTask, answers: Record<string, string>): Record<string, unknown> {
-  return { action: "answer", pending_input_id: task.pending_input?.id, expected_goal_revision: task.pending_input?.goal_revision,
+export function agentAnswerBody(task: AgentTask, answers: Record<string, string>, question = task.pending_input): Record<string, unknown> {
+  return { action: "answer", pending_input_id: question?.id, expected_goal_revision: question?.goal_revision,
     expected_control_revision: task.control_revision, answers, client_request_id: crypto.randomUUID() };
 }
 export function agentScopeBody(snapshot: AgentScopeSnapshot, scope: AgentScopeSelection): Record<string, unknown> {

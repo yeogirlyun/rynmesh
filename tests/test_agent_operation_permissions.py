@@ -65,7 +65,7 @@ def test_exact_approval_survives_waiting_restart_checkpoint_and_reaches_both_pro
 @pytest.mark.parametrize("mode,tool,basis", [("automatic", "share_service", "automatic_policy"), ("confirm_changes", "inspect_service", "read")])
 def test_automatic_and_read_decisions_do_not_claim_owner_approval(tmp_path, mode, tool, basis):
     runtime, _, _, _ = make_runtime(tmp_path, assistant(name=tool, args={"service_id": "A"}))
-    runtime.update_settings({"permission_mode": mode, "allowed_write_tools": ["share_service"]})
+    runtime.update_settings({"permission_mode": mode, "allowed_write_tools": []})
     task = runtime.create({"message": "Inspect or share A as configured."})
     advance(runtime, 2)
     row = raw(runtime, task["id"])

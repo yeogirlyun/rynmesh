@@ -357,8 +357,10 @@ def test_step4_codex_tools_default_budget_and_strict_schema_for_new_tools(monkey
         task_id="t1",
         timeout_s=5,
     )
-    assert captured["body"]["max_tokens"] == 2048
-    assert "Reply within 2048 tokens." in captured["body"]["messages"][0]["content"]
+    # S01-I20: the fallback is the model's own output limit, no longer a fixed 2048.
+    limit = captured["body"]["max_tokens"]
+    assert limit >= 2048
+    assert f"Reply within {limit} tokens." in captured["body"]["messages"][0]["content"]
 
 
 def test_phase2_upgrade1_workstation_inline_head_tail_preview_with_result_ref():
@@ -670,13 +672,13 @@ def test_phase4_vendor_context_window_and_compact_computer_observation():
     }
     assert model_settings.context_metadata(auto_record, "deepseek-flash") == {
         "context_window": 1048576,
-        "context_window_basis": "vendor_family_default",
-        "context_window_known": True,
+        "context_window_basis": "vendor_family_guess",
+        "context_window_known": False,
     }
     assert model_settings.context_metadata(auto_record, "deepseek-v4-pro")["context_window"] == 1048576
-    assert model_settings.defaults(auto_record, "deepseek-flash")["max_output_tokens"] == 393216
+    assert model_settings.defaults(auto_record, "deepseek-flash")["max_output_tokens"] == 16384
     assert model_settings.defaults(auto_record, "deepseek-flash")["max_concurrent"] == 2500
-    assert model_settings.defaults(auto_record, "deepseek-v4-pro")["max_output_tokens"] == 393216
+    assert model_settings.defaults(auto_record, "deepseek-v4-pro")["max_output_tokens"] == 16384
     assert model_settings.defaults(auto_record, "deepseek-v4-pro")["max_concurrent"] == 500
     assert model_settings.context_metadata(auto_record, "gpt-5.4")["context_window"] == 272000
     assert model_settings.context_metadata(auto_record, "claude-sonnet-4-5")["context_window"] == 200000

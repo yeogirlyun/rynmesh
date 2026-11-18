@@ -10,6 +10,7 @@ def test_local_api_context_uses_validated_host_port(tmp_path, monkeypatch):
     runtime, _, _, _ = make_runtime(tmp_path)
     task = runtime.create({"message": "Inspect local configuration"})
     row = runtime.store.read()["tasks"][task["id"]]
+    row["permission_mode"] = "automatic"
 
     def context():
         return json.JSONDecoder().raw_decode(authority(row).split("Server control state: ", 1)[1])[0]
@@ -23,4 +24,5 @@ def test_local_api_context_uses_validated_host_port(tmp_path, monkeypatch):
         monkeypatch.setenv("RYNMESH_PEER_PORT", port)
         assert context()["local_control_api"] == {
             "origin": "http://127.0.0.1:" + port, "schema_path": "/openapi.json",
+            "token_header": "X-Ryn-Local-Token", "token_environment": "RYN_LOCAL_CONTROL_TOKEN",
         }

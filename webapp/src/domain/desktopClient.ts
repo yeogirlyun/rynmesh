@@ -14,6 +14,7 @@ export interface DesktopStatus {
   configured: boolean;
   sharing: boolean;
   active_tasks: number;
+  agent_tasks?: number;
   agent_active_runs?: number;
   agent_waiting?: number;
   agent_task_titles?: string[];

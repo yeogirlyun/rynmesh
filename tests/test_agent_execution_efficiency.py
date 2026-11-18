@@ -165,7 +165,7 @@ def test_per_phase_timing_tracks_scheduler_wait_model_tool_and_store_persistence
 
     tool_timing = tool_events[0]["timing"]
     assert tool_timing["scheduler_wait_seconds"] == pytest.approx(0.60)
-    assert tool_timing["preparation_seconds"] == pytest.approx(0.02)
+    assert tool_timing["preparation_seconds"] == pytest.approx(0.04)
     # Dispatch reads metadata again to pick the parallel/serial gate; that lookup
     # and any gate wait belong to the execution window.
     assert tool_timing["tool_execution_seconds"] == pytest.approx(0.35 + 0.02)

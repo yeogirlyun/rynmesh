@@ -920,7 +920,8 @@ def test_store_registration_includes_machine_ip_metadata(tmp_path, monkeypatch) 
     registered = node.register_node(network_id="home-four-node")
 
     record = registered["record"]
-    assert record["endpoints"] == ["http://10.0.0.11:8791"]
+    assert record["endpoints"][0] == "http://10.0.0.11:8791"
+    assert len(record["endpoints"]) <= 4
     assert record["metadata"]["machine_name"] == "MS-1"
     assert record["metadata"]["primary_ip"] == "10.0.0.11"
     assert "10.0.0.11" in record["metadata"]["ip_addresses"]

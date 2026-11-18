@@ -137,7 +137,10 @@ def test_real_http_friend_stream_archives_once_and_reconnects_without_new_infere
             deadline = time.monotonic() + 5
             while not requests and time.monotonic() < deadline:
                 time.sleep(0.01)
-            assert len(requests) == 1 and requests[0]["stream"] is True
+            run = consumer.state.ask_ryn.runs.get(task_id)
+            assert len(requests) == 1 and requests[0]["stream"] is True, {
+                k: run.get(k) for k in ("state", "error", "error_code", "detail")
+            }
             assert requests[0]["messages"][0]["role"] == "system"
             path = urls[1] + f"/api/local/llm/orders/{task_id}/events"
             assert httpx.get(path, timeout=3).status_code in {401, 403}

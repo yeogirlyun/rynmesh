@@ -161,6 +161,14 @@ class SMBConnector:
         next_cursor = page[-1]["name"] if len(remaining) > PAGE_ENTRIES else ""
         return {"entries": page, "next_cursor": next_cursor, "skipped": self.last_skipped}
 
+    def stat(self, path):
+        path = relative_path(path)
+        st = self.api.stat(self.path(path), follow_symlinks=False, **self.kw)
+        if st.st_file_attributes & 0x400:
+            raise NasError("links_not_allowed", 403)
+        return {"name": path.rsplit("/", 1)[-1], "path": path,
+                "directory": bool(st.st_file_attributes & 0x10), "size": st.st_size, "modified": st.st_mtime}
+
     def stat_size(self, path):
         st = self.api.stat(self.path(path), follow_symlinks=False, **self.kw)
         if st.st_file_attributes & 0x400:
@@ -371,6 +379,24 @@ class WebDAVConnector:
         page = remaining[:PAGE_ENTRIES]
         next_cursor = page[-1]["name"] if len(remaining) > PAGE_ENTRIES else ""
         return {"entries": page, "next_cursor": next_cursor, "skipped": self.last_skipped}
+
+    def stat(self, path):
+        path = relative_path(path)
+        body = self.request("PROPFIND", path, headers={"Depth": "0"}, limit=256 * 1024)
+        if b"<!DOCTYPE" in body.upper() or b"<!ENTITY" in body.upper():
+            raise NasError("invalid_directory_response", 502)
+        tree = ElementTree.fromstring(body)
+        expected = unquote(urlsplit(self.url(path)).path).rstrip("/")
+        for item in tree.findall("{DAV:}response"):
+            if unquote(urlsplit(item.findtext("{DAV:}href", "")).path).rstrip("/") != expected:
+                continue
+            prop = item.find("{DAV:}propstat/{DAV:}prop")
+            if prop is not None:
+                return {"name": path.rsplit("/", 1)[-1], "path": path,
+                        "directory": prop.find("{DAV:}resourcetype/{DAV:}collection") is not None,
+                        "size": int(prop.findtext("{DAV:}getcontentlength", "0")),
+                        "modified": prop.findtext("{DAV:}getlastmodified", "")}
+        raise NasError("file_not_found", 404)
 
     def stat_size(self, path):
         try:

@@ -92,7 +92,7 @@ function activitySeconds(events: AgentEvent[], startSeq: number, endSeq: number)
  * order. Missing legacy boundaries stay unknown instead of shifting labels to
  * another user's turn. run_elapsed_seconds is a persisted monotonic counter. */
 export function agentTurnTiming(task: AgentTask, turnIndex: number): AgentTurnTiming {
-  const owners = task.messages.filter(message => message.role === "user");
+  const owners = task.messages.filter(message => message.role === "user" && message.ui?.hidden !== true);
   const latest = turnIndex === owners.length - 1;
   const taskState = agentTaskState(task);
   // Only a server-reported running state ticks; an interrupted turn says so.

@@ -80,16 +80,17 @@ def test_large_batches_keep_every_call_in_order(count):
 
 
 def test_utf8_argument_and_total_byte_budgets_reject_atomically():
-    calls = [call(f"call_{n}", arguments=json.dumps({"path": "x" * 60000})) for n in range(5)]
+    calls = [call(f"call_{n}", arguments=json.dumps({"path": "x" * (MAX_RAW_RESPONSE_BYTES // 5)})) for n in range(5)]
     assert len(json.dumps(calls).encode()) > MAX_RAW_RESPONSE_BYTES
     with pytest.raises(ToolCallProtocolError) as error:
         normalize_tool_calls(calls, [spec()])
     assert error.value.reason == "response_too_large"
     raw = '{"path":"中文"}'
-    with pytest.raises(ToolCallProtocolError) as error:
-        normalize_tool_calls([call(arguments="{}"), call("large", arguments=raw)], [spec()],
-                             max_argument_bytes=len(raw.encode()) - 1)
-    assert error.value.reason == "arguments_too_large"
+    routed = normalize_tool_calls([call(arguments='{"path":"a"}'), call("large", arguments=raw)], [spec()],
+                                  max_argument_bytes=len(raw.encode()) - 1)
+    assert routed[0]["error_result"] is None
+    assert routed[1]["error_result"]["error"] == "agent_model_output_limit"
+    assert routed[1]["arguments"] == {}
 
 
 @pytest.mark.parametrize("budget", [{"max_argument_bytes": MAX_TOOL_CALL_ARGUMENT_BYTES + 1}])
@@ -161,8 +162,9 @@ def test_namespace_cannot_accidentally_dispatch_same_named_flat_tool():
 
 
 def test_bad_host_metadata_is_not_misreported_as_a_model_argument_error():
-    with pytest.raises(AgentError, match="agent_tool_definition_changed"):
-        normalize_tool_calls([call()], [spec()], metadata=lambda _name: {"effect": "unknown"})
+    routed = normalize_tool_calls([call()], [spec()], metadata=lambda _name: {"effect": "unknown"})
+    assert routed[0]["error_result"]["error"] == "agent_tool_unavailable"
+    assert routed[0]["error_result"]["not_executed"] is True
 
 
 def test_internal_validation_stays_with_existing_internal_handler():

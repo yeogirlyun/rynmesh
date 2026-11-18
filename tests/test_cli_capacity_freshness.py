@@ -21,17 +21,19 @@ def test_capacity_change_rotates_only_affected_model_and_default_and_never_resur
     fixture = cli_metadata_catalog
     fixture.models.append({"id": "model-b", "name": "B", "context_window": 128000})
     adapter = fixture.manager.adapter
+    adapter.current_models()
     before = {model: adapter.binding_for_model(model) for model in ("", "model-a", "model-b")}
     fixture.models[0]["context_window"] = 16000
-    fixture.expire()
+    adapter.current_models(refresh=True)
     after = {model: adapter.binding_for_model(model) for model in before}
     assert after[""] != before[""]
     assert after["model-a"] != before["model-a"]
     assert after["model-b"] == before["model-b"]
     restarted = CLIModelDispatchAdapter(CLIAgentAdapter("codex_cli"), fixture.manager.manifest, adapter.path.parent)
+    restarted.current_models()
     assert restarted.binding_for_model("model-a") == after["model-a"]
     fixture.models[0]["context_window"] = 400000
-    fixture.expire()
+    adapter.current_models(refresh=True)
     assert adapter.binding_for_model("model-a") not in (before["model-a"], after["model-a"])
     assert adapter.binding_for_model("model-b") == before["model-b"]
 
@@ -40,20 +42,22 @@ def test_default_model_selection_is_bound_without_rotating_unchanged_children(cl
     fixture = cli_metadata_catalog
     fixture.models.append({"id": "model-b", "name": "B", "context_window": 16000})
     adapter = fixture.manager.adapter
+    adapter.current_models()
     before = {model: adapter.binding_for_model(model) for model in ("", "model-a", "model-b")}
     fixture.models[0]["default"], fixture.models[1]["default"] = False, True
-    fixture.expire()
+    adapter.current_models(refresh=True)
     assert adapter.binding_for_model() != before[""]
     assert adapter.context_metadata_for_model()["context_window"] == 16000
     for model in ("model-a", "model-b"):
         assert adapter.binding_for_model(model) == before[model]
 
 
-def test_expired_discovery_failure_revokes_selected_and_default_authority(cli_metadata_catalog, monkeypatch):
+def test_discovery_failure_after_cli_replacement_revokes_selected_and_default_authority(cli_metadata_catalog, monkeypatch):
     from rynmesh.llm_package import codex_session
     fixture = cli_metadata_catalog
     model = "local/codex-cli/model/model-a"
     assert fixture.catalog.get_model(model)["context_window"] == 400000
+    fixture.binary.write_bytes(b"fixture-v2")
     fixture.expire()
     def unavailable(*args):
         raise AdapterError("fixture metadata unavailable")
@@ -66,15 +70,18 @@ def test_expired_discovery_failure_revokes_selected_and_default_authority(cli_me
         fixture.manager.adapter.binding_for_model("model-a")
 
 
-def test_passive_binding_never_discovers_or_reuses_expired_capacity(cli_metadata_catalog, monkeypatch):
+def test_passive_binding_never_discovers_and_rejects_snapshot_for_replaced_cli(cli_metadata_catalog, monkeypatch):
     from rynmesh.llm_package import codex_session
     fixture = cli_metadata_catalog
     adapter = fixture.manager.adapter
     assert adapter.cached_binding_for_model("model-a") is None
+    adapter.current_models()
     binding = adapter.binding_for_model("model-a")
     assert adapter.cached_binding_for_model("model-a") == binding
     fixture.expire()
     monkeypatch.setattr(codex_session, "list_models", lambda *_: pytest.fail("passive catalog must never discover"))
+    assert adapter.cached_binding_for_model("model-a") == binding
+    fixture.binary.write_bytes(b"fixture-v2")
     assert adapter.cached_binding_for_model() is None
     assert adapter.cached_binding_for_model("model-a") is None
 
@@ -97,15 +104,17 @@ def test_background_inventory_refreshes_before_binding_expires(cli_metadata_cata
     assert len(fixture.enumerations) == 2
 
 
-def test_empty_refreshed_listing_closes_default_dispatch_without_reusing_old_binding(cli_metadata_catalog, monkeypatch):
+def test_empty_refreshed_listing_after_cli_replacement_rejects_old_binding(cli_metadata_catalog, monkeypatch):
     fixture = cli_metadata_catalog
     adapter = fixture.manager.adapter
+    adapter.current_models()
     before = adapter.binding_for_model()
+    fixture.binary.write_bytes(b"fixture-v2")
     fixture.models.clear()
     fixture.expire()
     calls = []
     monkeypatch.setattr(adapter.inner, "chat", lambda *a, **kw: calls.append(True))
-    with pytest.raises(AdapterError, match="cli_model_unavailable"):
+    with pytest.raises(AdapterError, match="cli_model_discovery_failed"):
         adapter.call_bound("chat", before, lambda: None, {"messages": [{"role": "user", "content": "hello"}]})
     row = fixture.catalog.get_model("local/codex-cli")
     assert row["available"] is False and row["destination_binding_supported"] is False
@@ -137,6 +146,7 @@ def test_old_binding_and_new_small_window_both_stop_local_dispatch(cli_metadata_
 @pytest.mark.parametrize("window", [None, True, "2000000", 10**20])
 def test_invalid_capacity_replaces_prior_known_window_with_unknown(cli_metadata_catalog, window):
     fixture = cli_metadata_catalog
+    fixture.manager.adapter.current_models()
     old = fixture.manager.adapter.binding_for_model("model-a")
     fixture.models[0]["context_window"] = window
     fixture.expire()

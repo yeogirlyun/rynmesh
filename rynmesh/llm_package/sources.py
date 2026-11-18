@@ -11,7 +11,7 @@ import uuid
 from pathlib import Path
 from urllib.parse import urlparse
 
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
 
 from ..atomic_io import atomic_write_bytes
 from ..file_transactions import file_transaction
@@ -75,6 +75,14 @@ class SourceAdapter(OpenAICompatibleAdapter):
         return result
 
 
+class SourceStoreDamaged(ValueError):
+    """The saved source bytes cannot be decrypted or decoded as JSON."""
+
+    def __init__(self, reason):
+        self.reason = reason
+        super().__init__(reason)
+
+
 class SourceStore:
     def __init__(self, home: Path, private_key: bytes, *, migrate: bool = True):
         self.path = home / "llm" / "sources.enc"
@@ -83,8 +91,19 @@ class SourceStore:
         self.lock_path = home / "llm" / ".sharing.lock"
         self._active_models = {}
         self._model_metadata_cache = {}
+        self._write_generation = 0
+        self.recovered = None
         with self.lock:
-            records = self.read()
+            try:
+                records = self.read()
+            except SourceStoreDamaged as exc:
+                at = int(time.time())
+                backup = self.path.with_name(f"sources.enc.corrupt-{at}")
+                self.path.replace(backup)
+                for old in sorted(self.path.parent.glob("sources.enc.corrupt-*"), reverse=True)[3:]:
+                    old.unlink()
+                self.recovered = {"at": at, "reason": exc.reason, "backup": str(backup)}
+                records = {}
             changed = False
             for record in records.values() if migrate else ():
                 if set(record.get("model_settings", {})) != set(record["models"]):
@@ -103,10 +122,25 @@ class SourceStore:
         with self.lock:
             if not self.path.exists():
                 return {}
-            return json.loads(self.cipher.decrypt(self.path.read_bytes()))
+            try:
+                return json.loads(self.cipher.decrypt(self.path.read_bytes()))
+            except InvalidToken as exc:
+                raise SourceStoreDamaged("invalid_token") from exc
+            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                raise SourceStoreDamaged("invalid_json") from exc
+
+    @property
+    def version(self):
+        try:
+            stat = self.path.stat()
+        except FileNotFoundError:
+            return (None, None, self._write_generation)
+        return (stat.st_mtime_ns, stat.st_size, self._write_generation)
 
     def _write(self, records):
-        atomic_write_bytes(self.path, self.cipher.encrypt(json.dumps(records).encode()))
+        with self.lock:
+            atomic_write_bytes(self.path, self.cipher.encrypt(json.dumps(records).encode()))
+            self._write_generation += 1
 
     def public(self, record=None):
         if record is None and isinstance(self, dict):
@@ -177,10 +211,12 @@ class SourceStore:
             raise ValueError("上下文或输出上限不正确")
         provider_name = str(body.get("provider", old.get("provider", "custom")))[:80]
         default_context = 1048576 if provider_name == "deepseek" else model_settings.FALLBACK_CONTEXT_WINDOW
-        default_output = 393216 if provider_name == "deepseek" else 4096
+        # DeepSeek's documented thinking default is 64K; model discovery remains authoritative.
+        default_output = 65536 if provider_name == "deepseek" else None
         context = integer(body.get("context_window", old.get("context_window", default_context)))
-        output = integer(body.get("max_output_tokens", old.get("max_output_tokens", default_output)))
-        if not 256 <= context <= 2000000 or not 1 <= output <= 393216 or (mode == "manual" and output > context):
+        raw_output = body.get("max_output_tokens", old.get("max_output_tokens", default_output))
+        output = integer(raw_output) if raw_output is not None else None
+        if not 256 <= context <= 2000000 or (output is not None and (not 1 <= output <= 393216 or (mode == "manual" and output > context))):
             raise ValueError("上下文或输出上限不正确")
         defaults = body.get("request_defaults", old.get("request_defaults", {}))
         if not isinstance(defaults, dict) or set(defaults) - {"thinking", "reasoning_effort", "temperature", "top_p"}:
@@ -195,7 +231,18 @@ class SourceStore:
         if not isinstance(shared, list) or any(not isinstance(m, str) or m not in models for m in shared):
             raise ValueError("shared_models must contain configured model IDs")
         shared = list(dict.fromkeys(shared))
-        max_output_explicit = True if "max_output_tokens" in body else bool(old["max_output_tokens_explicit"]) if "max_output_tokens_explicit" in old else False
+        # The settings form always sends its 4096 draft default, so only an
+        # explicit flag or a different value marks the limit as owner-chosen.
+        if isinstance(body.get("max_output_tokens_explicit"), bool):
+            max_output_explicit = body["max_output_tokens_explicit"]
+        elif "max_output_tokens" in body and output is not None and output != 4096:
+            max_output_explicit = True
+        else:
+            max_output_explicit = bool(old.get("max_output_tokens_explicit", False))
+        if output is None:
+            max_output_explicit = False
+        elif output == 4096 and not max_output_explicit and provider_name != "deepseek":
+            output = None
         record = {"id": source_id or "src-" + uuid.uuid4().hex[:16], "kind": kind, "protocol": protocol,
                 "name": name, "provider": str(body.get("provider", old.get("provider", "custom")))[:80],
                 "base_url": base, "api_key": key.strip(), "models": models,

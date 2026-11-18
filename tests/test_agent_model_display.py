@@ -29,8 +29,9 @@ def test_display_uses_observed_inventory_while_discovery_is_blocked(cli_metadata
         assert elapsed < 1
         assert display["context_window"] == original["context_window"]
         assert display["available"] is True
-        assert display["local_model_binding"] is None
-        assert display["destination_binding_supported"] is False
+        # S01-I42: passive display reads the configuration-matched snapshot, never live discovery.
+        assert display["local_model_binding"]["service_id"] == "codex-cli"
+        assert display["destination_binding_supported"] is True
         # A second owner read cannot queue behind the in-progress discovery.
         before = time.monotonic()
         assert f.catalog.display_model(identifier)["id"] == identifier

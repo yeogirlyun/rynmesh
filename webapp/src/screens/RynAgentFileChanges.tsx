@@ -11,6 +11,8 @@ export default function RynAgentFileChanges({ taskId, changeKey }: { taskId: str
     file_changed: text("文件已被用户或其他任务再次修改，保留当前内容。", "The file changed after this task; current content is preserved."),
     intervening_changes: text("本任务多次修改之间存在其他修改，无法整段安全撤销。", "Other edits occurred between this task's writes; combined undo is unsafe."),
     interrupted_file_operation: text("文件操作中断，修改归属未确认。", "File operation interrupted; ownership is unconfirmed."),
+    partial_write: text("写入被中断，文件可能不完整；可从本任务快照还原", "Write interrupted; the file may be incomplete. Restore from this task's snapshot."),
+    file_in_use: text("文件正被其他程序占用", "File is open in another program"),
     snapshot_missing: text("快照缺失或损坏。", "Snapshot is missing or damaged."),
     snapshot_skipped_limit: text("超出快照限额，只记录了哈希，不可撤销。", "Snapshot skipped due to limit (hash recorded only; cannot undo)."),
   }[code] || code);
@@ -53,10 +55,10 @@ export default function RynAgentFileChanges({ taskId, changeKey }: { taskId: str
   }
   const labels: Record<string, string> = { created: text("新建", "Created"), modified: text("修改", "Modified"), deleted: text("删除", "Deleted") };
   const resultView = (value: UndoResult) => <div className="ra-file-change-result" role="status">
-    <strong>{value.status === "completed" ? text("撤销完成", "Undo completed") : value.status === "conflict" ? text("冲突：未执行撤销", "Conflict: undo not applied") : text("撤销中断，请检查逐文件结果", "Undo interrupted: inspect each file result")}</strong>
+    <strong>{value.status === "completed" ? text("撤销完成", "Undo completed") : value.status === "conflict" ? text("冲突：未执行撤销", "Conflict: undo not applied") : value.status === "blocked_file_in_use" ? text("请关闭占用文件的程序，再预览并重试撤销", "Close the program using the file, then preview and retry undo") : text("撤销中断，请检查逐文件结果", "Undo interrupted: inspect each file result")}</strong>
     {value.completed.length > 0 && <p>{text("已恢复：", "Restored: ")}{value.completed.join(", ")}</p>}
     {value.skipped?.map(item => <p key={item.path}>{text("已跳过（不可撤销）：", "Skipped (cannot undo): ")}{item.path} — {reason(item.reason)}</p>)}
-    {value.remaining?.map(item => <p key={item.path}>{item.path} — {item.state}</p>)}
+    {value.remaining?.map(item => <p key={item.path}>{item.path} — {reason(item.state)}</p>)}
     {value.conflicts?.map(item => <p key={item.path}>{item.path} — {reason(item.reason)}</p>)}
   </div>;
   return <section className="ra-file-changes" aria-label={text("任务文件修改", "Task file changes")}>
@@ -72,9 +74,9 @@ export default function RynAgentFileChanges({ taskId, changeKey }: { taskId: str
       {review?.files.map(file => <article key={file.path}>
         <div className="ra-file-change-heading"><label><input type="checkbox" checked={selected.includes(file.id)} disabled={busy || !file.can_undo}
           onChange={ev => { setPreview(null); setSelected(ev.target.checked ? [...new Set([...selected, file.id])] : selected.filter(id => id !== file.id)); }} />
-          <strong>{file.path}</strong></label><span>{labels[file.status] || file.status}{file.rename_group ? text(" · 重命名关联", " · Linked rename") : ""}</span></div>
-        <small>{file.problem === "interrupted_file_operation" ? text("文件操作记录（状态待核实）", "File operation record (unconfirmed)") : file.problem === "snapshot_skipped_limit" ? text("确认文件工具修改（仅记哈希）", "Confirmed file-tool change (hash only)") : text("确认文件工具修改", "Confirmed file-tool change")} · {file.before_bytes ?? "?"} → {file.after_bytes ?? "?"} {text("字节", "B")} · {file.media_type}</small>
-        {(file.conflict || file.problem) && <p role="alert">{text("不可安全撤销：", "Cannot safely undo: ")}{reason(file.conflict || file.problem || "")}</p>}
+          <strong>{file.path}</strong></label><span>{file.state === "not_applied" ? text("未写入", "Not written") : labels[file.status] || file.status}{file.rename_group ? text(" · 重命名关联", " · Linked rename") : ""}</span></div>
+        <small>{file.state === "not_applied" ? text("未写入", "Not written") : file.state === "pending" || file.problem === "interrupted_file_operation" ? text("文件操作记录（状态待核实）", "File operation record (unconfirmed)") : file.problem === "snapshot_skipped_limit" ? text("确认文件工具修改（仅记哈希）", "Confirmed file-tool change (hash only)") : text("确认文件工具修改", "Confirmed file-tool change")} · {file.before_bytes ?? "?"} → {file.after_bytes ?? "?"} {text("字节", "B")} · {file.media_type}</small>
+        {(file.conflict || file.problem) && <p role="alert">{!(file.problem === "partial_write" && file.restore_available && !file.conflict) && text("不可安全撤销：", "Cannot safely undo: ")}{reason(file.conflict || file.problem || "")}</p>}
         {file.binary ? <p>{text("二进制文件：不提供文本 diff", "Binary file: no text diff")}</p> : <details><summary>{text("查看 diff", "View diff")}</summary><pre tabIndex={0}>{file.diff || (file.problem === "snapshot_skipped_limit" ? text("超出快照限额，未保存文本快照", "No text snapshot saved (exceeded snapshot limit)") : text("无文本差异", "No text difference"))}</pre>{file.diff_truncated && <p>{text("diff 预览已截断；撤销使用完整快照。", "Diff preview truncated; undo uses complete snapshots.")}</p>}</details>}
         <button disabled={busy || !file.can_undo || review.task_busy} onClick={() => prepare([file.id])}>{text("预览撤销此文件", "Preview undo for this file")}</button>
       </article>)}

@@ -194,7 +194,7 @@ def test_discovery_edit_save_readback_and_artifact_follow_real_runtime(craft, mo
         assistant(name=ACTION, args=_args("type_text", {"text": "内容来自实际工具回传"}), call_id="edit"),
         assistant(name=ACTION, args=_args("save_document", {"path": "report.docx"}), call_id="save"),
         assistant(name=READ, args=_args("get_text"), call_id="readback"),
-        assistant("已保存 report.docx。"), mode=mode, allowed=[ACTION])
+        assistant("已保存 report.docx。"), mode=mode, allowed=[] if mode == "confirm_changes" else [ACTION])
     task = runtime.create({"message": "用 Ryn Word 写文档并保存 report.docx"})
     approvals = []
     for _ in range(35):
@@ -223,7 +223,7 @@ def test_discovery_edit_save_readback_and_artifact_follow_real_runtime(craft, mo
     assert _data(messages, "readback")["data"]["text"] == "内容来自实际工具回传"
     saved = _data(messages, "save")
     assert saved["files"][0]["validation"]["status"] == "reopened"
-    assert not done["local_execution"]["desktop_access"]
+    assert done["local_execution"]["desktop_access"] is (mode == "automatic")
     files = runtime.artifacts(task["id"])["files"]
     assert [file["name"] for file in files] == ["report.docx"]
     persisted = runtime.store.read()["tasks"][task["id"]]
@@ -232,13 +232,16 @@ def test_discovery_edit_save_readback_and_artifact_follow_real_runtime(craft, mo
     assert sum(name == "save_document" for _, name, _ in craft.backend.calls) == 1
 
 
-def test_component_setup_always_requires_exact_approval_and_read_only_cannot_edit(craft):
+def test_component_setup_requires_exact_approval_outside_automatic_and_read_only_cannot_edit(craft, monkeypatch):
     craft.backend.ready = False
+    from rynmesh.node_apps import plugins
+    monotonic = plugins.time.monotonic
+    monkeypatch.setattr(plugins.time, "monotonic", lambda: monotonic() + 31)
     runtime, model = craft.runtime(
         assistant(name=tool_menu.NAME, args={"load": [TOOLS, INSTALL]}),
         assistant(name=TOOLS, args={"app": "wordcraft"}, call_id="absent"),
         assistant(name=INSTALL, args={"app": "wordcraft"}, call_id="install"),
-        assistant("组件已安装。"), mode="automatic", allowed=[INSTALL])
+        assistant("组件已安装。"), mode="workspace", allowed=[INSTALL])
     task = runtime.create({"message": "启用 Word 的 Agent 文档组件"})
     advance(runtime, 10)
     waiting = runtime.get(task["id"])

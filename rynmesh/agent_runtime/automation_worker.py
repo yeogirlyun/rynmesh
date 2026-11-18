@@ -16,6 +16,7 @@ from .prompt import PROMPT_VERSION, select_base_instructions
 from .protocol import event, now
 from .state import initialize, owner_update
 from .store import DEFAULT_SETTINGS, AgentError
+from .web_search import restrict_web_policy
 
 AUTOMATION_WORKER_NAME = "ryn-agent-automations"
 MAX_CLAIMS_PER_TICK = 3
@@ -113,8 +114,9 @@ def _advance_schedule(
     *,
     store: Any = None,
     run_count: int | None = None,
+    data: dict[str, Any] | None = None,
 ) -> int | None:
-    salt = automations.ensure_jitter_salt(store) if store is not None else ""
+    salt = automations.ensure_jitter_salt(store, data) if store is not None else ""
     eff_run_count = int(run_count if run_count is not None else (item.get("run_count") or 0))
     next_ms = automations.compute_next_run_at(
         str(item.get("rrule") or ""),
@@ -170,7 +172,7 @@ def trigger_automation_in_tx(
     missed_runs: int | None = None,
 ) -> dict[str, Any]:
     automations.ensure_automation_state(data)
-    target_id = str(automation_id or "").strip()
+    target_id = automations._validated_automation_id(automation_id)
     item = data["automations"].get(target_id)
     if not isinstance(item, dict):
         raise AgentError("agent_automation_not_found")
@@ -216,7 +218,7 @@ def trigger_automation_in_tx(
                 item["next_run_at"] = None
                 item["next_run_at_iso"] = ""
                 item["updated_at"] = now_str
-                automations.write_automation_files(runtime.store, item)
+                automations.try_write_automation_files(runtime.store, item)
                 return {
                     "triggered": False,
                     "deferred": False,
@@ -257,7 +259,7 @@ def trigger_automation_in_tx(
             item["next_run_at_iso"] = automations.ms_to_iso(defer_ms)
             if target_updated:
                 item["updated_at"] = now_str
-                automations.write_automation_files(runtime.store, item)
+                automations.try_write_automation_files(runtime.store, item)
             return {
                 "triggered": False,
                 "deferred": True,
@@ -276,13 +278,13 @@ def trigger_automation_in_tx(
                 skip_reason = "interrupted"
 
         if skip_reason is not None:
-            _advance_schedule(item, current_ms, store=runtime.store)
+            _advance_schedule(item, current_ms, store=runtime.store, data=data)
             item["last_run_at"] = current_ms
             item["last_run_at_iso"] = automations.ms_to_iso(current_ms)
             item["last_run_status"] = "SKIPPED"
             item["missed_runs"] = effective_missed
             item["updated_at"] = now_str
-            automations.write_automation_files(runtime.store, item)
+            automations.try_write_automation_files(runtime.store, item)
 
             skip_record = {
                 "id": run_id,
@@ -361,13 +363,13 @@ def trigger_automation_in_tx(
     else:
         active_prev_tid = _find_active_cron_task_id(data, target_id, item) if not force else None
         if active_prev_tid:
-            _advance_schedule(item, current_ms, store=runtime.store)
+            _advance_schedule(item, current_ms, store=runtime.store, data=data)
             item["last_run_at"] = current_ms
             item["last_run_at_iso"] = automations.ms_to_iso(current_ms)
             item["last_run_status"] = "SKIPPED_OVERLAP"
             item["missed_runs"] = effective_missed
             item["updated_at"] = now_str
-            automations.write_automation_files(runtime.store, item)
+            automations.try_write_automation_files(runtime.store, item)
 
             skip_record = {
                 "id": run_id,
@@ -446,7 +448,7 @@ def trigger_automation_in_tx(
             "result": "",
             "error": None,
             "limits": {key: settings[key] for key in DEFAULT_SETTINGS if key.startswith("max_")},
-            "permission_mode": "automatic",
+            "permission_mode": item.get("permission_mode", "automatic") if spawned_kind == "cron" else settings["permission_mode"],
             "allowed_write_tools": list(settings.get("allowed_write_tools") or []),
             "queue": [],
             "in_flight": None,
@@ -460,7 +462,10 @@ def trigger_automation_in_tx(
         spawned_row["local_execution"] = {
             "workspace_root": workspace_root,
             "desktop_access": desktop_access,
+            **restrict_web_policy({}, settings),
         }
+        if item.get("workspace_source") == "task" and workspace_root == item.get("workspace_root"):
+            spawned_row["local_execution"]["workspace_source"] = "task"
         spawned_row["skills"] = []
         spawned_row["verify_text_responses"] = False
         spawned_row["response_language"] = "zh-CN"
@@ -487,8 +492,8 @@ def trigger_automation_in_tx(
     item["last_task_id"] = spawned_task_id
     item["updated_at"] = now_str
 
-    _advance_schedule(item, current_ms, store=runtime.store, run_count=run_count)
-    automations.write_automation_files(runtime.store, item)
+    _advance_schedule(item, current_ms, store=runtime.store, run_count=run_count, data=data)
+    automations.try_write_automation_files(runtime.store, item)
 
     run_record = {
         "id": run_id,
@@ -529,7 +534,9 @@ class AutomationSchedulerWorker:
             return False
         records = data.get("automations", {})
         current_ms = automations.now_ms()
-        for item in records.values():
+        for auto_id, item in records.items():
+            if auto_id != auto_id.lower():
+                continue  # Conflicting legacy ids stay listed for repair, never double-dispatched.
             if not isinstance(item, dict) or str(item.get("status") or "ACTIVE").upper() != "ACTIVE":
                 continue
             due = item.get("next_run_at")
@@ -557,7 +564,7 @@ class AutomationSchedulerWorker:
                 created_ms = automations.parse_iso_ms(run.get("created_at"))
                 if created_ms is not None and current_ms - created_ms >= automations.LOST_TASK_TIMEOUT_MS:
                     return True
-        return automations.sync_automation_files(self.runtime.store, records, check_only=True)
+        return automations.sync_automation_files(self.runtime.store, records, check_only=True, data=data)
 
     def run_once(self) -> WorkerRunResult:
         if not self._lock.acquire(blocking=False):
@@ -607,13 +614,15 @@ class AutomationSchedulerWorker:
 
                 due_items: list[tuple[str, int]] = []
                 for auto_id, item in data["automations"].items():
+                    if auto_id != auto_id.lower():
+                        continue
                     if not isinstance(item, dict):
                         continue
                     if str(item.get("status") or "ACTIVE").upper() != "ACTIVE":
                         continue
                     next_ms = item.get("next_run_at")
                     if next_ms is None:
-                        salt = automations.ensure_jitter_salt(self.runtime.store)
+                        salt = automations.ensure_jitter_salt(self.runtime.store, data)
                         next_ms = automations.compute_next_run_at(
                             str(item.get("rrule") or ""),
                             after_ms=current_ms,

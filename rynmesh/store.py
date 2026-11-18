@@ -15,10 +15,15 @@ import re
 import shutil
 import socket
 import sys
+import threading
+import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
+
+from .lan_address import local_lan_ips, primary_lan_ip, private_lan_ip, usable_ipv4
 
 from .credits import GENERAL_CATEGORY, GLOBAL_CATEGORY, FileCreditLedger
 from .crypto import SignedPayload, b64, public_key_from_private, sha256_bytes, unb64
@@ -127,52 +132,15 @@ def _machine_name() -> str:
 
 
 def _local_ip_addresses() -> tuple[str, ...]:
-    addresses: set[str] = set()
-    configured = os.environ.get("RYNMESH_MACHINE_IP", "").strip()
-    if configured and os.environ.get("RYNMESH_AUTO_PEER_ENDPOINT", "").strip() != "1":
-        addresses.add(configured)
-    try:
-        if sys.platform == "darwin":
-            # A Mac's hostname may wait minutes for mDNS. Interface enumeration
-            # is local and must not hold up startup or the health endpoint.
-            import ifaddr
-            candidates = (ip.ip for adapter in ifaddr.get_adapters() for ip in adapter.ips
-                          if isinstance(ip.ip, str))
-        else:
-            candidates = (item[4][0] for item in
-                          socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET))
-        for address in candidates:
-            if address and not address.startswith("127."):
-                addresses.add(address)
-    except OSError:
-        pass
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-            sock.settimeout(0.2)
-            sock.connect(("1.1.1.1", 80))
-            address = sock.getsockname()[0]
-            if address and not address.startswith("127."):
-                addresses.add(address)
-    except OSError:
-        pass
+    addresses = set(local_lan_ips())
+    primary = _primary_lan_ip()
+    if usable_ipv4(primary):
+        addresses.add(primary)
     return tuple(sorted(addresses))
 
 
 def _primary_lan_ip() -> str:
-    if os.environ.get("RYNMESH_AUTO_PEER_ENDPOINT", "").strip() != "1":
-        addresses = _local_ip_addresses()
-        return addresses[0] if addresses else ""
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
-            # Route lookup only; connect sends no UDP packet.
-            probe.connect(("1.1.1.1", 80))
-            address = str(probe.getsockname()[0])
-            if address and not address.startswith("127."):
-                return address
-    except OSError:
-        pass
-    addresses = _local_ip_addresses()
-    return addresses[0] if addresses else ""
+    return primary_lan_ip()
 
 
 def _is_unspecified_host(host: str) -> bool:
@@ -357,6 +325,7 @@ class RynmeshStore:
         # services on one node merge into the single per-peer capacity record
         # instead of overwriting each other. See register_job_capacity.
         self._advertised_capacity: dict[str, dict[str, Any]] = {}
+        self._capacity_lock = threading.RLock()
         self.credit_ledger = FileCreditLedger(
             self.network_dir / "credits",
             tier_resolver=self._resolve_identity_tier,
@@ -506,6 +475,7 @@ class RynmeshStore:
         self,
         *,
         capabilities: list[str] | tuple[str, ...],
+        owner: str = "default",
         network_id: str = "rynmesh-main",
         capacity_units: int = 1,
         max_concurrent: int = 1,
@@ -516,28 +486,52 @@ class RynmeshStore:
         cleaned_capabilities = tuple(str(item).strip() for item in capabilities if str(item).strip())
         if not cleaned_capabilities:
             raise ValueError("capabilities are required")
-        # The registry stores ONE capacity record per peer, replaced wholesale.
-        # Multiple services on one node (LLM provider, video, egress) each
-        # register their own capability list, and the LLM provider republishes
-        # every 30s — without merging, every publication wipes the others'
-        # capabilities out of discovery. Merge against what this process has
-        # already advertised: capabilities union, metadata/price update.
-        merged = self._advertised_capacity.setdefault(network_id, {
-            "capabilities": set(), "price_credits": {}, "metadata": {},
-        })
-        merged["capabilities"].update(cleaned_capabilities)
-        merged["price_credits"].update(dict(price_credits or {}))
-        merged["metadata"].update(dict(metadata or {}))
+        with self._capacity_lock:
+            self._advertised_capacity.setdefault(network_id, {})[owner] = {
+                "capabilities": cleaned_capabilities,
+                "price_credits": dict(price_credits or {}),
+                "metadata": dict(metadata or {}),
+                "refreshed_at": time.monotonic(),
+                "polling_interval_sec": max(1, int(polling_interval_sec or 30)),
+                "capacity_units": max(1, int(capacity_units or 1)),
+                "max_concurrent": max(1, int(max_concurrent or 1)),
+            }
+            return self._publish_job_capacity(network_id)
+
+    def withdraw_job_capacity(self, owner: str, network_id: str) -> dict[str, Any]:
+        with self._capacity_lock:
+            owners = self._advertised_capacity.get(network_id, {})
+            if not owners:
+                return {"withdrawn": False, "published": False}
+            withdrawn = owner in owners
+            owners.pop(owner, None)
+            return {**self._publish_job_capacity(network_id), "withdrawn": withdrawn}
+
+    def _publish_job_capacity(self, network_id: str) -> dict[str, Any]:
+        """Publish only live owners; caller holds _capacity_lock."""
+        now = time.monotonic()
+        owners = self._advertised_capacity.get(network_id, {})
+        for owner, value in list(owners.items()):
+            if now - value["refreshed_at"] > 3 * value["polling_interval_sec"]:
+                del owners[owner]
+        if not owners:
+            self._advertised_capacity.pop(network_id, None)
+            return {"published": False}
+        active = sorted(owners.values(), key=lambda value: value["refreshed_at"])
+        capabilities = sorted({cap for value in active for cap in value["capabilities"]})
+        prices = {key: price for value in active for key, price in value["price_credits"].items()}
+        metadata = {key: item for value in active for key, item in value["metadata"].items()}
+        latest = active[-1]
         record = JobCapacityRecord(
             peer_id=self.peer_id,
             node_name=self.node_name,
-            capabilities=tuple(sorted(merged["capabilities"])),
+            capabilities=tuple(capabilities),
             network_id=network_id,
-            capacity_units=max(1, int(capacity_units or 1)),
-            max_concurrent=max(1, int(max_concurrent or 1)),
-            price_credits=dict(merged["price_credits"]),
-            polling_interval_sec=max(1, int(polling_interval_sec or 30)),
-            metadata=dict(merged["metadata"]),
+            capacity_units=latest["capacity_units"],
+            max_concurrent=latest["max_concurrent"],
+            price_credits=prices,
+            polling_interval_sec=latest["polling_interval_sec"],
+            metadata=metadata,
         )
         signed = sign_job_capacity(record, private_key_bytes=self.private_key_bytes)
         result = self.registry.publish_job_capacity(signed)
@@ -549,7 +543,7 @@ class RynmeshStore:
             evidence_hash=signed.subject_hash,
             reason="node advertised polling job capacity",
             dedupe_key=f"job_capacity:{network_id}:{self.peer_id}",
-            metadata={"capabilities": list(cleaned_capabilities)},
+            metadata={"capabilities": capabilities},
         )
         result["record"] = record.to_dict()
         result["record_hash"] = signed.subject_hash
@@ -1291,7 +1285,7 @@ class RynmeshStore:
                 item["provider_peer_slug"] = str(peer_info.get("peer_slug", "") or "")
         return payload
 
-    def list_peer_content(self, endpoint: str, *, timeout_s: float = 20.0) -> dict[str, Any]:
+    def list_peer_content(self, endpoint: str, *, expected_peer_id: str = "", timeout_s: float = 20.0) -> dict[str, Any]:
         from .peer_http import HttpPeerClient
 
         client = HttpPeerClient(endpoint, timeout_s=timeout_s)
@@ -1303,7 +1297,7 @@ class RynmeshStore:
         for item in content:
             if isinstance(item, dict):
                 item["peer_endpoint"] = endpoint
-                item["provider_peer_id"] = str(peer_info.get("peer_id", "") or "")
+                item["provider_peer_id"] = expected_peer_id or str(peer_info.get("peer_id", "") or "")
                 item["provider_peer_slug"] = str(peer_info.get("peer_slug", "") or "")
         return payload
 
@@ -1418,6 +1412,7 @@ class RynmeshStore:
         timeout_s: float,
     ) -> dict[str, Any]:
         from .peer_http import HttpPeerClient
+        from .atomic_io import atomic_write_json, fs_path
 
         client = HttpPeerClient(endpoint, timeout_s=timeout_s)
         peer_info = self._validate_peer_endpoint(client, expected_peer_id=expected_peer_id)
@@ -1425,26 +1420,24 @@ class RynmeshStore:
             client.get_content_manifest(item_id) if use_content_api else client.get_manifest(item_id)
         )
         validation = self._validate_peer_manifest(manifest)
-        clip_dir = self._clip_dir(item_id)
-        clip_dir.mkdir(parents=True, exist_ok=True)
-        (clip_dir / "manifest.json").write_text(
-            json.dumps(manifest.to_dict(), indent=2, sort_keys=True),
-            encoding="utf-8",
-        )
-        media_path = (
-            client.download_content(item_id, clip_dir / f"{_safe_id(item_id)}.media")
-            if use_content_api
-            else client.download_media(item_id, clip_dir / f"{_safe_id(item_id)}.media")
-        )
         if validation.manifest is None:
             raise StoreError("manifest_not_allowed")
-        media_hash = _file_sha256(media_path)
-        if media_hash != validation.manifest.asset.media_hash:
-            try:
-                media_path.unlink()
-            except OSError:
-                pass
-            raise StoreError("media_hash_mismatch")
+        clip_dir = self._clip_dir(item_id)
+        clip_dir.mkdir(parents=True, exist_ok=True)
+        media_path = clip_dir / f"{_safe_id(item_id)}.media"
+        part_path = fs_path(media_path.with_name(media_path.name + ".part"))
+        try:
+            if use_content_api:
+                client.download_content(item_id, part_path)
+            else:
+                client.download_media(item_id, part_path)
+            media_hash = _file_sha256(part_path)
+            if media_hash != validation.manifest.asset.media_hash:
+                raise StoreError("media_hash_mismatch")
+            part_path.replace(fs_path(media_path))
+            atomic_write_json(clip_dir / "manifest.json", manifest.to_dict(), indent=2)
+        finally:
+            part_path.unlink(missing_ok=True)
         credit = self.record_credit_event(
             kind="full_served",
             subject_peer_id=str(peer_info.get("peer_id", "") or ""),
@@ -1700,7 +1693,17 @@ class RynmeshStore:
     def _default_registration_endpoints(self) -> tuple[str, ...]:
         peer_endpoint = self._default_peer_endpoint()
         if peer_endpoint:
-            return (peer_endpoint,)
+            endpoints = [peer_endpoint]
+            parsed = urlsplit(peer_endpoint)
+            bind_host = os.environ.get("RYNMESH_PEER_HOST", "127.0.0.1")
+            if parsed.scheme in {"http", "https"} and parsed.hostname and _is_unspecified_host(bind_host):
+                port = parsed.port or (443 if parsed.scheme == "https" else 80)
+                for address in _local_ip_addresses():
+                    if private_lan_ip(address) and address != parsed.hostname:
+                        endpoints.append(parsed._replace(netloc=f"{address}:{port}").geturl())
+                        if len(endpoints) == 4:
+                            break
+            return tuple(endpoints)
         return (f"file://{self.network_peer_dir}",)
 
     def _registry_info(self) -> dict[str, Any]:

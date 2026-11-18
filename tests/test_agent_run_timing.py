@@ -231,7 +231,8 @@ def test_restart_does_not_estimate_unsettled_tick_from_wall_clock(tmp_path, cloc
     assert restarted.get(row["id"])["run_timing"]["measurement"] == "pending"
     restarted.reconcile()
     recovered = restarted.get(row["id"])
-    assert recovered["status"] == "interrupted"
+    assert recovered["status"] == "queued"
+    assert any(e["type"] == "interrupted" and e.get("continued") for e in recovered["events"])
     assert recovered["run_timing"] == {"recorded_seconds": 7, "elapsed_seconds": 7, "max_seconds": recovered["limits"]["max_seconds"], "measurement": "recorded"}
 
 

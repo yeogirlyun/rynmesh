@@ -256,8 +256,9 @@ def child(config_path):
     if phase == "before":
         if runtime.store.read()["tasks"]:
             raise RuntimeError("fresh_consumer_required")
+        context_limit = 12000 if config["live"] else config.get("fixture_context_chars", 12000)
         runtime.update_settings({"enabled": True, "model_id": selected, "max_steps": 24, "max_seconds": 600,
-                                 "max_context_chars": 12000, "permission_mode": "confirm_changes"})
+                                 "max_context_chars": context_limit, "permission_mode": "confirm_changes"})
         connection = next(iter(nas.state["sources"]))
         scope = scope_selection(connection["id"])
         current = runtime.create({"message": case["prompt"], "scope": scope,

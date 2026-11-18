@@ -22,13 +22,14 @@ import json
 import math
 
 from . import checkpoint_refs, output_policy
-from .protocol import SENSITIVE, sanitized
+from .protocol import SENSITIVE, event_result, sanitized
 from .store import AgentError, encoded
 
 DEFAULT_BYTES_PER_TOKEN = float(output_policy.ESTIMATED_BYTES_PER_TOKEN)
 # Byte-level tokenizers emit at most one token per byte. Much lower observed
 # ratios mostly reflect a provider-side hidden prompt, so bound the correction.
 MIN_BYTES_PER_TOKEN = 1.5
+MAX_BYTES_PER_TOKEN = 4.0
 # Small requests are dominated by framing and say little about text density.
 MIN_CALIBRATION_REQUEST_BYTES = 8192
 # Token counts are estimates; keep an allowance proportional to the estimate.
@@ -51,17 +52,93 @@ LEDGER_MAX_BYTES = 3000
 LEDGER_MIN_BYTES = 600
 LEDGER_WINDOW_SHARE = 32
 
+RECEIPT_NOTE_MAX_BYTES = 24000
+
+
+def _receipt_scalars(value: dict) -> dict:
+    fields = {"tool", "call_id", "status", "ok", "error", "exit_code", "id", "path",
+              "url", "name", "bytes", "sha256", "content_sha256", "created", "overwrite",
+              "business_acknowledged"}
+    return {
+        key: item[:256] if isinstance(item, str) else item
+        for key, item in value.items()
+        if (key in fields or key.endswith(("_id", "_ref")))
+        and (item is None or isinstance(item, (str, bool, int, float)))
+    }
+
+
+def receipt_projection(row: dict, uncompacted_call_ids: set, max_bytes: int) -> list[dict]:
+    """Budgeted checkpoint metadata; original mutation evidence stays in history."""
+    epoch = row.get("context_epoch", 0)
+    writes = {event["call_id"]: event for event in row["events"]
+              if event["type"] == "tool_started" and event.get("call_id")
+              and event.get("effect") == "write" and event.get("context_epoch", 0) == epoch}
+    receipts = []
+    for event in row["events"]:
+        if (event["type"] != "tool_result" or event.get("call_id") not in writes
+                or event.get("context_epoch", 0) != epoch):
+            continue
+        tool = event["tool"]
+        shell = tool in {"ryn_code_exec", "ryn_shell_execute"}
+        if shell and event["call_id"] in uncompacted_call_ids:
+            continue
+        value = event_result(row, event)
+        slim = _receipt_scalars(value) if isinstance(value, dict) else {}
+        if isinstance(value, dict):
+            if shell:
+                # Keep the existing shell receipt snapshot, including its output head.
+                for key in ("timed_out", "duration_ms"):
+                    if key in value and isinstance(value[key], (bool, int, float)):
+                        slim[key] = value[key]
+                for key in ("output", "stdout", "stderr"):
+                    text = value.get(key)
+                    if isinstance(text, str) and text:
+                        slim[key] = text[:200] + ("...[truncated]" if len(text) > 200 else "")
+            elif (value.get("server_id") == "computer-use"
+                  or value.get("tool") in {"computer_act_window", "ryn_computer_action"}):
+                # Protocol containers retain only the same scalar metadata whitelist.
+                structured = value.get("structuredContent")
+                if isinstance(structured, dict):
+                    slim["structuredContent"] = _receipt_scalars(structured)
+                    observation = structured.get("observation")
+                    if isinstance(observation, dict):
+                        slim["structuredContent"]["observation"] = _receipt_scalars(observation)
+        receipt = {"tool": tool[:256], "call_id": event["call_id"][:256], "result": slim}
+        operation_id = event.get("operation_id") or writes[event["call_id"]].get("operation_id")
+        if operation_id:
+            receipt["operation_id"] = operation_id[:256]
+        receipts.append(receipt)
+
+    # Select a contiguous newest suffix and reserve space for the older counts.
+    aggregate = {"older_write_receipts_confirmed": 0, "tools": {}}
+    total = len(encoded(receipts))
+    start = 0
+    while start < len(receipts) and total > max_bytes:
+        omitted = receipts[start]
+        start += 1
+        aggregate["older_write_receipts_confirmed"] += 1
+        tools = aggregate["tools"]
+        tools[omitted["tool"]] = tools.get(omitted["tool"], 0) + 1
+        total = len(encoded([aggregate, *receipts[start:]]))
+    projected = [aggregate, *receipts[start:]] if start else receipts
+    return projected if len(encoded(projected)) <= max_bytes else []
+
+
 # Told to the main model after a checkpoint, so a summary is not read as the end
 # of the task or as a reason to start over. Codex gives its model the same rule
 # for compaction (openai/codex rust-v0.167.0 model instructions); wording is Ryn's.
 # The note is rebuilt on every later request and sits before the turns that came
 # after the checkpoint, so it points at those turns too: Next alone goes stale as
-# the work moves on, and "still open" is untrue once the task is done and the
-# owner sends a follow-up.
+# the work moves on. The final check covers earlier requests only if still open,
+# including when the owner sends a follow-up after completed work.
 CHECKPOINT_CONTINUATION = (
-    "\nOlder turns were condensed into this checkpoint; that does not end or restart the task. Carry on from "
-    "Next and the messages after this note without redoing finished steps or reports. "
-    "The latest owner message is the current direction.")
+    "\nContinue from Next and the messages after this note, following the latest owner direction; "
+    "do not restart or redo finished work. "
+    "Before the final reply, check it answers the latest owner request and any earlier ones still open.")
+# Pinned in every request, so omitted in small windows where the floor is tight.
+CHECKPOINT_RECOVERY = (
+    " Use ryn_history_search/ryn_history_read to recover exact details the summary omitted. "
+    "Before relying on file or process state recorded here, read the current state again.")
 
 _LEDGER_SKIP_TOOLS = frozenset({"ryn_update_plan"})
 _BODY_KEYS = frozenset({"content", "text", "patch", "code", "input", "data", "body", "script",
@@ -104,32 +181,48 @@ def observed_bytes_per_token(row) -> float | None:
     return None
 
 
-def applied_density(policy: dict | None, bytes_per_token: float | None) -> float | None:
-    """The bytes/token ratio that tightens capacity, or None when the default estimate stands.
+def applied_density(policy: dict | None, bytes_per_token: float | None, cjk_share: float = 0.0) -> float | None:
+    """Use the CJK prior before usage exists, including for an assumed window.
 
-    Applies only to a declared window and to text denser than the default;
-    sparser text never loosens the admission limit.
+    Once calibrated, retain the measured-density policy; the request's prior
+    must not override the provider's observation.
     """
-    if (bytes_per_token is None or bytes_per_token >= DEFAULT_BYTES_PER_TOKEN
+    if (bytes_per_token is None and cjk_share > 0 and isinstance(policy, dict)
+            and policy.get("admission_bytes_per_token", DEFAULT_BYTES_PER_TOKEN) == DEFAULT_BYTES_PER_TOKEN):
+        return max(2.0, DEFAULT_BYTES_PER_TOKEN - cjk_share)
+    if (bytes_per_token is None
             or not isinstance(policy, dict) or not policy.get("context_window_known")):
         return None
-    return max(MIN_BYTES_PER_TOKEN, bytes_per_token)
+    if bytes_per_token > DEFAULT_BYTES_PER_TOKEN and (
+            policy.get("mode") != "auto"
+            or policy.get("admission_bytes_per_token", DEFAULT_BYTES_PER_TOKEN) < DEFAULT_BYTES_PER_TOKEN):
+        return None
+    return min(MAX_BYTES_PER_TOKEN, max(MIN_BYTES_PER_TOKEN, bytes_per_token))
 
 
-def input_capacity(hard_limit_bytes: int, policy: dict | None = None, bytes_per_token: float | None = None) -> int:
+def input_capacity(hard_limit_bytes: int, policy: dict | None = None, bytes_per_token: float | None = None,
+                   density_penalty: float = 1.0, *, cjk_share: float = 0.0) -> int:
     """Request bytes that fit the input side of the model window.
 
     The hard limit already reserves the configured output and framing tokens
     at the default ratio. Observed denser text (for example Chinese) lowers
-    the capacity; sparser text never raises it above the admission limit.
+    capacity; calibrated sparse text may raise it in automatic mode, with
+    an estimate margin and without exceeding an explicit owner ceiling.
+    An upstream rejection adds a persistent penalty until fresh main usage calibrates it.
     """
     capacity = int(hard_limit_bytes)
-    density = applied_density(policy, bytes_per_token)
-    if density is None:
-        return capacity
-    tokens = (int(policy.get("context_window_tokens") or 0) - int(policy.get("reserved_output_tokens") or 0)
-              - int(policy.get("framing_reserve_tokens") or 0))
-    return max(0, min(capacity, int(tokens * density)))
+    density = applied_density(policy, bytes_per_token, cjk_share)
+    if density is not None:
+        tokens = (int(policy.get("context_window_tokens") or 0) - int(policy.get("reserved_output_tokens") or 0)
+                  - int(policy.get("framing_reserve_tokens") or 0))
+        if density > DEFAULT_BYTES_PER_TOKEN:
+            capacity = max(0, int(tokens * density * (1 - ESTIMATE_ERROR)))
+            manual = policy.get("manual_max_context_bytes")
+            if manual is not None:
+                capacity = min(capacity, manual)
+        else:
+            capacity = max(0, min(capacity, int(tokens * density)))
+    return int(capacity * density_penalty)
 
 
 def request_bytes_at_density(analysis: dict, density: float | None) -> int:
@@ -178,6 +271,24 @@ def assess(*, request_bytes: int, capacity_bytes: int, step_bytes: int, calibrat
     headroom = capacity_bytes - request_bytes
     return {"request_bytes": request_bytes, "capacity_bytes": capacity_bytes, "headroom_bytes": headroom,
             "step_bytes": step_bytes, "margin_bytes": margin, "need_bytes": need, "near_limit": headroom < need}
+
+
+def remaining_notice(usage: dict | None, level: int) -> tuple[str | None, int]:
+    """Emit each low-headroom threshold once within the current context window."""
+    if not usage:
+        return None, level
+    capacity, density = usage["capacity_bytes"], usage["bytes_per_token"]
+    if capacity <= 0 or density <= 0:
+        return None, level
+    remaining = max(0, capacity - usage["request_bytes"])
+    next_level = 2 if remaining < capacity * .15 else 1 if remaining < capacity * .30 else 0
+    if next_level <= level:
+        return None, level
+    tokens, percent = int(remaining / density), int(remaining * 100 / capacity)
+    return (
+        f"Server context notice: about {tokens} tokens ({percent}%) of this context window remain. "
+        "Finish the current step or record key findings in the plan or files; "
+        "older turns will be summarized automatically.", next_level)
 
 
 def worthwhile(capacity_bytes: int, projected_after_bytes: int, need_bytes: int) -> bool:

@@ -855,7 +855,6 @@ let settings: NodeSettings = {
   rank_default: "weight",
   publish_visibility: "network",
   fetch_budget_mb: 8192,
-  fetch_used_mb: 4324,
   fetch_timeout_s: 60,
   onboarding_version: 0,
   notifications_enabled: true,
@@ -864,6 +863,7 @@ let settings: NodeSettings = {
   notification_quiet_end: 8,
   desktop_managed: true,
   network_id: "rynmesh-main",
+  network_proxy: { mode: "off", url: "" },
 };
 
 let recommendationProfile: RecommendationProfile = {
@@ -1055,7 +1055,6 @@ export function makeFixtureNodeClient(): NodeClient {
         fetched_items: ITEMS.filter((item) =>
           ["fetched_full", "preview_only", "local"].includes(item.fetch_status),
         ).length,
-        pending_recs: RECOMMENDATIONS.length,
         version: "ryn-node 0.4.2",
         uptime_seconds: 84320,
       };

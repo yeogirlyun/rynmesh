@@ -120,6 +120,8 @@ def record_request_policy(row, policy):
     if not isinstance(policy, dict) or not isinstance(policy.get("enforcement"), str) or policy["enforcement"] not in modes:
         raise AgentError("agent_invalid_request_policy")
     safe = {"enforcement": policy["enforcement"], "measurement": "pre_admission_upper_bound"}
+    if policy.get("cancel_failed") is True:
+        safe["cancel_failed"] = True
     for key in ("provider_timeout_seconds", "effective_timeout_seconds"):
         value = policy.get(key)
         if value is not None and (type(value) not in (int, float) or not math.isfinite(value) or not 0 <= value <= RANGES["max_total_seconds"][1]):
@@ -221,36 +223,75 @@ def initialize(row):
 
 
 def new_round(row):
-    initialize(row)["round"] += 1
+    state = initialize(row)
+    state["round"] += 1
+    compact(state)
+
+
+def _summary(records):
+    models = [record for record in records if record["kind"] == "model"]
+    return {"model_calls": len(models), "tool_calls": len(records) - len(models),
+            "known_input_tokens": sum(item.get("input_tokens") or 0 for item in models),
+            "known_output_tokens": sum(item.get("output_tokens") or 0 for item in models),
+            "known_cached_input_tokens": sum(item.get("cached_input_tokens") or 0 for item in models),
+            "has_cached": any(item.get("cached_input_tokens") is not None for item in models),
+            "unknown_input": any(item.get("input_tokens") is None for item in models),
+            "unknown_output": any(item.get("output_tokens") is None for item in models),
+            "unknown_elapsed": any(item.get("elapsed_seconds") is None for item in records),
+            "active_seconds": sum(item.get("elapsed_seconds") or 0 for item in records),
+            "charged_tokens": sum(item["charged_tokens"] for item in records),
+            "charged_seconds": sum(item["charged_seconds"] for item in records),
+            "unsettled_operations": sum(item["status"] == "reserved" for item in records)}
+
+
+def _merge_summaries(items):
+    empty = _summary([])
+    return {key: (any(item[key] for item in items) if type(value) is bool
+                  else sum(item[key] for item in items)) for key, value in empty.items()}
+
+
+def compact(state):
+    grouped, keep = {}, []
+    for record in state["records"]:
+        if record["round"] < state["round"] - 1 and record["status"] in {"settled", "released"}:
+            grouped.setdefault(str(record["round"]), []).append(record)
+        else:
+            keep.append(record)
+    totals = state.setdefault("round_totals", {})
+    for number, records in grouped.items():
+        summaries = [_summary(records)]
+        if number in totals:
+            summaries.append(totals[number])
+        totals[number] = _merge_summaries(summaries)
+    state["records"] = keep
 
 
 def _totals(state, records, *, lifetime):
+    folded = state.get("round_totals", {})
+    summaries = list(folded.values()) if lifetime else [folded[str(state["round"])]] if str(state["round"]) in folded else []
+    total = _merge_summaries([*summaries, _summary(records)])
     waits = state.get("retry_wait_by_round", {})
     retry_wait = sum(waits.values()) if lifetime else waits.get(str(state["round"]), 0)
-    models = [record for record in records if record["kind"] == "model"]
-    unknown = any(record.get("input_tokens") is None or record.get("output_tokens") is None for record in models)
     legacy = state["legacy_usage_unknown"] and (lifetime or state["round"] == 1)
-    known_input = sum(record.get("input_tokens") or 0 for record in models)
-    known_output = sum(record.get("output_tokens") or 0 for record in models)
-    known_cached = sum(record.get("cached_input_tokens") or 0 for record in models)
-    has_cached = any(record.get("cached_input_tokens") is not None for record in models)
-    model_floor = len(models) + (state["legacy_model_calls"] if lifetime else 0)
-    tool_floor = len(records) - len(models) + (state.get("legacy_tool_calls", 0) if lifetime else 0)
+    model_floor = total["model_calls"] + (state["legacy_model_calls"] if lifetime else 0)
+    tool_floor = total["tool_calls"] + (state.get("legacy_tool_calls", 0) if lifetime else 0)
+    known_input, known_output = total["known_input_tokens"], total["known_output_tokens"]
+    unknown = total["unknown_input"] or total["unknown_output"]
     return {"model_calls": None if legacy else model_floor,
             "tool_calls": None if legacy else tool_floor,
             "charged_model_calls": model_floor, "charged_tool_calls": tool_floor,
             "known_input_tokens": known_input, "known_output_tokens": known_output,
-            "known_cached_input_tokens": known_cached,
-            "cached_input_tokens": known_cached if has_cached and not legacy else None,
-            "input_tokens": None if legacy or any(record.get("input_tokens") is None for record in models) else known_input,
-            "output_tokens": None if legacy or any(record.get("output_tokens") is None for record in models) else known_output,
+            "known_cached_input_tokens": total["known_cached_input_tokens"],
+            "cached_input_tokens": total["known_cached_input_tokens"] if total["has_cached"] and not legacy else None,
+            "input_tokens": None if legacy or total["unknown_input"] else known_input,
+            "output_tokens": None if legacy or total["unknown_output"] else known_output,
             "total_tokens": None if unknown or legacy else known_input + known_output,
-            "charged_tokens": sum(record["charged_tokens"] for record in records),
-            "charged_seconds": sum(record["charged_seconds"] for record in records) + (state["legacy_seconds"] if lifetime else 0) + retry_wait,
-            "active_seconds": None if legacy or any(record.get("elapsed_seconds") is None for record in records) else sum(record["elapsed_seconds"] for record in records),
+            "charged_tokens": total["charged_tokens"],
+            "charged_seconds": total["charged_seconds"] + (state["legacy_seconds"] if lifetime else 0) + retry_wait,
+            "active_seconds": None if legacy or total["unknown_elapsed"] else total["active_seconds"],
             "cost": None, "cost_status": "unknown", "usage_complete": not unknown and not legacy,
             "legacy_usage_unknown": legacy,
-            "unsettled_operations": sum(record["status"] == "reserved" for record in records)}
+            "unsettled_operations": total["unsettled_operations"]}
 
 
 def public(row):
@@ -444,7 +485,7 @@ def time_remaining(row):
     if not is_hard(row, "max_total_seconds"):
         return float("inf")
     # The current flight's time is checked by its own monotonic callback.
-    used = sum(record["charged_seconds"] for record in state["records"] if record["status"] != "reserved") + state["legacy_seconds"]
+    used = sum(record["charged_seconds"] for record in state["records"] if record["status"] != "reserved") + sum(item["charged_seconds"] for item in state.get("round_totals", {}).values()) + state["legacy_seconds"]
     limit = state["limits"]["max_total_seconds"]
     return max(0.0, limit - used - row.get("retry_wait_seconds", 0))
 
@@ -530,13 +571,20 @@ def segment_boundary(row):
     return None
 
 
+def _successful_tool_result(item):
+    result = item.get("result")
+    return (item.get("type") == "tool_result" and not item.get("internal")
+            and isinstance(result, dict) and not result.get("error") and not result.get("not_executed"))
+
+
 def _segment_successes(row, since_seq):
     count = 0
     for item in row.get("events", []):
-        if item.get("seq", 0) <= since_seq or item.get("type") != "tool_result" or item.get("internal"):
+        if item.get("seq", 0) <= since_seq:
             continue
-        result = item.get("result")
-        if isinstance(result, dict) and not result.get("error") and not result.get("not_executed"):
+        if item.get("type") == "turn_compacted":
+            count += sum(seq > since_seq for seq in item.get("successful_tool_result_seqs", []))
+        elif _successful_tool_result(item):
             count += 1
     return count
 

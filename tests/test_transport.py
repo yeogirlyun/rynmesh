@@ -58,10 +58,16 @@ def test_pinned_transport_dials_validated_ip_but_keeps_url_sni(monkeypatch) -> N
 
 
 def test_pinned_transport_rejects_proxy_owned_dns(monkeypatch) -> None:
-    monkeypatch.setenv("RYNMESH_HTTPS_PROXY", "http://127.0.0.1:9999")
+    monkeypatch.setenv("RYNMESH_HTTPS_PROXY", "socks5://127.0.0.1:9999")
     with pytest.raises(TransportError) as caught:
         get_pinned_transport("https://friend.example:8791", "8.8.8.8")
     assert caught.value.reason == "pinned_proxy_unsupported"
+
+    monkeypatch.setenv("RYNMESH_HTTPS_PROXY", "http://127.0.0.1:9999")
+    pinned = get_pinned_transport("https://friend.example:8791", "8.8.8.8")
+    assert pinned.profile.connect_host == "8.8.8.8"
+    assert pinned.profile.sni == "friend.example"
+    assert pinned.profile.proxies["https"] == "http://127.0.0.1:9999"
 
 
 def test_pinned_transport_bounds_socket_dial_failure(monkeypatch) -> None:

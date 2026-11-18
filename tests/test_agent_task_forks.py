@@ -262,8 +262,10 @@ def test_new_instruction_uses_actual_file_tool_and_rechecks_live_permission(env)
     assert len(e.client.get(f"/api/local/agent/tasks/{child['id']}/changes").json()['files'])==1
     assert not e.client.get(f'/api/local/agent/tasks/{tid}/changes').json()['files']
     second=fork(e,tid)
+    current = e.runtime.get(second['id'])
+    e.runtime.action(second['id'], {'action': 'set_permission', 'permission_mode': 'read_only',
+                                  'expected_control_revision': current['control_revision']})
     instruct(e,second['id'],'Try another file')
-    e.runtime.update_settings({'permission_mode':'read_only'})
     e.model.responses.extend([assistant(name='ryn_file_write',args={'path':'denied.txt','content':'must not write'}),assistant('Permission denied')])
     for _ in range(5): e.runtime.run_once()
     assert not (e.workspace/'denied.txt').exists()

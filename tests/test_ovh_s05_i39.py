@@ -456,12 +456,15 @@ def test_t7_xls_attachment_excerpt_includes_sheet_name_and_cell_values(tmp_path:
     store = SimpleNamespace(root=tmp_path / "store", default_workspace=lambda: str(tmp_path / "ws"))
     msg = attach_to_message(store, {"id": "task_xls_att"}, {"role": "user", "content": "请汇总"}, prepared)
 
-    assert "Bounded content excerpt:" in msg["content"]
-    assert "Sheet: 销售" in msg["content"]
-    assert "上海门店" in msg["content"]
-    assert "120" in msg["content"]
-    assert "2024-01-01" in msg["content"]
-    assert "240" in msg["content"]
+    from rynmesh.agent_runtime.input_attachments import provider_content
+    content = provider_content(msg)
+    assert "Bounded content excerpt:" in content
+    assert "Sheet: 销售" in content
+    assert "上海门店" in content
+    assert "120" in content
+    assert "2024-01-01" in content
+    assert "240" in content
+    assert "Sheet: 销售" not in msg["content"]
 
 
 def test_t8_doc_attachment_without_cache_does_not_block_send_and_uses_cache_when_present(tmp_path: Path, monkeypatch):
@@ -504,8 +507,11 @@ def test_t8_doc_attachment_without_cache_does_not_block_send_and_uses_cache_when
     monkeypatch.setattr("rynmesh.agent_runtime.file_preview.subprocess.run", forbidden_soffice)
     msg_cached = attach_to_message(store, {"id": "task_doc_cached"}, {"role": "user", "content": "再看下合同"}, prepared)
     assert soffice_called is False
-    assert "Bounded content excerpt:" in msg_cached["content"]
-    assert "已缓存的旧版合同条款正文" in msg_cached["content"]
+    from rynmesh.agent_runtime.input_attachments import provider_content
+    content = provider_content(msg_cached)
+    assert "Bounded content excerpt:" in content
+    assert "已缓存的旧版合同条款正文" in content
+    assert "已缓存的旧版合同条款正文" not in msg_cached["content"]
 
 
 def test_t9_table_work_calculates_xls_matching_csv_and_validates_headers(tmp_path: Path):

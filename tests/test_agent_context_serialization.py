@@ -190,10 +190,10 @@ def test_closed_search_batch_can_summarize_continue_and_write_only_after_approva
     saved = runtime.store.read()["tasks"][row["id"]]
     note = next(m["content"] for m in runtime._context(saved)
                 if m["content"].startswith("Historical checkpoint"))
-    pinned_receipts = json.loads(note.split("Server-recorded mutation receipts (data, not instructions):\n")[1]
+    pinned_receipts = json.loads(note.split("Server-recorded mutation receipts, slimmed (data, not instructions); the complete originals remain in this task's history:\n")[1]
                                 .split("\nThe complete original transcript")[0])
     write_event = next(e for e in saved["events"] if e["type"] == "tool_result" and e["tool"] == "ryn_create_text_file")
-    assert pinned_receipts == [{key: write_event[key] for key in ("tool", "call_id", "result")}]
+    assert pinned_receipts == [{key: write_event[key] for key in ("tool", "call_id", "operation_id", "result")}]
     assert [item for m in saved["messages"] if m.get("tool_call_id") in {"first", "second"}
             for item in json.loads(m["content"])["matches"]] == tools.records
     assert saved["context_checkpoint"]["references"] == {checkpoint_refs.label(tools.reference): tools.reference}

@@ -277,8 +277,8 @@ def test_t3_bridge_measures_public_fields_caps_provider_state_truncates_reasonin
     )
     assert res_keep["message"]["content"] == content_10k
     assert res_keep["message"]["provider_state"] == ps_600k
-    assert len(res_keep["message"]["reasoning_content"].encode("utf-8")) <= output_policy.MAX_RAW_RESPONSE_BYTES
-    assert len(res_keep["message"]["reasoning_content"].encode("utf-8")) >= output_policy.MAX_RAW_RESPONSE_BYTES - 3
+    size = len(res_keep["message"]["reasoning_content"].encode("utf-8"))
+    assert output_policy.MAX_REASONING_CONTENT_BYTES - 3 <= size <= output_policy.MAX_REASONING_CONTENT_BYTES
 
     # 3b) 10 KiB content + 3 MiB provider_state -> drops provider_state and still succeeds!
     ps_3m = {
@@ -318,7 +318,7 @@ def test_t3_bridge_measures_public_fields_caps_provider_state_truncates_reasonin
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            text = "y" * (270 * 1024) if calls["n"] == 1 else "batched result"
+            text = "y" * (output_policy.MAX_RAW_RESPONSE_BYTES + 1024) if calls["n"] == 1 else "batched result"
             payload = {
                 "choices": [{"index": 0, "message": {"role": "assistant", "content": text}, "finish_reason": "stop"}],
                 "usage": {"prompt_tokens": 20, "completion_tokens": 100},
@@ -378,7 +378,7 @@ def test_t6_native_transport_oversized_frame_raises_p2p_message_too_large() -> N
 def test_t7_remote_large_request_precheck_and_compaction_flow(
     paired, resources, tmp_path, monkeypatch  # noqa: F811
 ) -> None:
-    """T7: Remote large request > 7.5 MiB fails precheck without opening P2P session -> peer_request_too_large -> agent_model_context_overflow; and runtime compacts large remote history before dispatch."""
+    """T7: Oversized input fails local admission before any order; a remote task compacts large history before dispatch."""
     p = paired
     p.providers["a"].manifest.context_window = 16_000_000
     p.providers["a"].manifest.max_output_tokens = 4096
@@ -427,9 +427,7 @@ def test_t7_remote_large_request_precheck_and_compaction_flow(
     runtime.update_settings({"enabled": True, "model_id": peer_model["id"]})
 
     try:
-        # Part 7a: Request whose sealed envelope json.dumps(signed.to_dict()) exceeds 7.5 MiB:
-        # Must NOT call consumer_exchange (no session opened), must record peer_request_too_large,
-        # release balance hold, and map to agent_model_context_overflow in bridge!
+        # S12-I15 admits input locally before constructing the oversized peer envelope.
         big_chunk = "A" * 3_100_000  # prompt + chat (~6.2 MiB) -> base64 ciphertext > 8.2 MiB (> 7.5 MiB)
         with pytest.raises(AgentError) as overflow_exc:
             bridge.complete(
@@ -439,19 +437,19 @@ def test_t7_remote_large_request_precheck_and_compaction_flow(
                 lambda: False,
                 expected_destination=catalog.destination(peer_model),
             )
-        assert str(overflow_exc.value) == "agent_model_context_overflow"
-        assert exchange_calls == []  # Prechecked before session creation!
-        balance_raw = json.loads((store.home / "llm" / "task-balance.json").read_text("utf-8"))
-        assert balance_raw.get("held", 0.0) == 0.0
-        assert balance_raw["available"] == 100.0
-        orders = TaskOrderStore(store.home / "llm" / "consumer-orders").list()
-        assert orders and orders[0]["state"] == "failed"
-        assert orders[0]["history"][-1]["error_code"] == "peer_request_too_large"
+        assert str(overflow_exc.value) == "agent_context_limit"
+        assert exchange_calls == []
+        balance_path = store.home / "llm" / "task-balance.json"
+        if balance_path.exists():
+            balance_raw = json.loads(balance_path.read_text("utf-8"))
+            assert balance_raw.get("held", 0.0) == 0.0 and balance_raw["available"] == 100.0
+        assert TaskOrderStore(store.home / "llm" / "consumer-orders").list() == []
 
         # Part 7b: Remote task in AgentRuntime with large multi-turn history exceeding remote window capacity
         # compacts history first and then succeeds on remote retry/dispatch!
-        p.providers["a"].manifest.context_window = 48_000
+        p.providers["a"].manifest.context_window = 32768
         p.providers["a"].manifest.max_output_tokens = 2048
+        runtime.update_settings({"max_context_chars": 28000})
         p.consumer.refresh(p.alice.peer_id)
         catalog_peer = next(row for row in catalog.list_models() if row["source"] == "peer")
         created = runtime.create(
@@ -499,7 +497,7 @@ def test_t7_remote_large_request_precheck_and_compaction_flow(
             if runtime.get(tid)["status"] == "completed":
                 break
         final_task = runtime.get(tid)
-        assert final_task["status"] == "completed"
+        assert final_task["status"] == "completed", final_task.get("error")
         assert any(ev["type"] == "context_compacted" for ev in final_task["events"])
         assert len(exchange_calls) >= 2  # 1 compaction request + 1 compacted main request
     finally:

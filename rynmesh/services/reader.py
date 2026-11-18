@@ -11,6 +11,7 @@ with the most paragraph text, keep its block-level children, drop chrome.
 
 from __future__ import annotations
 
+import codecs
 import html as _html
 import json
 import re
@@ -23,13 +24,14 @@ from urllib.parse import urljoin
 
 from ..atomic_io import atomic_write_json
 
-__all__ = ["ReaderError", "extract_readable", "readable_url", "ReaderCache", "link_post_target"]
+__all__ = ["ReaderError", "decode_html", "extract_readable", "readable_url", "ReaderCache", "link_post_target"]
 
 MAX_BLOCKS = 400
 MIN_PARAGRAPH_CHARS = 25
 CACHE_TTL_S = 24 * 3600
 # Bump whenever extraction behaviour changes; older entries are then ignored.
-EXTRACTOR_VERSION = 3
+# Charset and table extraction share this cache revision.
+EXTRACTOR_VERSION = 4
 
 # Containers whose text is never article body.
 _SKIP_TAGS = {
@@ -46,7 +48,7 @@ _SKIP_TAGS = {
     "select",
     "iframe",
 }
-_BLOCK_TAGS = {"p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "blockquote", "pre"}
+_BLOCK_TAGS = {"p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "blockquote", "pre", "tr"}
 # HTML void elements never emit an end tag. Counting them while skipping a
 # subtree leaves the depth permanently unbalanced, which silently swallows the
 # rest of the document — real pages are full of <img>/<meta>/<br>.
@@ -110,6 +112,7 @@ class _Extractor(HTMLParser):
         self._group_stack: list[int] = []
         self._block: list[str] = []
         self._block_tag = ""
+        self._row_cells = 0
         self._next_group = 0
         self._images: dict[int, list[dict[str, str]]] = {}
         self.best_group: int | None = None
@@ -161,13 +164,21 @@ class _Extractor(HTMLParser):
             elif name in {"og:image", "twitter:image"} and not self.lead_image:
                 self.lead_image = content
         elif tag in {"article", "main", "div", "section", "body"}:
-            self._next_group += 1
-            if self._looks_like_chrome(attrs):
-                self._chrome_groups.add(self._next_group)
-            self._group_stack.append(self._next_group)
+            if self._block_tag != "tr":
+                self._next_group += 1
+                if self._looks_like_chrome(attrs):
+                    self._chrome_groups.add(self._next_group)
+                self._group_stack.append(self._next_group)
         elif tag in _BLOCK_TAGS:
-            self._flush()
-            self._block_tag = tag
+            if tag == "tr" or self._block_tag != "tr":
+                self._flush()
+                self._block_tag = tag
+                if tag == "tr":
+                    self._row_cells = 0
+        elif tag in {"td", "th"} and self._block_tag == "tr":
+            if self._row_cells:
+                self._block.append(" | ")
+            self._row_cells += 1
         elif tag == "br":
             self._block.append(" ")
         elif tag == "img" and self._group_stack:
@@ -191,10 +202,11 @@ class _Extractor(HTMLParser):
         if tag == "title":
             self._in_title = False
         elif tag in {"article", "main", "div", "section", "body"}:
-            self._flush()
-            if self._group_stack:
-                self._group_stack.pop()
-        elif tag in _BLOCK_TAGS:
+            if self._block_tag != "tr":
+                self._flush()
+                if self._group_stack:
+                    self._group_stack.pop()
+        elif tag in _BLOCK_TAGS and (tag == "tr" or self._block_tag != "tr"):
             self._flush()
         if self._stack and self._stack[-1] == tag:
             self._stack.pop()
@@ -230,19 +242,61 @@ class _Extractor(HTMLParser):
             best_id, best = max(self._groups.items(), key=lambda row: sum(len(t) for _, t in row[1]))
         self.best_group = best_id
         out = []
-        for tag, text in best[:MAX_BLOCKS]:
+        for tag, text in best:
             if tag == "p" and len(text) < MIN_PARAGRAPH_CHARS:
                 continue
             out.append({"tag": tag, "text": text})
         return out
 
 
-def extract_readable(data: bytes, *, url: str = "") -> dict[str, Any]:
-    """HTML bytes -> {title, byline, lead_image, blocks[], word_count}."""
+_CHARSET_RE = re.compile(r'''\bcharset\s*=\s*["']?([^\s;"'<>]+)''', re.IGNORECASE)
+
+
+class _CharsetParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.charsets = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag != "meta":
+            return
+        attrs = dict(attrs)
+        if attrs.get("charset"):
+            self.charsets.append(attrs["charset"])
+        elif (attrs.get("http-equiv") or "").lower() == "content-type":
+            match = _CHARSET_RE.search(attrs.get("content") or "")
+            if match:
+                self.charsets.append(match[1])
+
+
+def decode_html(data: bytes, content_type: str = "") -> str:
+    """Decode web text using byte order, declared charset, then common fallbacks."""
+    # UTF-32 must precede UTF-16 because their little-endian BOMs overlap.
+    for marks, encoding in (
+        ((codecs.BOM_UTF8,), "utf-8-sig"),
+        ((codecs.BOM_UTF32_LE, codecs.BOM_UTF32_BE), "utf-32"),
+        ((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE), "utf-16"),
+    ):
+        if data.startswith(marks):
+            return data.decode(encoding, errors="replace")
+    header = _CHARSET_RE.search(content_type)
+    parser = _CharsetParser()
+    parser.feed(data[:4096].decode("latin-1"))
+    declared = ([header[1]] if header else []) + parser.charsets
+    for encoding in declared:
+        try:
+            return data.decode(encoding, errors="replace")
+        except (LookupError, ValueError):
+            continue  # An unusable charset declaration does not hide the next hint.
     try:
-        text = data.decode("utf-8", "replace")
-    except Exception as exc:  # pragma: no cover - decode never raises with replace
-        raise ReaderError(f"decode_failed: {exc}") from exc
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data.decode("gb18030", errors="replace")
+
+
+def extract_readable(data: bytes, *, url: str = "", content_type: str = "", max_blocks: int = MAX_BLOCKS) -> dict[str, Any]:
+    """Extract bounded readable blocks and report their full pre-limit count."""
+    text = decode_html(data, content_type)
     parser = _Extractor()
     try:
         parser.feed(text)
@@ -251,6 +305,8 @@ def extract_readable(data: bytes, *, url: str = "") -> dict[str, Any]:
         # Malformed markup is normal on the open web; keep whatever parsed.
         pass
     blocks = parser.best_blocks()
+    blocks_total = len(blocks)
+    blocks = blocks[:max_blocks]
     images = parser._images.get(parser.best_group, [])
     if parser.lead_image:
         images = [{'url': parser.lead_image, 'alt': ''}, *images]
@@ -268,11 +324,12 @@ def extract_readable(data: bytes, *, url: str = "") -> dict[str, Any]:
         "byline": parser.byline.strip()[:200],
         "lead_image": parser.lead_image.strip(),
         "blocks": blocks,
+        "blocks_total": blocks_total,
         "access_required": parser.best_group in parser._password_groups,
         "word_count": words,
         "images": list(image_urls.values()),
         "images_omitted": parser.images_omitted,
-        "truncated": len(parser._groups.get(parser.best_group, [])) > MAX_BLOCKS,
+        "truncated": blocks_total > len(blocks),
     }
 
 

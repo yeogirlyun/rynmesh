@@ -25,7 +25,11 @@ from rynmesh.agent_runtime.store import AgentError, AgentToolRejected
 
 def _enable_browser(tools, context, state, *, headless=True, **kwargs):
     context["local_execution"]["desktop_access"] = True
-    state.transaction(lambda data: data["settings"].update(desktop_access=True))
+    def enable(data):
+        data["settings"]["desktop_access"] = True
+        # Authority comes from the stored task row, not the caller's context copy.
+        data["tasks"][context["task_id"]]["local_execution"]["desktop_access"] = True
+    state.transaction(enable)
     tools._browser = Browser(tools.home, tools.processes, headless=headless, **kwargs)
     return tools._browser
 

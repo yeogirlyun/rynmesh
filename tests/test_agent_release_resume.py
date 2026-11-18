@@ -40,6 +40,9 @@ def policy():
     return value
 
 
+R06_FIXTURE_CONTEXT_CHARS = 16000
+
+
 def activate_case(p, case_id, collector):
     manifest = copy.deepcopy(p["manifest"])
     manifest["covered_cases"] = [case_id]
@@ -54,12 +57,12 @@ def activate_case(p, case_id, collector):
         round_limits=[{"max_steps": 24, "max_seconds": 600, "max_context_chars": 100000, "max_output_chars": 20000}],
         lifetime_limits=[{"max_total_model_calls": 128, "max_total_tool_calls": 256, "max_total_tokens": 2000000, "max_total_seconds": 3600}])
     if case_id == "R06":
-        limits.update(max_model_calls=12, max_input_chars=12000,
-            round_limits=[{**limits["round_limits"][0], "max_context_chars": 12000} for _ in range(3)],
+        limits.update(max_model_calls=12, max_input_chars=R06_FIXTURE_CONTEXT_CHARS,
+            round_limits=[{**limits["round_limits"][0], "max_context_chars": R06_FIXTURE_CONTEXT_CHARS} for _ in range(3)],
             lifetime_limits=[{**limits["lifetime_limits"][0], "max_total_model_calls": cap} for cap in (4, 4, 12)])
     value["case_limits"][case_id] = limits
     for phase in value["phases"].values():
-        phase.update(max_context_bytes=12000 if case_id == "R06" else 100000, max_output_tokens=4096)
+        phase.update(max_context_bytes=R06_FIXTURE_CONTEXT_CHARS if case_id == "R06" else 100000, max_output_tokens=4096)
     save(path, value)
     manifest["artifacts"]["model_policy"] = registry.binding(path)
     save(p["manifest_path"], manifest)
@@ -267,6 +270,7 @@ def test_r06_real_collector_restart_keeps_compaction_and_original_4_plus_8(prepa
     (owner / "llm").mkdir(parents=True)
     (owner / "llm/sources.enc").write_bytes(b"offline test adapter only")
     config = {"case_id": "R06", "cohort": "ryn", "phase": "before", "live": False,
+              "fixture_context_chars": R06_FIXTURE_CONTEXT_CHARS,
         "trial": 1, "release_activation": str(prepared["activation"]), "output": str(output),
         "owner_home": str(owner), "owner_source_sha256": registry.sha(owner / "llm/sources.enc"),
         "source_id": "src-7de9fb1d36c44bc8", "planner_policy": policy()}
@@ -328,7 +332,8 @@ def offline_r06_worker(config_path):
 
         def chat(self, body, **_):
             specs, messages = body.get("tools", []), body["messages"]
-            if not specs:
+            is_checkpoint = str(messages[-1].get("content") or "").startswith("Server compaction request:")
+            if not specs or is_checkpoint:
                 content = "Offline observations retained: no writes, only listed resource roots."
                 if any('"evidence"' in str(m.get("content")) for m in messages):
                     content = json.dumps({"status": "unknown", "summary": "Offline restart wiring only.",
@@ -341,7 +346,7 @@ def offline_r06_worker(config_path):
                 available = name in {s["function"]["name"] for s in specs}
                 if not available:
                     name, args = NAME, {"load": [name]}
-                content = "Synthetic retained observation. " * 160 if config["phase"] == "before" and available else ""
+                content = "Synthetic retained observation. " * 275 if config["phase"] == "before" and available else ""
                 message = {"role": "assistant", "content": content, "tool_calls": [{"id": "offline-" + str(time.time_ns()),
                     "type": "function", "function": {"name": name, "arguments": json.dumps(args)}}]}
             return {"message": message, "text": message.get("content") or "", "finish_reason": "tool_calls" if message.get("tool_calls") else "stop",

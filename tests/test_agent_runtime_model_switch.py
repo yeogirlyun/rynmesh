@@ -73,7 +73,7 @@ def test_switch_retains_goal_budget_audit_but_closes_old_projection_and_does_not
     assert stored["scope"]["resource_grants"] == stored["scope"]["egress_grants"] == []
     assert stored["scope"]["selection"]["resources"] == before["scope"]["selection"]["resources"]
     assert stored["scope"]["selection"]["allow_model_data"] is False
-    assert stored["plan_history"][-1] == before["plan"] and not stored["plan"]["steps"]
+    assert stored["plan_history"][-1] == {"steps": [{"title": "PLAN-PRIVATE", "status": "pending"}]} and not stored["plan"]["steps"]
     projected = json.dumps(runtime._context(stored))
     assert all(text not in projected for text in ("SOURCE-PRIVATE", "DERIVED-PRIVATE", "SUMMARY-PRIVATE", "PLAN-PRIVATE"))
     assert "SOURCE-PRIVATE" in json.dumps(stored)
@@ -274,7 +274,7 @@ def test_new_model_cannot_repeat_confirmed_old_write_in_same_goal(tmp_path):
     runtime, model, tools, _, task_id, _ = setup(tmp_path, assistant(name="share_service", args={"service_id": "A"}), assistant("Done"))
     base_metadata = tools.metadata
     tools.metadata = lambda name: (
-        {**base_metadata(name), "extension_binding": {"kind": "mcp", "server_id": "svc", "tool_name": "share_service"}}
+        {**base_metadata(name), "extension_binding": {"kind": "mcp", "server_id": "svc", "original_tool_name": "share_service"}}
         if name == "share_service"
         else base_metadata(name)
     )

@@ -49,6 +49,7 @@ def test_owner_role_is_real_store_and_tools_not_relabeled_receiver(node, tmp_pat
         assert context["owner_id"] == "owner-test" and context["consumer_node_id"] == store.peer_id
         assert not context["resource_grants"] and not context["egress_grants"]
         models = runtime.tools.execute("ryn_list_models", {}, operation_id="owner-models", context=context, cancelled=lambda: False)
+        assert "models" in models, models
         assert {row["fixture_identity"] for row in models["models"]} == set(world.world["models"])
         assert all(row["peer_id"] == store.peer_id and row["sharing_configuration_known"] for row in models["models"])
         services = runtime.tools.execute("ryn_inspect_services", {}, operation_id="owner-grants", context=context, cancelled=lambda: False)

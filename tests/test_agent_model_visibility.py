@@ -67,7 +67,7 @@ def test_invalid_recipient_binding_never_projects_precise_permission(paired, inv
     assert row["destination_revision"] == "" and row["share_scope"] == "unknown"
 
 
-def test_production_catalog_expiry_preserves_only_historical_observation(paired):  # noqa: F811
+def test_production_catalog_expiry_preserves_only_historical_observation(paired, monkeypatch):  # noqa: F811
     p = paired
     record = p.consumer.refresh(p.alice.peer_id)["services"][0]
     catalog, _, _ = consumer_catalog(p)
@@ -76,6 +76,10 @@ def test_production_catalog_expiry_preserves_only_historical_observation(paired)
     p.consumer.clock = lambda: checked + 121
     assert p.consumer.snapshots()[0]["status"] == "stale"
     assert p.consumer.records()[0]["online"] is False
+    # Discovery observations now have their own two-second TTL (S12-I18).
+    from rynmesh.agent_runtime import models
+    after_ttl = models.time.monotonic() + 2
+    monkeypatch.setattr(models.time, "monotonic", lambda: after_ttl)
     stale = remote_row(catalog)
     assert stale["available"] is False and stale["recipient_access"]["catalog_available"] is False
     assert stale["recipient_access"]["kind"] == "friend"

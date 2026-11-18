@@ -172,7 +172,7 @@ def test_unchanged_task_poll_returns_only_live_fields(tmp_path):
     full = runtime.get(task["id"])
     same = runtime.get(task["id"], full["revision"])
     assert same["unchanged"] is True and "messages" not in same and set(same) <= {
-        "id", "revision", "unchanged", "run_timing", "budget", "allowed_actions", "run_state", "streaming"}
+        "id", "revision", "unchanged", "run_timing", "budget", "allowed_actions", "run_state", "streaming", "waiting_for_subagents"}
     assert runtime.get(task["id"], full["revision"] - 1) == full
     summaries = runtime.list_tasks()
     assert summaries[0]["id"] == task["id"] and "messages" not in summaries[0]

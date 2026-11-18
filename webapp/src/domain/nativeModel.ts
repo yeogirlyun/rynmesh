@@ -1,4 +1,4 @@
-import { nodeControlUrl } from "./nodeUrl";
+import { isTauriDesktop, localControlHeaders, nodeControlUrl } from "./nodeUrl";
 import { tr } from "../uiI18n";
 import type { ModelTokenUsage } from "./aiSources";
 
@@ -31,12 +31,14 @@ export async function inspectNativeModel(source: string): Promise<LocalModelFile
   if (!response.ok) throw new Error(result.detail || "operation_failed");
   return result;
 }
-export function uploadNativeModel(file: File, progress: (value: number) => void, signal: AbortSignal): Promise<NativeModelStatus> {
+export async function uploadNativeModel(file: File, progress: (value: number) => void, signal: AbortSignal): Promise<NativeModelStatus> {
+  const authHeaders = isTauriDesktop() ? await localControlHeaders() : {};
   return new Promise((resolve, reject) => {
     const request = new XMLHttpRequest();
     request.open("POST", nodeControlUrl(`/llm/native/upload?filename=${encodeURIComponent(file.name)}`));
     request.withCredentials = true;
     request.setRequestHeader("Content-Type", "application/octet-stream");
+    for (const [key, value] of Object.entries(authHeaders)) request.setRequestHeader(key, value);
     request.upload.onprogress = event => { if (event.lengthComputable) progress(Math.round(event.loaded / event.total * 100)); };
     const abort = () => request.abort();
     signal.addEventListener("abort", abort, { once: true });

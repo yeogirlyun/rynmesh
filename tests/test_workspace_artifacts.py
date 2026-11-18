@@ -256,7 +256,7 @@ def test_t7_unchanged_aged_file_reads_bytes_only_once(tmp_path: Path, monkeypatc
 
     monkeypatch.setattr(Path, "open", counting_open)
 
-    cmd_files = workspace_artifacts.command_files(tmp_path, before)
+    cmd_files = workspace_artifacts.command_files(tmp_path, before)["files"]
     assert len(cmd_files) == 1 and cmd_files[0]["sha256"] == _sha(raw)
     assert open_count == 1
 

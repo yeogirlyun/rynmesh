@@ -44,6 +44,7 @@ def test_t1_concurrency_1_second_request_queues_past_2500ms_and_succeeds_without
     _configure_max_concurrent(app, record, "serial-model", 1)
 
     first_entered = threading.Event()
+    queue_reported = threading.Event()
     call_order = []
     call_lock = threading.Lock()
 
@@ -70,8 +71,10 @@ def test_t1_concurrency_1_second_request_queues_past_2500ms_and_succeeds_without
             call_order.append(user_msg)
         if idx == 0:
             first_entered.set()
-            # Hold the single slot for 3.2s (> old 2.5s bridge timeout and > 2.0s model_queue threshold)
-            time.sleep(3.2)
+            # Keep the slot until the second request reports the two-second wait,
+            # then hold it beyond the old 2.5-second bridge timeout.
+            assert queue_reported.wait(timeout=7.0)
+            time.sleep(0.65)
             yield _Resp("first done")
         else:
             yield _Resp("second done")
@@ -89,6 +92,8 @@ def test_t1_concurrency_1_second_request_queues_past_2500ms_and_succeeds_without
     def wrapped_complete(mid, messages, tool_specs, cancelled, on_event=None, **kwargs):
         def capture(ev):
             observed_bridge_events.append(ev)
+            if isinstance(ev, dict) and ev.get("type") == "model_queue":
+                queue_reported.set()
             if on_event is not None:
                 on_event(ev)
         return orig_complete(mid, messages, tool_specs, cancelled, capture, **kwargs)
@@ -106,7 +111,7 @@ def test_t1_concurrency_1_second_request_queues_past_2500ms_and_succeeds_without
             lambda: False,
         )
         assert first_entered.wait(timeout=3.0)
-        # Start task2 while f1 holds the single slot for ~2.7s
+        # Start task2 while f1 holds the single slot.
         f2 = pool.submit(runtime.run_once)
         res1 = f1.result(timeout=10.0)
         f2.result(timeout=10.0)

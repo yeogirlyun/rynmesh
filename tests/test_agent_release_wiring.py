@@ -158,6 +158,7 @@ def test_actual_q01_controller_registers_original_ids_and_normalizes_without_fak
               "generation": {"context_window": 32768, "max_output_tokens": 4096, "request_defaults": {}}}
     policy["policy_sha256"] = registry.digest(policy)
     with module.RoleQueryWorld(p["root"] / "world", "Q01") as world:
+        world.planner_policy = policy
         world.configure(app, store)
         runtime = runtime_for(world, app, store, runner.FixturePlanner("Q01"))
         task = world.create_task(runtime)
@@ -271,6 +272,7 @@ def test_native_first_rpc_finalizes_reservation_from_actual_session_before_callb
     policy["policy_sha256"] = registry.digest(policy)
     app, store = node
     with world_module.RoleQueryWorld(p["root"] / "world", "Q01") as world:
+        world.planner_policy = policy
         selected = world.configure(app, store)
         runtime = runtime_for(world, app, store, runner.FixturePlanner("Q01"))
         task = world.create_task(runtime)

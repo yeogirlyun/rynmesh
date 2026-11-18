@@ -3444,7 +3444,8 @@ def select_memories_for_task(
         if remaining_context_bytes < 2400:
             max_bytes = 0
         else:
-            max_bytes = min(max_bytes, max(0, remaining_context_bytes // 12))
+            share = 4 if is_automatic_mode else 12
+            max_bytes = min(max_bytes, max(0, remaining_context_bytes // share))
 
     selected: list[dict[str, Any]] = []
     used_bytes = 0
@@ -3453,24 +3454,14 @@ def select_memories_for_task(
             projected_item = {
                 "id": entry["id"],
                 "scope": entry["scope"]["kind"],
-                "project_id": entry["scope"].get("project_id"),
-                "project_generation": entry["scope"].get("project_generation"),
                 "category": entry["category"],
                 "fact_key": entry["fact_key"],
                 "text": entry["text"],
-                "origin": entry["origin"],
                 "revision": entry["revision"],
-                "sources": [
-                    {
-                        "source_type": s.get("source_type"),
-                        "task_id": s.get("task_id"),
-                        "message_id": s.get("message_id"),
-                        "conversation_revision": s.get("conversation_revision"),
-                        "content_sha256": s.get("content_sha256", "")[:16],
-                    }
-                    for s in (entry.get("sources") or [])[:2]
-                ],
             }
+            if entry["scope"]["kind"] == "project":
+                projected_item.update(project_id=entry["scope"].get("project_id"),
+                                      project_generation=entry["scope"].get("project_generation"))
             item_bytes = len(encoded(projected_item))
             if used_bytes + item_bytes > max_bytes:
                 continue

@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .store import encoded
+from .tool_dispatch import PARALLEL_READS
 
 MODES = frozenset({"workspace", "read_only", "confirm_changes", "automatic"})
 WORKSPACE_TOOLS = frozenset({
@@ -32,6 +33,10 @@ GIT_UNSAFE_FLAGS = (
     "--config-env",
     "--git-dir",
     "--work-tree",
+    "--upload-pack",
+    "--receive-pack",
+    "-x",
+    "--open-files-in-pager",
 )
 
 
@@ -58,6 +63,13 @@ OWNER_DENIED_CORRECTION = (
 PERMISSION_DENIED_CORRECTION = (
     "Current host permissions do not allow this operation and nothing ran. Do not work around the setting "
     "with another tool. Continue with what the permissions allow and say in your reply which setting blocks the rest.")
+PERMISSION_DENIED_CORRECTIONS = {
+    "read_only": (
+        "This task is read-only; shell commands with unsafe pipes, redirection or non-read programs count as changes. "
+        "Use ryn_file_read / ryn_file_search."),
+    "invalid_policy": PERMISSION_DENIED_CORRECTION,
+    "owner_rule": PERMISSION_DENIED_CORRECTION,
+}
 
 
 POWERSHELL_NON_ASCII_SYNTAX_CHARS = frozenset({
@@ -115,6 +127,7 @@ def literal_command(command, shell):
     if shell == "powershell" and any(ch in POWERSHELL_NON_ASCII_SYNTAX_CHARS for ch in command):
         return None
     words, word, quote = [], [], None
+    has_token = False
     index = 0
     while index < len(command):
         char = command[index]
@@ -133,22 +146,32 @@ def literal_command(command, shell):
                 word.append(char)
         elif char in "'\"":
             quote = char
+            has_token = True
         elif char in ";&|<>`$(){}#":
             return None
         elif char == "\\" and shell == "sh":
             return None
         elif char.isspace():
-            if word:
+            if word or has_token:
                 words.append("".join(word))
                 word = []
+                has_token = False
         else:
             word.append(char)
         index += 1
     if quote:
         return None
-    if word:
+    if word or has_token:
         words.append("".join(word))
     return words or None
+
+
+def _powershell_arguments_safe(words, shell):
+    """PowerShell 5.1 can split embedded native quotes and trailing backslashes."""
+    return shell != "powershell" or not any(
+        '"' in word or (word.endswith("\\") and any(char.isspace() for char in word))
+        for word in words[1:]
+    )
 
 
 def _scan_literal_segments(command, shell) -> list[tuple[str | None, list[str]]] | None:
@@ -257,7 +280,7 @@ def _rg_read_ok(words: list[str]) -> bool:
 def _git_read_ok(words: list[str]) -> bool:
     if len(words) < 2 or words[1].lower() not in GIT_SAFE_SUBCOMMANDS:
         return False
-    return not any(word.lower().startswith(GIT_UNSAFE_FLAGS) for word in words[2:])
+    return not _unsafe_git_prefix_words([executable_key(words[0]), *words[1:]])
 
 
 def _sed_read_ok(words: list[str]) -> bool:
@@ -394,6 +417,8 @@ def _powershell_read_ok(words: list[str], *, in_pipe: bool = False) -> bool:
 def _segment_read_ok(words: list[str], shell: str, *, in_pipe: bool = False) -> bool:
     prog = executable_key(words[0])
     prog_low = prog.lower()
+    if prog_low in {"git", "git.exe", "rg", "rg.exe"} and not _powershell_arguments_safe(words, shell):
+        return False
     if shell == "sh":
         if in_pipe and prog not in POSIX_PIPE_FILTER_PROGRAMS:
             return False
@@ -494,6 +519,17 @@ def shell_read(arguments, workspace_root=None):
         if not _segment_read_ok(words, shell, in_pipe=(op == "|")):
             return False
     return _within_workspace(arguments, [w for _, w in parsed], shell, workspace_root)
+
+
+def parallel_read(name, arguments, metadata, *, workspace_root=None):
+    """One host-owned capability check for queued, streamed and gated reads."""
+    if metadata.get("requires_explicit_approval") or metadata.get("computer_access"):
+        return False
+    if name == "ryn_shell_execute":
+        return shell_read(arguments, workspace_root=workspace_root)
+    return metadata.get("effect") == "read" and (
+        name in PARALLEL_READS or metadata.get("supports_parallel") is True
+    )
 
 
 def classify_operation(name, arguments, metadata, *, operation_id="", task_id="", workspace_root="",
@@ -606,17 +642,208 @@ def verified_read_classification(record, *, row=None, task_id=None, workspace_ro
 
 
 def is_full_automatic(row: dict, settings: dict) -> bool:
-    return (
-        isinstance(row, dict)
-        and isinstance(settings, dict)
-        and row.get("permission_mode") == "automatic"
-        and settings.get("permission_mode") == "automatic"
-    )
+    return isinstance(row, dict) and row.get("permission_mode") == "automatic"
+
+
+def approval_keys(call, metadata):
+    """Host-normalized, opaque keys for an owner's task-local permission."""
+    name, arguments = call["name"], call.get("arguments") or {}
+    root = Path(metadata.get("workspace_root") or Path.cwd()).resolve()
+    def path_key(path):
+        return os.path.normcase(str((root / path).resolve()))
+    binding = call.get("extension_binding")
+    if binding:
+        parts = [(binding["server_id"], binding.get("plugin_id"), binding["original_tool_name"])]
+    elif name == "ryn_shell_execute":
+        shell = arguments.get("shell", "powershell" if os.name == "nt" else "sh")
+        words = literal_command(arguments.get("command"), shell)
+        command = ("literal", words) if words is not None else ("exact", arguments.get("command", ""))
+        parts = [(name, command, path_key(arguments.get("cwd", ".")), shell, bool(arguments.get("tty", False)))]
+    elif name in {"ryn_file_write", "ryn_file_edit", "ryn_apply_patch"}:
+        if name == "ryn_apply_patch":
+            from .local_patch import parse
+            paths = [path for operation in parse(arguments["patch"])
+                     for path in (operation["path"], operation.get("move_to")) if path]
+        else:
+            paths = [arguments["path"]]
+        parts = [(name, path_key(path)) for path in paths]
+    else:
+        parts = [(name,)]
+    return list(dict.fromkeys(hashlib.sha256(encoded(part)).hexdigest() for part in parts))
+
+
+def task_grant_proof(call, metadata, row):
+    keys = approval_keys(call, {**metadata, "workspace_root": (row.get("local_execution") or {}).get("workspace_root", "")})
+    grants = row.get("task_grants") or {}
+    approvals = []
+    for key in keys:
+        grant = grants.get(key) or {}
+        if (grant.get("task_id") != row["id"] or grant.get("goal_revision") != row["goal"]["revision"]
+                or grant.get("scope_revision") != row["scope_revision"] or not grant.get("approval_id")):
+            return None
+        approvals.append(grant["approval_id"])
+    if not approvals:
+        return None
+    return {"approval_keys": keys, "approval_ids": list(dict.fromkeys(approvals)), "approval_id": approvals[0]}
+
+
+def owner_tool_key(call, metadata):
+    """Persist MCP identity independently of its current model-facing alias."""
+    binding = call.get("extension_binding") or metadata.get("extension_binding")
+    if binding:
+        return "mcp:" + encoded([binding["server_id"], binding["original_tool_name"]]).decode()
+    return call["name"]
+
+
+def desktop_enabled(mode, flag):
+    return mode == "automatic" or bool(flag)
+
+
+def desktop_access_enabled(row, settings):
+    mode = row.get("permission_mode", "workspace")
+    modes = {mode, settings.get("permission_mode", mode)}
+    return modes == {"automatic"} or bool(
+        (row.get("local_execution") or {}).get("desktop_access") and settings.get("desktop_access"))
+
+
+SHELL_PREFIX_PROGRAMS = {
+    "git": frozenset({"add", "commit", "fetch", "pull", "push", "status", "diff", "log", "show"}),
+    **dict.fromkeys(("npm", "pnpm", "yarn"), frozenset({"test", "run", "build", "ci", "install"})),
+    "cargo": frozenset({"build", "test", "check", "fmt", "clippy"}),
+    "go": frozenset({"build", "test", "vet", "fmt"}),
+    "dotnet": frozenset({"build", "test"}),
+    "pytest": None, "make": None, "mkdir": None,
+}
+GIT_PUSH_UNSAFE_FLAGS = ("--force", "--force-with-lease", "--mirror", "--delete")
+SHELL_PREFIX_META = re.compile(r"[\r\n\x00;&|<>`$(){}#*?\[\]%!'\"]")
+
+
+def normalize_shell_prefix(prefix):
+    """Validate owner-authored literal words, normalizing only the executable."""
+    if (not isinstance(prefix, list) or not 1 <= len(prefix) <= 3
+            or any(not isinstance(word, str) or not word.strip() or "=" in word or SHELL_PREFIX_META.search(word) for word in prefix)):
+        return None
+    if "/" in prefix[0] or "\\" in prefix[0] or any(word.startswith(("-", "/")) for word in prefix[1:]):
+        return None
+    normalized = [executable_key(prefix[0]), *prefix[1:]]
+    program = normalized[0].lower()
+    if program not in SHELL_PREFIX_PROGRAMS:
+        return None
+    subcommands = SHELL_PREFIX_PROGRAMS[program]
+    if subcommands is None:
+        return normalized if len(normalized) == 1 else None
+    if len(normalized) < 2 or normalized[1].lower() not in subcommands or (program == "git" and len(normalized) != 2):
+        return None
+    return normalized
+
+
+def shell_prefix_rule(value):
+    """Read the original word-list format as a rule with no approved options."""
+    return {"prefix": value, "options": []} if isinstance(value, list) else value
+
+
+def _unsafe_git_prefix_words(words):
+    if words[0].lower() != "git":
+        return False
+    for word in words[2:]:
+        short = word.startswith("-") and not word.startswith("--")
+        option = word.lower().split("=", 1)[0]
+        unsafe_long = word.startswith("--") and any(flag.startswith(option) for flag in GIT_UNSAFE_FLAGS if flag.startswith("--"))
+        if unsafe_long or word.lower().startswith(GIT_UNSAFE_FLAGS):
+            return True
+        if words[1].lower() == "push" and (word.startswith(GIT_PUSH_UNSAFE_FLAGS)
+                                         or (word.startswith("--") and any(flag.startswith(option) for flag in GIT_PUSH_UNSAFE_FLAGS))
+                                         or (short and any(flag in word[1:] for flag in "fd"))):
+            return True
+    return False
+
+
+def normalize_shell_prefix_rule(value):
+    rule = shell_prefix_rule(value)
+    if not isinstance(rule, dict) or set(rule) - {"prefix", "options"}:
+        return None
+    prefix = normalize_shell_prefix(rule.get("prefix"))
+    options = rule.get("options", [])
+    if (prefix is None or not isinstance(options, list)
+            or any(not isinstance(word, str) or not word.startswith(("-", "/")) or word == "--" or "=" in word
+                   or SHELL_PREFIX_META.search(word) for word in options)):
+        return None
+    if _unsafe_git_prefix_words([*prefix, *options]):
+        return None
+    return {"prefix": prefix, "options": list(dict.fromkeys(options))}
+
+
+def normalize_shell_prefix_rules(values):
+    if not isinstance(values, list):
+        return None
+    rules = []
+    for value in values:
+        rule = normalize_shell_prefix_rule(value)
+        if rule is None:
+            return None
+        prior = next((item for item in rules if item["prefix"] == rule["prefix"]), None)
+        if prior is None:
+            rules.append(rule)
+        else:
+            prior["options"] = list(dict.fromkeys([*prior["options"], *rule["options"]]))
+    return rules
+
+
+def _command_prefix_words(words):
+    program = executable_key(words[0]).lower()
+    return words[:1] if SHELL_PREFIX_PROGRAMS.get(program) is None else words[:2]
+
+
+def _shell_option_word(word, shell):
+    return word.startswith(("-", "/")) if shell == "powershell" else word.startswith("-")
+
+
+def _shell_prefix_words(arguments):
+    shell = arguments.get("shell", "powershell" if os.name == "nt" else "sh")
+    words = literal_command(arguments.get("command"), shell)
+    if not words or not _powershell_arguments_safe(words, shell):
+        return None
+    prefix = _command_prefix_words(words)
+    if normalize_shell_prefix(prefix) is None:
+        return None
+    if any("=" in word or word.startswith(("+", ":")) or word == "--" for word in words[1:]):
+        return None
+    words = [executable_key(words[0]), *words[1:]]
+    from .dangerous_commands import dangerous_shell
+    if dangerous_shell(arguments):
+        return None
+    if _unsafe_git_prefix_words(words):
+        return None
+    return words
+
+
+def shell_prefix_candidate(arguments):
+    words = _shell_prefix_words(arguments)
+    if not words:
+        return None
+    prefix = _command_prefix_words(words)
+    shell = arguments.get("shell", "powershell" if os.name == "nt" else "sh")
+    return normalize_shell_prefix_rule({"prefix": prefix, "options": [word for word in words[len(prefix):] if _shell_option_word(word, shell)]})
+
+
+def matching_shell_prefix(arguments, settings):
+    words = _shell_prefix_words(arguments)
+    if not words:
+        return None
+    rules = [rule for value in settings.get("shell_allow_prefixes", []) if (rule := normalize_shell_prefix_rule(value)) is not None]
+    shell = arguments.get("shell", "powershell" if os.name == "nt" else "sh")
+    for rule in sorted(rules, key=lambda rule: len(rule["prefix"]), reverse=True):
+        prefix = rule["prefix"]
+        if (words[:len(prefix)] == prefix
+                and all(word in rule["options"] for word in words[len(prefix):] if _shell_option_word(word, shell))):
+            return rule
+    return None
 
 
 def decide(call, metadata, row, settings):
-    modes = {row["permission_mode"], settings["permission_mode"]}
-    if not modes <= MODES:
+    mode = row["permission_mode"]
+    modes = {mode, settings.get("permission_mode", mode)}
+    if mode not in MODES:
         return Decision("deny", "invalid_policy")
     # Only trusted metadata or this host's literal-command recognizer can mark
     # a call read-only. Model arguments cannot self-declare their risk.
@@ -625,31 +852,53 @@ def decide(call, metadata, row, settings):
     classification = classify_operation(call.get("name"), call.get("arguments"), metadata, workspace_root=ws_root)
     if classification["effect_class"] == "read":
         return Decision("execute", "read")
-    if "read_only" in modes:
+    owner_key = owner_tool_key(call, metadata)
+    if owner_key in settings.get("denied_tools", []):
+        return Decision("deny", "owner_rule")
+    if mode == "read_only" or (row.get("automation_run_id") and row.get("automation_kind") != "heartbeat"
+                               and settings.get("permission_mode") == "read_only"):
         return Decision("deny", "read_only")
     if row.get("approved"):
         return Decision("execute", "approved")
     if metadata.get("requires_explicit_approval"):
-        return Decision("ask", "explicit_approval")
-    if "confirm_changes" in modes:
+        if modes != {"automatic"}:
+            return Decision("ask", "explicit_approval")
+        return Decision("execute", "automatic")
+    desktop_granted = desktop_access_enabled(row, settings)
+    if metadata.get("computer_access") and not desktop_granted:
+        return Decision("ask", "desktop_access")
+    if mode == "workspace":
+        from .dangerous_commands import dangerous_shell
+        if call["name"] == "ryn_shell_execute" and dangerous_shell(call.get("arguments") or {}):
+            return Decision("ask", "dangerous_command")
+    if owner_key in row.get("allowed_write_tools", []):
+        return Decision("execute", "owner_rule")
+    if mode in {"workspace", "confirm_changes"} and row.get("task_grants") and task_grant_proof(call, metadata, row):
+        return Decision("execute", "task_grant")
+    if mode == "confirm_changes":
+        if call["name"] == "ryn_shell_execute" and matching_shell_prefix(call.get("arguments") or {}, settings):
+            return Decision("execute", "prefix_allow")
         return Decision("ask", "confirm_changes")
     # This alias is authored by the host only after verifying the builtin
     # provider, schema and enablement. Never derive it from a model tool name.
     workstation_tool = metadata.get("workstation_permission_tool")
-    desktop_granted = ((row.get("local_execution") or {}).get("desktop_access") is True
-                       and settings.get("desktop_access") is True)
     inherited_desktop = (workstation_tool == "ryn_computer_action"
                          and metadata.get("computer_access") is True
                          and desktop_granted)
-    for policy in (row, settings):
-        if policy["permission_mode"] == "workspace":
-            if call["name"] not in WORKSPACE_TOOLS and not inherited_desktop:
-                return Decision("ask", "external_change")
-        elif policy["permission_mode"] == "automatic":
-            # Full access: the owner chose to let every change run without a
-            # dialog, including plugin and configuration changes. Only the
-            # hard gates above (explicit-approval tools, read-only, strict
-            # confirmation) and the desktop grant still apply.
-            if metadata.get("computer_access") and not desktop_granted:
-                return Decision("ask", "desktop_access")
+    if mode == "workspace":
+        if call["name"] not in WORKSPACE_TOOLS and not inherited_desktop:
+            return Decision("ask", "external_change")
+    # When both sides are automatic, no approval or desktop gate remains.
     return Decision("execute", "automatic")
+
+
+def automatic_flight_allowed(flight, row, settings):
+    """Recheck dispatch using the original host classification of the operation."""
+    classification = flight.get("operation_classification") or {}
+    metadata = {
+        "effect": flight.get("effect"),
+        "computer_access": flight.get("computer_access"),
+        "workstation_permission_tool": flight.get("workstation_permission_tool"),
+        "requires_explicit_approval": classification.get("basis") == "explicit_approval",
+    }
+    return decide(flight, metadata, row, settings).action == "execute"

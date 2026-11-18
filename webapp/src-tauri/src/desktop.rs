@@ -5,6 +5,10 @@ use std::time::{Duration, Instant};
 use tauri::Manager;
 use crate::localization::tr;
 
+#[cfg(test)]
+#[path = "ovh_s13_i6.rs"]
+mod ovh_s13_i6;
+
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RuntimeStatus {
@@ -12,6 +16,7 @@ pub struct RuntimeStatus {
     pub configured: bool,
     pub sharing: bool,
     pub active_tasks: u64,
+    pub agent_tasks: u64,
     pub agent_active_runs: u64,
     pub agent_waiting: u64,
     pub agent_task_titles: Vec<String>,
@@ -334,85 +339,23 @@ struct MacOsAwakeBackend;
 
 #[cfg(target_os = "macos")]
 impl AwakeBackend for MacOsAwakeBackend {
-    type Guard = u32;
+    type Guard = std::process::Child;
 
     fn acquire(&mut self) -> Option<Self::Guard> {
-        use std::ffi::c_void;
-        const K_CF_STRING_ENCODING_UTF8: u32 = 0x0800_0100;
-        const K_IO_PM_ASSERTION_LEVEL_ON: u32 = 255;
-        // kIOPMAssertionTypePreventUserIdleSystemSleep == CFSTR("PreventUserIdleSystemSleep")
-        const ASSERTION_TYPE: &[u8] = b"PreventUserIdleSystemSleep";
-        const ASSERTION_NAME: &[u8] = b"Ryn";
-
-        #[link(name = "CoreFoundation", kind = "framework")]
-        extern "C" {
-            fn CFStringCreateWithBytes(
-                alloc: *const c_void,
-                bytes: *const u8,
-                num_bytes: isize,
-                encoding: u32,
-                is_external_representation: u8,
-            ) -> *const c_void;
-            fn CFRelease(cf: *const c_void);
-        }
-
-        #[link(name = "IOKit", kind = "framework")]
-        extern "C" {
-            fn IOPMAssertionCreateWithName(
-                assertion_type: *const c_void,
-                assertion_level: u32,
-                assertion_name: *const c_void,
-                assertion_id: *mut u32,
-            ) -> i32;
-        }
-
-        unsafe {
-            let kind = CFStringCreateWithBytes(
-                std::ptr::null(),
-                ASSERTION_TYPE.as_ptr(),
-                ASSERTION_TYPE.len() as isize,
-                K_CF_STRING_ENCODING_UTF8,
-                0,
-            );
-            if kind.is_null() {
-                return None;
-            }
-            let name = CFStringCreateWithBytes(
-                std::ptr::null(),
-                ASSERTION_NAME.as_ptr(),
-                ASSERTION_NAME.len() as isize,
-                K_CF_STRING_ENCODING_UTF8,
-                0,
-            );
-            if name.is_null() {
-                CFRelease(kind);
-                return None;
-            }
-            let mut assertion_id: u32 = 0;
-            let status = IOPMAssertionCreateWithName(
-                kind,
-                K_IO_PM_ASSERTION_LEVEL_ON,
-                name,
-                &mut assertion_id,
-            );
-            CFRelease(name);
-            CFRelease(kind);
-            if status == 0 {
-                Some(assertion_id)
-            } else {
-                None
-            }
-        }
+        use std::process::{Command, Stdio};
+        Command::new("/usr/bin/caffeinate")
+            .args(["-i", "-w", &std::process::id().to_string()])
+            .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null())
+            .spawn().ok()
     }
 
-    fn release(&mut self, assertion_id: Self::Guard) {
-        #[link(name = "IOKit", kind = "framework")]
-        extern "C" {
-            fn IOPMAssertionRelease(assertion_id: u32) -> i32;
-        }
-        unsafe {
-            let _ = IOPMAssertionRelease(assertion_id);
-        }
+    fn is_alive(&mut self, child: &mut Self::Guard) -> bool {
+        matches!(child.try_wait(), Ok(None))
+    }
+
+    fn release(&mut self, mut child: Self::Guard) {
+        let _ = child.kill();
+        let _ = child.wait();
     }
 }
 
@@ -582,11 +525,22 @@ pub fn tray_status_key(status: &RuntimeStatus) -> &'static str {
 }
 const STARTUP_GRACE: Duration = Duration::from_secs(120);
 
+fn long_task_awake_notice(started: &mut Option<Instant>, status: &RuntimeStatus,
+                         keep_awake: bool, seen: bool, now: Instant) -> bool {
+    if seen || keep_awake || !status.node_online
+        || (status.active_tasks == 0 && status.agent_active_runs == 0) {
+        *started = None;
+        return false;
+    }
+    now.saturating_duration_since(*started.get_or_insert(now)) >= Duration::from_secs(60)
+}
+
 pub fn watchdog(app: tauri::AppHandle, status_item: tauri::menu::MenuItem<tauri::Wry>, share_item: tauri::menu::MenuItem<tauri::Wry>) {
     std::thread::spawn(move || {
         let mut recovery = Recovery::default();
         let mut notified_attention = false;
         let mut awake_controller = new_awake_controller();
+        let mut long_task_started = None;
         // Allow the one-file sidecar to extract and start before counting failures.
         let mut boot_deadline = Instant::now() + STARTUP_GRACE;
         loop {
@@ -598,6 +552,14 @@ pub fn watchdog(app: tauri::AppHandle, status_item: tauri::menu::MenuItem<tauri:
             let previous = runtime.status.lock().unwrap().clone();
             let mut status = watchdog_status(previous, read_status(node.port), || node::health_ok(node.port));
             status.awake_active = awake(&mut awake_controller, should_keep_awake(prefs.keep_awake, &status));
+            if prefs.awake_supported && long_task_awake_notice(&mut long_task_started, &status,
+                prefs.keep_awake, prefs.awake_notice_seen, Instant::now()) {
+                crate::preferences::acknowledge_awake_notice(&app);
+                use tauri_plugin_notification::NotificationExt;
+                let _ = app.notification().builder().title("Ryn").body(
+                    tr("A long task is running. Enable keep-awake in Desktop settings to prevent idle sleep from interrupting it.")
+                ).show();
+            }
             // A slow metadata/CLI refresh is not proof that the live node died.
             // Give a running child time to answer before interrupting its tasks;
             // exited children retain the ordinary three-failure crash recovery.

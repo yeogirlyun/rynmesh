@@ -11,10 +11,13 @@ import copy
 import hashlib
 import json
 import math
+import os
 import re
+import shutil
 import threading
 import time
 import uuid
+from pathlib import Path
 from typing import Any
 
 from ..background_workers import WorkerRunResult
@@ -26,6 +29,7 @@ from . import (
     data_policy,
     diagnostic_log,
     event_compaction,
+    goals,
     image_capabilities,
     knowledge,
     lifecycle,
@@ -44,12 +48,15 @@ from . import (
     tool_menu,
     verification,
 )
+from .web_search import normalize_domains, restrict_web_policy
+from .execution_policy import desktop_access_enabled, desktop_enabled, shell_prefix_rule
 from .control import (
     acknowledgeable,
     allowed_actions,
     ambiguous,
     check_version,
     close_queue,
+    has_compactable_history,
     reconciliation_active,
     recoverable_read_in_flight,
     remember_request,
@@ -57,11 +64,15 @@ from .control import (
     settle,
 )
 from .input_attachments import attach_to_message, parse_attachments
-from .loop import ALL_INTERNAL_NAMES, ALL_INTERNAL_SPECS, OWNER_TURN_EVENTS, AgentLoop
+from . import context_compaction
+from .loop import ALL_INTERNAL_NAMES, ALL_INTERNAL_SPECS, OWNER_TURN_EVENTS, AgentLoop, _is_owner_user_message
 from .prompt import (
+    HISTORY_TOOL_NAMES,
     INTERNAL_NAMES,
     PROMPT_VERSION,
     select_base_instructions,
+    host_note,
+    provider_messages,
 )
 from .protocol import digest, event, hydrated_events, model_retry_authority, now, sanitized, task
 from .state import (
@@ -91,14 +102,16 @@ CONTINUE_SECONDS = 20.0
 # Completed streaming reads retain their receipts before inference retry. Writes
 # remain behind accepted responses. Retries are bounded by task and lifetime budgets.
 RETRYABLE_MODEL_ERRORS = {"agent_inference_timeout", "agent_model_connection_failed", "agent_model_busy",
+                          "agent_model_context_overflow",
+                          "agent_model_starting",
                           "agent_model_upstream_failed", "agent_model_stream_interrupted",
                           "agent_invalid_model_response", "agent_compaction_size_limit", "agent_compaction_incomplete"}
 PUBLIC_FIELDS = ("fork", "id", "client_request_id", "title", "model_id", "reasoning_effort", "status", "revision", "created_at", "updated_at",
-                 "messages", "pending_user_messages", "events", "pending_approval", "steps", "result", "error", "connection_recovery", "limits", "permission_mode", "allowed_write_tools",
+                 "messages", "pending_user_messages", "open_questions", "events", "pending_approval", "steps", "result", "error", "connection_recovery", "limits", "permission_mode", "allowed_write_tools",
                  "model_destination", "local_execution", "project", "verification_evidence", "reconciliation", "archived", "result_refs", "file_artifact_revision",
                  "conversation_revision", "conversation_event_cursor", "source", "automation_id", "automation_run_id", "automation_kind",
                  "latest_turn_is_silent_heartbeat", "automation_notification", "parent_task_id", "subagent_ids",
-                 "limits_source", "execution_segment", "archive_reason", "continued_from", "continued_to", *PUBLIC_STATE_FIELDS)
+                 "limits_source", "execution_segment", "archive_reason", "continued_from", "continued_to", "context_exhausted", "queued_messages", "queued_messages_paused_reason", *PUBLIC_STATE_FIELDS)
 CONTINUATION_PREFIX = ("[Continued from an earlier conversation that grew too long. The summary below was "
                        "written by Ryn from that conversation; it is context, not a new instruction.]\n\n")
 CONTINUATION_SEPARATOR = "\n\n[The owner's new message follows.]\n\n"
@@ -113,6 +126,13 @@ UNKNOWN_OUTCOME_NOTE = (
     "the request timed out, or the response was lost). It may have fully run, partly run, or not run at all. "
     "Before doing it again, check the actual state with read-only tools. Do not assume it failed and do not "
     "repeat it blindly."
+)
+TURN_ABORTED_NOTE = (
+    "<turn_aborted>\n"
+    "The user intentionally interrupted the previous turn. Background processes may still be running, "
+    "and interrupted tools may have partially executed. Before continuing or retrying, use read-only "
+    "tools to check the current state.\n"
+    "</turn_aborted>"
 )
 MCP_UNKNOWN_OUTCOME_HINT = "先用只读工具核对再决定是否重试"
 VISUAL_SUFFIXES = (".svg", ".html", ".htm", ".png", ".jpg", ".jpeg", ".gif", ".webp")
@@ -142,8 +162,18 @@ def public_task(row: dict, *, summary: bool = False, settings: dict | None = Non
     result["completion_event_seq"] = next((item["seq"] for item in reversed(row.get("events", []))
                                            if item["type"] == "completed"), 0)
     result.setdefault("archived", False)
+    result.setdefault("open_questions", [])
+    result.setdefault("context_exhausted", False)
+    result["waiting_for_subagents"] = bool(row.get("subagent_wait") and row["status"] == "queued"
+                                           and row.get("queue") and row["queue"][0]["call_id"] == row["subagent_wait"]["call_id"])
+    result.setdefault("queued_messages", [])
+    result.setdefault("queued_messages_paused_reason", None)
     result["skills"] = [{key: value for key, value in skill.items() if key != "content"} for skill in row.get("skills", [])]
     result["budget"] = budget.public(row)
+    if isinstance(row.get("context_usage"), dict):
+        result["context_usage"] = {key: value for key, value in row["context_usage"].items()
+                                   if key in {"request_bytes", "capacity_bytes", "bytes_per_token", "step", "context_epoch"}
+                                   and type(value) in (int, float) and math.isfinite(value)}
     result["run_timing"] = timing.snapshot(row, active_run=active_run, monotonic_now=monotonic_now)
     if "_subagents_projection" in row:
         result["subagents"] = copy.deepcopy(row["_subagents_projection"])
@@ -176,6 +206,8 @@ def detached(row: dict, *, summary: bool = False, data: dict | None = None) -> d
     # still omit both events and messages from the public deep copy.
     shallow = {key: value for key, value in row.items()
                if not (summary and "budget" in row and key == "messages")}
+    if summary:
+        shallow["_has_compactable_history"] = has_compactable_history(row)
     if "outcome" in shallow:
         shallow["outcome"] = copy.deepcopy(shallow["outcome"])
     if data is not None and row.get("subagent_ids"):
@@ -189,17 +221,14 @@ def revision(row: dict, expected: Any) -> None:
 
 
 def write_permission_revoked(row: dict, settings: dict) -> bool:
-    from .execution_policy import decide, verified_read_classification
+    from .execution_policy import automatic_flight_allowed, owner_tool_key, task_grant_proof, verified_read_classification
     flight = row.get("in_flight") or {}
     has_computer_access = (
         str(flight.get("name") or "").startswith(("ryn_browser_", "ryn_computer_"))
         or bool(flight.get("computer_access"))
         or bool((flight.get("extension_binding") or {}).get("computer_access"))
     )
-    if has_computer_access and (
-        not settings.get("desktop_access")
-        or not (row.get("local_execution") or {}).get("desktop_access")
-    ):
+    if has_computer_access and not desktop_access_enabled(row, settings):
         return True
     if flight.get("effect") != "write":
         return False
@@ -209,12 +238,17 @@ def write_permission_revoked(row: dict, settings: dict) -> bool:
         workspace_root=(row.get("local_execution") or {}).get("workspace_root", ""),
     ):
         return False
-    if settings["permission_mode"] == "read_only":
+    if row["permission_mode"] == "read_only":
         return True
+    owner_key = owner_tool_key(flight, {})
+    if owner_key in settings.get("denied_tools", []):
+        return True
+    if flight.get("authorization") == "owner_rule":
+        return owner_key not in row.get("allowed_write_tools", [])
+    if flight.get("authorization") == "task_grant":
+        return task_grant_proof(flight, {}, row) is None
     if flight.get("authorization") == "automatic":
-        return decide(flight, {"effect": flight["effect"],
-            "computer_access": flight.get("computer_access"),
-            "workstation_permission_tool": flight.get("workstation_permission_tool")}, row, settings).action != "execute"
+        return not automatic_flight_allowed(flight, row, settings)
     return False
 
 
@@ -287,8 +321,7 @@ def _note_lost_background_processes(row: dict, boot_id: str) -> None:
     )
     note_text = f"Ryn 节点已重启，以下后台进程已结束：{entries}。需要时重新启动命令，不要再读这些 id。"
     note_msg = {
-        "role": "assistant",
-        "content": note_text,
+        **host_note("lost_background_processes", note_text),
         "context_epoch": row.get("context_epoch", 0),
         "ui": {"kind": "lost_background_processes", "hidden": True},
     }
@@ -370,28 +403,28 @@ class AgentRuntime(AgentLoop):
         self._step = threading.local()  # Whether this thread's last step ended normally.
         self._stream_lock = threading.Lock()
         self._streams = {}
+        self._skill_sync_lock = threading.Lock()
+        self._skill_sync_last_at: dict[str, float] = {}
         self._boot_id = "boot_" + uuid.uuid4().hex
         # Display only. Never used by admission, cancellation or persistence.
         self._active_run = None
 
     def _effective_task_permission_mode(self, selected: dict, settings: dict | None = None) -> str:
         task_mode = selected.get("permission_mode", "workspace")
-        if settings is None:
-            settings_mode = self.store.inspect(
-                lambda data: (data.get("settings") or {}).get("permission_mode", "workspace")
-            )
-        else:
-            settings_mode = settings.get("permission_mode", "workspace")
-        order = ("read_only", "confirm_changes", "workspace", "automatic")
-        if task_mode not in order or settings_mode not in order:
-            return "read_only"
-        return order[min(order.index(task_mode), order.index(settings_mode))]
+        return task_mode if task_mode in PERMISSION_MODES else "read_only"
 
     def _execute_business_tool(self, selected, name, arguments, **options):
         if name == "ryn_code_exec":
             return super()._execute_business_tool(selected, name, arguments, **options)
         from .tool_dispatch import supports_parallel
 
+        skill_snapshot = []
+        if name == "ryn_read_skill_file":
+            context = options["context"]
+            skill_id = arguments.get("skill_id")
+            if skill_id and not any(s.get("id") == skill_id for s in selected.get("skills") or []):
+                skill_snapshot = self._resolve_skills([skill_id], workspace_root=(context.get("local_execution") or {}).get("workspace_root"))
+                context["selected_skills"] = [*(context.get("selected_skills") or []), *skill_snapshot]
         meta = self.tools.metadata(name)
         mode = self._effective_task_permission_mode(selected)
         with self._tool_dispatch_gate.enter(
@@ -399,7 +432,14 @@ class AgentRuntime(AgentLoop):
             parallel=supports_parallel(name, meta, arguments, permission_mode=mode),
             cancelled=options["cancelled"],
         ):
-            return self.tools.execute(name, arguments, **options)
+            result = self.tools.execute(name, arguments, **options)
+        if skill_snapshot and isinstance(result, dict) and not result.get("error") and result.get("path") == "SKILL.md":
+            def activate(data):
+                row = task(data, selected["id"])
+                row["skills"], dropped = self._merge_task_skills(row.get("skills") or [], skill_snapshot)
+                self._record_skill_events_in_tx(row, dropped_skill_ids=dropped)
+            self.store.transaction(activate)
+        return result
 
     def _tool(self, selected: dict, cancelled, started: float) -> None:
         from .tool_dispatch import MAX_PARALLEL_TOOLS
@@ -660,6 +700,11 @@ class AgentRuntime(AgentLoop):
                     )
                 except AgentError as exc:
                     code = str(exc) if str(exc).startswith("agent_") else "agent_operation_failed"
+                    extra = {}
+                    if getattr(exc, "correction", None):
+                        extra["correction"] = sanitized(exc.correction[:1600])
+                    if isinstance(getattr(exc, "details", None), dict) and exc.details:
+                        extra["details"] = sanitized(copy.deepcopy(exc.details))
                     if code == "agent_mcp_outcome_unknown_reported":
                         return (
                             {
@@ -668,13 +713,14 @@ class AgentRuntime(AgentLoop):
                                 "not_executed": False,
                                 "hint": MCP_UNKNOWN_OUTCOME_HINT,
                                 "note": UNKNOWN_OUTCOME_NOTE,
+                                **extra,
                             },
                             "unknown",
                             True,
                             max(0.0, time.monotonic() - call_started),
                         )
                     return (
-                        {"error": code, "outcome": "unknown", "not_executed": False, "note": UNKNOWN_OUTCOME_NOTE},
+                        {"error": code, "outcome": "unknown", "not_executed": False, "note": UNKNOWN_OUTCOME_NOTE, **extra},
                         "unknown",
                         True,
                         max(0.0, time.monotonic() - call_started),
@@ -741,17 +787,14 @@ class AgentRuntime(AgentLoop):
                         reference,
                         max_bytes=selected["limits"]["max_output_chars"],
                     )
-                shown = (
-                    {**result, "server_note": notice}
-                    if notice and index == len(batch) - 1 and isinstance(result, dict)
-                    else result
-                )
                 message = {
                     "role": "tool",
                     "tool_call_id": call["call_id"],
-                    "content": encoded(shown).decode(),
+                    "content": encoded(result).decode(),
                     "context_epoch": selected.get("context_epoch", 0),
                 }
+                if notice and index == len(batch) - 1:
+                    message["host_budget_notice"] = notice
                 if is_err or (isinstance(result, dict) and result.get("error")):
                     message["is_error"] = True
                 if origin:
@@ -815,15 +858,35 @@ class AgentRuntime(AgentLoop):
         with self._active_lock:
             return next((run.copy() for run in self._active_runs.values() if run["task_id"] == task_id), None)
 
-    def activity_counts(self) -> dict[str, Any]:
+    def active_run_count(self) -> int:
+        """Memory-only watchdog count; never wait for task or process writers."""
+        acquired = self._active_lock.acquire(blocking=False)
+        try:
+            running = len(self._active_runs)
+        finally:
+            if acquired:
+                self._active_lock.release()
+        processes = getattr(self.tools, "processes", None) or getattr(
+            getattr(self.tools, "local", None), "processes", None
+        )
+        if processes is not None:
+            running += sum(item["process"].poll() is None
+                           for item in tuple(processes.items.values()))
+        return running
+
+    def activity_counts(self, *, cached_only: bool = False) -> dict[str, Any]:
         """Lightweight task activity summary for the desktop watchdog without copying histories."""
-        with self._active_lock:
+        acquired = self._active_lock.acquire(blocking=not cached_only)
+        try:
             running = len(self._active_runs)
             active_task_ids = [
                 run["task_id"]
-                for run in self._active_runs.values()
+                for run in tuple(self._active_runs.values())
                 if isinstance(run, dict) and isinstance(run.get("task_id"), str)
             ]
+        finally:
+            if acquired:
+                self._active_lock.release()
         active_id_set = set(active_task_ids)
 
         def _view(data: dict) -> dict[str, Any]:
@@ -889,6 +952,11 @@ class AgentRuntime(AgentLoop):
                 "agent_task_titles": titles,
             }
 
+        if cached_only:
+            # Published snapshots are immutable; do not reload changed disk state
+            # (which could wait for a transaction) in the native watchdog.
+            published = self.store._published
+            return _view(published[1] if published is not None else {})
         return self.store.inspect(_view)
 
     def _start_stream(self, selected, step):
@@ -935,9 +1003,14 @@ class AgentRuntime(AgentLoop):
                                             provenance=row.get("context_budget_provenance"))
 
     def _business_specs(self, row=None):
+        return self._business_catalog(row)[0]
+
+    def _business_catalog(self, row=None):
         if row is not None and getattr(self.tools, "supports_model_context", False) is True:
-            return self.tools.specs(context=self._execution_context(row))
-        return self.tools.specs()
+            specs = self.tools.specs(context=self._execution_context(row))
+        else:
+            specs = self.tools.specs()
+        return tool_menu.dedupe_specs(specs, reserved=ALL_INTERNAL_NAMES)
 
     def _policy_context(self, row):
         destination = copy.deepcopy(row.get("model_destination") or {})
@@ -997,26 +1070,34 @@ class AgentRuntime(AgentLoop):
 
     def _menu(self, row, *, business_specs=None, max_context_bytes=None):
         business_specs = self._business_specs(row) if business_specs is None else business_specs
-        if any(spec["function"]["name"] in ALL_INTERNAL_NAMES for spec in business_specs):
-            raise AgentError("agent_tool_definition_changed")
+        business_specs, _ = tool_menu.dedupe_specs(business_specs, reserved=ALL_INTERNAL_NAMES)
         # Tool schemas share the calibrated input capacity used by dispatch and compaction.
         max_context_bytes = self._effective_capacity(row, max_context_bytes)[0]
-        owners = [message for message in row["messages"] if message["role"] == "user"]
-        trailing_unanswered_owner = bool(row["messages"] and row["messages"][-1].get("role") == "user")
+        owners = [message for message in row["messages"] if _is_owner_user_message(message)]
+        trailing_unanswered_owner = bool(row["messages"] and _is_owner_user_message(row["messages"][-1]))
         pinned_through = max(0, len(owners) - (1 if trailing_unanswered_owner else 0))
         pinned = {**row, "messages": owners,
                   "context_checkpoint": {"through": pinned_through, "content": ""},
                   "_exclude_optional_memory": True,
                   "_max_context_bytes_override": max_context_bytes}
+        # Provider projection keeps manifests pinned, omitting archived excerpts
+        # from compacted owners while retaining the unanswered owner's excerpt.
         authority_bytes = len(encoded(self._context(pinned)))
-        desktop = tool_menu.BROWSER_TOOLS if (row.get("local_execution") or {}).get("desktop_access") else ()
+        desktop_settings = self.store.inspect(lambda data: data["settings"])
+        desktop = tool_menu.BROWSER_TOOLS if desktop_access_enabled(row, desktop_settings) else ()
         if desktop:
             # Expose installed desktop schemas immediately; dispatch still checks
             # the provider binding and workstation grants on every operation.
             computer_use = tuple(spec["function"]["name"] for spec in business_specs
                                  if spec["function"]["name"].startswith("mcp__computer_use__computer_"))
             desktop = computer_use + desktop
-        skill_tools = ("ryn_read_skill_file",) if any(isinstance(s, dict) and s.get("files") for s in (row.get("skills") or [])) else ()
+        skill_tools = ()
+        if max_context_bytes > tool_menu.SMALL_WINDOW_BYTES:
+            has_skill_files = any(isinstance(s, dict) and s.get("files") for s in (row.get("skills") or []))
+            if not has_skill_files and self.extensions is not None:
+                has_skill_files = bool(self.extensions.store.enabled_skills_catalog(
+                    workspace_root=(row.get("local_execution") or {}).get("workspace_root")))
+            skill_tools = ("ryn_read_skill_file",) if has_skill_files else ()
         resource_tools = (
             ("ryn_list_resource_roots", "ryn_list_resources", "ryn_create_directory", "ryn_upload_resource_file", "ryn_create_text_file")
             if (not row["scope"].get("resource_grants") and "selection" not in row["scope"]
@@ -1029,7 +1110,7 @@ class AgentRuntime(AgentLoop):
             if plugin["enabled"] and selected_skill_ids.intersection(plugin["skill_ids"])
         }
         preloads = tool_menu.plugin_preloads(business_specs, self._metadata, selected_plugins) if selected_plugins else ()
-        return tool_menu.project(business_specs, ALL_INTERNAL_SPECS, row.get("tool_menu"),
+        return tool_menu.project(business_specs, self._internal_specs(row), row.get("tool_menu"),
             max_context_bytes=max_context_bytes, authority_bytes=authority_bytes,
             epoch=row.get("context_epoch", 0), goal_revision=row["goal"]["revision"],
             # Pins need room; in small windows the earlier seeds still apply.
@@ -1038,13 +1119,20 @@ class AgentRuntime(AgentLoop):
                            "ryn_shell_execute", "ryn_file_write", "ryn_file_list", "ryn_code_exec") if row.get("project") else
                           ("ryn_shell_execute", "ryn_file_read", "ryn_file_search", "ryn_code_exec")) + desktop + skill_tools + resource_tools), authority_bytes
 
+    @staticmethod
+    def _internal_specs(row):
+        return [spec for spec in ALL_INTERNAL_SPECS
+                if (spec["function"]["name"] not in HISTORY_TOOL_NAMES or (row or {}).get("context_checkpoint"))
+                and (spec["function"]["name"] not in goals.TOOL_NAMES or goals.available(row))
+                and not (spec["function"]["name"] == "ryn_spawn_agent" and subagents.at_max_depth(row))]
+
     def _specs(self, row=None) -> list:
         specs = self._business_specs(row)
         if any(spec["function"]["name"] in ALL_INTERNAL_NAMES for spec in specs):
             raise AgentError("agent_tool_definition_changed")
         if row is not None:
             return self._menu(row)[0][0]
-        return [*specs, *(copy.deepcopy(spec) for spec in ALL_INTERNAL_SPECS if spec["function"]["name"] != tool_menu.NAME)]
+        return [*specs, *(copy.deepcopy(spec) for spec in self._internal_specs(row) if spec["function"]["name"] != tool_menu.NAME)]
 
     def _metadata(self, name: str) -> dict:
         return {"effect": "read", "title": name, "internal": True} if name in ALL_INTERNAL_NAMES else self.tools.metadata(name)
@@ -1053,7 +1141,15 @@ class AgentRuntime(AgentLoop):
         if "_history_override" in row:
             return copy.deepcopy(row["_history_override"])
         epoch = row.get("context_epoch", 0)
-        return [message for message in row["messages"] if message["role"] == "user" or message.get("context_epoch", 0) == epoch]
+        return [message for message in row["messages"] if _is_owner_user_message(message) or message.get("context_epoch", 0) == epoch]
+
+    def _task_workspace_root(self, row: dict) -> str:
+        bound = row.get("local_execution") or {}
+        root = bound.get("workspace_root", "")
+        if not root and row.get("permission_mode") == "automatic" and not bound.get("project_id"):
+            root = (self.store.inspect(lambda data: data["settings"].get("workspace_root"))
+                    or self.store.default_workspace())
+        return root
 
     def _execution_context(self, row: dict, operation_id=None, *, cheap_only=False) -> dict:
         origins = {}
@@ -1090,6 +1186,7 @@ class AgentRuntime(AgentLoop):
         # every stream chunk. Full checks still run at each dispatch boundary.
         policy_context = ({"consumer_node_id": self.consumer_node_id, "model_destination": model_destination,
                            "model_destination_verified": False} if cheap_only else self._policy_context(row))
+        workspace_root = self._task_workspace_root(row)
         return {**policy_context,
                 "_admit_extension_policy": _ExtensionPolicyAdmitter(self, row),
                 "task_id": row["id"], "operation_id": operation_id, "owner_id": self.owner_id,
@@ -1097,6 +1194,8 @@ class AgentRuntime(AgentLoop):
                 "control_revision": row["control_revision"], "scope_revision": row["scope_revision"],
                 "settings_revision": self.store.inspect(lambda data: data.get("settings_revision", 0)),
                 "local_execution": copy.deepcopy(row.get("local_execution") or {}),
+                "workspace_root": workspace_root,
+                "result_budget_bytes": row["limits"]["max_output_chars"],
                 "model_destination": model_destination,
                 "resource_grants": resource_grants,
                 "egress_grants": egress_grants, "resource_origins": list(origins.values())}
@@ -1236,6 +1335,7 @@ class AgentRuntime(AgentLoop):
         # escaping and validated inline image bounds, before reserving or dispatching inference.
         model = self._model_metadata(row["model_id"]) or {}
         context_policy = self._context_policy(row)
+        messages = self._fit_image_history(row, messages, specs)
 
         def admit_effective_capacity(analysis):
             # Every model request (main, summary, checker, image inspection)
@@ -1250,6 +1350,7 @@ class AgentRuntime(AgentLoop):
             manual_limit=row["limits"].get("max_context_chars"),
             provenance=row.get("context_budget_provenance"),
             context_policy=context_policy,
+            capacity_bytes=self._effective_capacity(row)[0],
         ))
         context = self._execution_context(row)
         options = {}
@@ -1284,7 +1385,8 @@ class AgentRuntime(AgentLoop):
             options["request_id"] = active_request_id
 
         override_effort = None
-        if reasoning_override is not None and getattr(self.model, "supports_reasoning_effort", False) is True:
+        if (reasoning_override is not None and "reasoning_effort" not in row
+                and getattr(self.model, "supports_reasoning_effort", False) is True):
             try:
                 override_effort = reasoning.validate(model, reasoning_override)
             except AgentError:
@@ -1292,7 +1394,7 @@ class AgentRuntime(AgentLoop):
         if override_effort is not None:
             options["reasoning_effort"] = override_effort
         elif "reasoning_effort" in row:
-            options["reasoning_effort"] = reasoning.validate(model, row["reasoning_effort"])
+            options["reasoning_effort"] = reasoning.resolve(model, row["reasoning_effort"])
             if getattr(self.model, "supports_reasoning_effort", False) is not True:
                 raise AgentError("agent_reasoning_effort_unsupported")
         # The window's own conversation may continue a provider thread across
@@ -1317,6 +1419,7 @@ class AgentRuntime(AgentLoop):
                 model_client=self.model,
                 native_artifact_loader=self._native_artifact_loader(),
             )
+            dispatch_messages = self._fit_image_history(row, dispatch_messages, specs)
             admit_effective_capacity(output_policy.admit_request_context(
                 model,
                 dispatch_messages,
@@ -1324,6 +1427,7 @@ class AgentRuntime(AgentLoop):
                 manual_limit=row["limits"].get("max_context_chars"),
                 provenance=row.get("context_budget_provenance"),
                 context_policy=context_policy,
+                capacity_bytes=self._effective_capacity(row)[0],
             ))
         # An image the selected route cannot carry becomes a short note, so a
         # picture in the history never fails this or any later request. Only an
@@ -1336,11 +1440,30 @@ class AgentRuntime(AgentLoop):
                     self._note_images_omitted(row["id"], omitted, route_cap["image_capability_reason"], latest)
         if image_capabilities.message_has_image_input(dispatch_messages):
             image_capabilities.require_route_image_support(model, model_client=self.model)
-        policy = output_policy.select(model, dispatch_messages, specs, request_cap=output_cap)
+        density = context_compaction.applied_density(context_policy, self._effective_capacity(row)[1])
+        policy = output_policy.select(model, dispatch_messages, specs, request_cap=output_cap,
+                                      bytes_per_token=density if density is not None and density > context_compaction.DEFAULT_BYTES_PER_TOKEN else None)
+        if getattr(self.model, "supports_calibrated_capacity", False) is True:
+            options["bytes_per_token"] = density if density is not None and density > context_compaction.DEFAULT_BYTES_PER_TOKEN else None
         profile_record = model_profiles.request_record(model_profiles.for_task(self, row, model),
                                                        dispatch_messages, options)
         meter_row = {**row, "_request_id": active_request_id} if active_request_id else row
         dispatched = False
+        limit_retry_state = {}
+        def model_event(metadata):
+            if isinstance(metadata, dict) and metadata.get("type") in {"model_limit_adjusted", "output_limit_raised"}:
+                def record(data):
+                    current = task(data, row["id"])
+                    if current["control_revision"] != row["control_revision"] or current["status"] != "running":
+                        raise AgentToolRejected("agent_cancelled")
+                    event(current, metadata["type"], **{key: metadata[key] for key in (
+                        "basis", "old_context_window", "new_context_window", "old_max_output_tokens", "new_max_output_tokens", "request_id") if key in metadata})
+                    if not nested and stage is None:
+                        # Internal adaptation consumes the existing one-shot format repair.
+                        current["model_retry_count"] = max(1, current.get("model_retry_count", 0))
+                self.store.transaction(record)
+            if on_event is not None:
+                on_event(metadata)
         def _invoke_model(allowed):
             nonlocal dispatched
             # Read live state, including restrictions added by overlapped reads.
@@ -1357,14 +1480,18 @@ class AgentRuntime(AgentLoop):
                 if "conversation" in options:
                     options["conversation"] += ":policy:" + str(state["revision"])
             dispatched = True
+            if getattr(self.model, "supports_limit_retry", False) is True:
+                options["on_limit_retry"] = lambda next_policy, usage, minimum_output: limit_retry_state["reserve"](
+                    {**next_policy, "model_id": row["model_id"], "model_profile": profile_record}, usage, minimum_output)
             return self.model.complete(
-                row["model_id"], dispatch_messages, specs, cancelled, on_event,
+                row["model_id"], provider_messages(dispatch_messages, include_current_excerpts=False), specs, cancelled, model_event if on_event is not None else None,
                 **options, **({"max_output_tokens": allowed} if getattr(self.model, "supports_output_token_limit", False) else {}))
         def _metered():
             # The model tag lets later density calibration ignore another model's usage.
             return self._meter_model(meter_row, _invoke_model,
                 input_bound=policy["estimated_input_tokens"], output_bound=policy["effective_cap"],
                 output_policy_record={**policy, "model_id": row["model_id"], "model_profile": profile_record},
+                retry_state=limit_retry_state,
                 nested=nested, stage=stage,
                 can_reduce_output=getattr(self.model, "supports_output_token_limit", False) is True)
         try:
@@ -1430,7 +1557,7 @@ class AgentRuntime(AgentLoop):
                     self._record_image_request_linkage(row, attempted_linkage)
             raise
         resize = response.get("shared_image_resize") if isinstance(response, dict) else None
-        if isinstance(resize, dict) and resize.get("resized") and not nested:
+        if isinstance(resize, dict) and (resize.get("resized") or resize.get("omitted")) and not nested:
             self._note_shared_image_resize(row["id"], resize)
         if image_report and image_report.get("has_candidate_artifacts"):
             dispatch_status = "submitted" if image_report.get("image_prepared") else "not_dispatched"
@@ -1459,7 +1586,8 @@ class AgentRuntime(AgentLoop):
         model = self._model_metadata(row.get("model_id", "")) if isinstance(row, dict) else None
         return budget.infer_cached_input_weight(row, model if isinstance(model, dict) else None)
 
-    def _meter_model(self, selected, invoke, *, input_bound, output_bound, nested=False, stage=None, can_reduce_output=True, output_policy_record=None):
+    def _meter_model(self, selected, invoke, *, input_bound, output_bound, nested=False, stage=None, can_reduce_output=True, output_policy_record=None, retry_state=None):
+        minimum_output = 1
         def admit(data):
             row = task(data, selected["id"])
             if (row["status"] != "running" or row["control_revision"] != selected.get("_run_control_revision", selected["control_revision"])
@@ -1470,7 +1598,7 @@ class AgentRuntime(AgentLoop):
             max_tokens = state["limits"]["max_total_tokens"]
             wrap_up_reserve = min(100000, max_tokens // 15) if nested and max_tokens >= 100000 else 0
             available = max_tokens - wrap_up_reserve - state["lifetime"]["charged_tokens"] - input_bound
-            if available <= 0 or (available < output_bound and not can_reduce_output):
+            if available < minimum_output or (available < output_bound and not can_reduce_output):
                 raise AgentError("agent_token_budget_exhausted")
             flight = row.get("in_flight") or {}
             record = budget.reserve(row, "model", stage or flight.get("stage") or flight.get("kind", "model"),
@@ -1486,6 +1614,18 @@ class AgentRuntime(AgentLoop):
             return record
         reservation = self.store.transaction(admit)
         started = time.monotonic()
+        def reserve_retry(next_policy, usage, minimum):
+            nonlocal reservation, started, input_bound, output_bound, output_policy_record, minimum_output
+            self._settle_usage(selected["id"], reservation["id"], usage=usage, elapsed=0 if nested else time.monotonic() - started)
+            input_bound = next_policy["estimated_input_tokens"]
+            output_bound = next_policy["effective_cap"]
+            output_policy_record = next_policy
+            minimum_output = minimum
+            reservation = self.store.transaction(admit)
+            started = time.monotonic()
+            return reservation["output_reservation"]
+        if retry_state is not None:
+            retry_state["reserve"] = reserve_retry
         response = None
         retryable_failure = False
         try:
@@ -1511,6 +1651,17 @@ class AgentRuntime(AgentLoop):
                 retryable_failure = True
             raise
         finally:
+            if isinstance(response, dict) and response.get("server_model") and response.get("requested_model"):
+                requested, served = response["requested_model"], response["server_model"]
+                def normalized(name):
+                    return re.sub(r"-\d{4}-?\d{2}-?\d{2}$", "", name.rsplit("/", 1)[-1].lower())
+                if normalized(requested) != normalized(served):
+                    def mismatch(data):
+                        row = data["tasks"].get(selected["id"])
+                        if row is not None and not row.get("model_mismatch_reported"):
+                            row["model_mismatch_reported"] = True
+                            event(row, "model_mismatch", requested_model=requested, server_model=served)
+                    self.store.transaction(mismatch)
             usage = response.get("reported_usage", response.get("usage")) if isinstance(response, dict) else None
             if isinstance(usage, dict) and isinstance(response, dict):
                 cached = response.get("cached_tokens")
@@ -1532,7 +1683,12 @@ class AgentRuntime(AgentLoop):
             row = data["tasks"].get(task_id)
             if row is not None:
                 weight = cached_input_weight if cached_input_weight is not None else self._cached_input_weight(row)
+                record = (next((item for item in row["budget"]["records"] if item["id"] == reservation_id), None)
+                          if "context_density_penalty" in row else None)
+                fresh = record is not None and record["status"] == "reserved"
                 budget.settle(row, reservation_id, usage=usage, elapsed_seconds=elapsed, cached_input_weight=weight, retryable_failure=retryable_failure, response_bytes=response_bytes)
+                if fresh and context_compaction.observed_bytes_per_token({**row, "budget": {"records": [record]}}) is not None:
+                    row.pop("context_density_penalty", None)
         self.store.transaction(finish)
 
     def _settle_usage_batch(self, task_id, reservation_ids, *, usage=None, elapsed=None, cached_input_weight=None):
@@ -1568,6 +1724,9 @@ class AgentRuntime(AgentLoop):
         context = self._execution_context(selected, operation_id)
         context["selected_skills"] = copy.deepcopy(selected.get("skills") or [])
         current_model = self._model_metadata(selected["model_id"]) or {}
+        context["context_window_chars"] = output_policy.context_budget(
+            current_model, selected["limits"].get("max_context_chars"),
+            provenance=selected.get("context_budget_provenance"))["effective_max_context_bytes"]
         context["_image_capability"] = image_capabilities.evaluate_image_capability(
             current_model, model_client=self.model)
         def inspect_image(messages, cancelled, *, source_artifact=None, linkage_out=None):
@@ -1675,14 +1834,14 @@ class AgentRuntime(AgentLoop):
                 if storage_relief.satisfied(total, count):
                     break
                 chosen.append(item)
-                total, count = total - item["bytes"], count - 1
+                total, count = total - item["bytes"], count - len(item["tree_ids"])
             if not chosen:
                 return 0
             # One commit for the whole batch: each commit re-copies the active
             # state, so archiving dozens of tasks one by one would stall a step.
             with contextlib.ExitStack() as gates:
-                for item in sorted(chosen, key=lambda item: item["id"]):
-                    gates.enter_context(credential_control.gate(self.store, item["id"]))
+                for task_id in sorted({key for item in chosen for key in item["tree_ids"]}):
+                    gates.enter_context(credential_control.gate(self.store, task_id))
                 archived = len(lifecycle.archive_many(self.store, chosen, event, reason="storage",
                                                       on_mutate=memory_integration.on_task_lifecycle_in_tx))
             if archived:
@@ -1852,6 +2011,7 @@ class AgentRuntime(AgentLoop):
             if ambiguous(row) or row["status"] == "cancelled":
                 raise AgentError("agent_operation_unresolved" if ambiguous(row) else "agent_invalid_transition")
             row["scope_revision"] += 1
+            row["open_questions"] = []
             row["scope"] = {**copy.deepcopy(scope), "revision": row["scope_revision"], "selection": copy.deepcopy(value["scope"])}
             row["model_destination"] = copy.deepcopy(destination)
             # Do not erase encrypted audit evidence. A new provider projection
@@ -1867,6 +2027,7 @@ class AgentRuntime(AgentLoop):
             for criterion in row["criteria"]:
                 criterion.update(status="pending", evidence_refs=[])
             row.update(pending_approval=None, approved=None, pending_input=None)
+            row.pop("task_grants", None)
             row["pending_control"] = {"kind": "scope", "remain_paused": row["status"] in {"paused", "completed", "failed", "interrupted"} or not data["settings"]["enabled"]}
             event(row, "scope_changed", scope_revision=row["scope_revision"])
             close_queue(row, event, "agent_scope_changed")
@@ -1888,7 +2049,7 @@ class AgentRuntime(AgentLoop):
 
     def load_project(self, value: dict) -> dict:
         def register_and_sync(data):
-            res = projects.register(data, value)
+            res = projects.register(data, value, store=self.store)
             memory_integration.propagate_memory_revocation_in_tx(data)
             return res
         return self.store.transaction(register_and_sync)
@@ -1952,21 +2113,20 @@ class AgentRuntime(AgentLoop):
                     or (row.get("local_execution") or {}).get("workspace_root")):
                 raise AgentError("agent_invalid_transition")
             current = data["settings"].get("workspace_root", "")
-            if current and Path(current).resolve() != Path(root):
-                raise AgentError("agent_workspace_changed_new_task_required")
             if not current:
                 data["settings"]["workspace_root"] = root
                 data["settings_revision"] = data.get("settings_revision", 0) + 1
-            row.setdefault("local_execution", {})["workspace_root"] = data["settings"]["workspace_root"]
+            row.setdefault("local_execution", {}).update(workspace_root=root, workspace_source="task")
+            row.pop("task_grants", None)
             row["observed_files"] = {}
             close_queue(row, event, "agent_owner_changed")
             row.update(pending_input=None, approved=None, status="queued", error=None, result="", steps=0, elapsed_seconds=0.0)
             row.pop("verification", None)
             budget.new_round(row)
             budget.restart_segment_audit(row)
-            row["messages"].append({"role": "user", "message_id": "owner_" + uuid.uuid4().hex,
-                "content": "The owner selected this working directory in task settings: " + root
-                    + ". Continue the original request. Existing write approvals still apply."})
+            row["messages"].append({**host_note("workspace_bound",
+                "Working directory selected in task settings: " + root + ". Continue the original request."),
+                "context_epoch": row.get("context_epoch", 0)})
             event(row, "workspace_bound", workspace_root=root)
             remember_request(row, value)
             return public_task(row, settings=data["settings"])
@@ -1979,6 +2139,7 @@ class AgentRuntime(AgentLoop):
         data = self.store.inspect(lambda state: {key: state[key] for key in
             ("settings", "settings_revision", "settings_context_budget_provenance") if key in state})
         settings = {**DEFAULT_SETTINGS, **self._EXTRA_SETTINGS, **data["settings"]}
+        settings["shell_allow_prefixes"] = [shell_prefix_rule(rule) for rule in settings["shell_allow_prefixes"]]
         policy = self._settings_context_policy(settings, data.get("settings_context_budget_provenance"),
                                                display_only=display_only)
         return {"settings": settings, "settings_revision": data.get("settings_revision", 0), "context_budget_policy": policy}
@@ -1991,6 +2152,33 @@ class AgentRuntime(AgentLoop):
         return self._context_policy({"model_id": settings["model_id"], "limits": settings,
                                      "context_budget_provenance": provenance})
 
+    def _owner_rule_catalog(self):
+        from .execution_policy import owner_tool_key
+        result = {}
+        for row in self.tool_catalog():
+            if row["effect"] == "write":
+                key = owner_tool_key({"name": row["name"]}, row)
+                result[row["name"]] = result[key] = key
+        return result
+
+    @staticmethod
+    def _validate_owner_rules(values, settings, names):
+        for field in ("allowed_write_tools", "denied_tools"):
+            if field not in values:
+                continue
+            rules = values[field]
+            known = set(names.values()) | set(settings.get(field, []))
+            if not isinstance(rules, list) or any(not isinstance(rule, str) for rule in rules):
+                raise AgentError("agent_invalid_settings")
+            rules = [names.get(rule, rule) for rule in rules]
+            if any(rule not in known for rule in rules) or len(set(rules)) != len(rules):
+                raise AgentError("agent_invalid_settings")
+            values[field] = rules
+        allowed = values.get("allowed_write_tools", settings.get("allowed_write_tools", []))
+        denied = values.get("denied_tools", settings.get("denied_tools", []))
+        if set(allowed) & set(denied):
+            raise AgentError("agent_invalid_settings")
+
     def update_settings(self, values: dict) -> dict:
         if isinstance(values, dict) and set(values) == {"reset_operation_ledger"}:
             if values["reset_operation_ledger"] is not True:
@@ -1999,29 +2187,75 @@ class AgentRuntime(AgentLoop):
             return {**self.settings(), "operation_ledger_reset": reset_res}
         if not isinstance(values, dict) or set(values) - (set(DEFAULT_SETTINGS) | set(self._EXTRA_SETTINGS)):
             raise AgentError("agent_invalid_settings")
+        values = copy.deepcopy(values)
+        if "shell_allow_prefixes" in values:
+            from .execution_policy import normalize_shell_prefix_rules
+            normalized = normalize_shell_prefix_rules(values["shell_allow_prefixes"])
+            if normalized is None:
+                raise AgentError("agent_invalid_settings")
+            values["shell_allow_prefixes"] = normalized
+        if "project_doc_fallback_filenames" in values:
+            names = values["project_doc_fallback_filenames"]
+            if not isinstance(names, list) or any(not projects.valid_fallback_name(name) for name in names):
+                raise AgentError("agent_invalid_settings")
+        if "owner_instructions" in values:
+            instructions = values["owner_instructions"]
+            if not isinstance(instructions, str) or len(instructions.encode("utf-8")) > 40960:
+                raise AgentError("agent_invalid_settings")
         if "compact_prompt" in values:
             cp = values["compact_prompt"]
             if not isinstance(cp, str) or len(cp.encode("utf-8")) > self.COMPACT_PROMPT_MAX_BYTES or "\x00" in cp:
                 raise AgentError("agent_invalid_settings")
+        if "web_search_mode" in values:
+            mode = values["web_search_mode"]
+            if not isinstance(mode, str) or mode not in {"", "cached", "disabled"}:
+                raise AgentError("agent_invalid_settings")
+        if "web_allowed_domains" in values:
+            domains = values["web_allowed_domains"]
+            if not isinstance(domains, list) or len(domains) > 32:
+                raise AgentError("agent_invalid_settings")
+            normalized = []
+            for domain in domains:
+                if not isinstance(domain, str):
+                    raise AgentError("agent_invalid_settings")
+                try:
+                    item = normalize_domains([domain])
+                except (AgentToolRejected, ValueError):
+                    raise AgentError("agent_invalid_settings") from None
+                if not item or len(item[0]) > 253:
+                    raise AgentError("agent_invalid_settings")
+                if item[0] not in normalized:
+                    normalized.append(item[0])
+            values["web_allowed_domains"] = normalized
         from .local_tools import validate_configuration
         validate_configuration(values)
         if "enabled" in values and type(values["enabled"]) is not bool:
             raise AgentError("agent_invalid_settings")
-        if "verify_text_responses" in values and type(values["verify_text_responses"]) is not bool:
-            raise AgentError("agent_invalid_settings")
+        for key in ("verify_text_responses", "interrupt_message_enabled"):
+            if key in values and type(values[key]) is not bool:
+                raise AgentError("agent_invalid_settings")
         if "model_id" in values and (not isinstance(values["model_id"], str) or len(values["model_id"]) > 1024):
             raise AgentError("agent_invalid_settings")
         if "permission_mode" in values and values["permission_mode"] not in PERMISSION_MODES:
             raise AgentError("agent_invalid_settings")
-        if "allowed_write_tools" in values:
-            allowed = values["allowed_write_tools"]
-            names = {row["name"] for row in self.tool_catalog() if row["effect"] == "write"}
-            if not isinstance(allowed, list) or any(not isinstance(name, str) or name not in names for name in allowed) or len(set(allowed)) != len(allowed):
-                raise AgentError("agent_invalid_settings")
+        rule_names = self._owner_rule_catalog() if {"allowed_write_tools", "denied_tools"} & values.keys() else {}
         if values.get("model_id"):
             selected_model = self._model_metadata(values["model_id"])
             if selected_model is None or not selected_model.get("available") or selected_model.get("agent_supported") is not True:
                 raise AgentError("agent_model_unavailable")
+        if "default_subagent_model_id" in values:
+            model_id = values["default_subagent_model_id"]
+            if not isinstance(model_id, str) or len(model_id) > 1024:
+                raise AgentError("agent_invalid_settings")
+            if model_id:
+                model = self._model_metadata(model_id)
+                if model is None or not model.get("available") or model.get("agent_supported") is not True:
+                    raise AgentError("agent_model_unavailable")
+        if values.get("default_subagent_reasoning_effort") is not None:
+            try:
+                reasoning.validate_effort(values["default_subagent_reasoning_effort"])
+            except ValueError:
+                raise AgentError("agent_invalid_reasoning_effort") from None
         if ("max_context_chars" in values and values["max_context_chars"] is not None
                 and (type(values["max_context_chars"]) is not int or not 4000 <= values["max_context_chars"] <= 2000000)):
             raise AgentError("agent_invalid_settings")
@@ -2036,9 +2270,29 @@ class AgentRuntime(AgentLoop):
                 raise AgentError("agent_invalid_settings") from None
 
         def update(data):
+            self._validate_owner_rules(values, data["settings"], rule_names)
+            if "shell_allow_prefixes" in values:
+                old_rules = [shell_prefix_rule(rule) for rule in data["settings"].get("shell_allow_prefixes", [])]
+                rules = values["shell_allow_prefixes"]
+                pending = [prefix for prefix in data.get("pending_shell_prefix_notices", [])
+                           if any(rule["prefix"] == prefix for rule in rules)]
+                for rule in rules:
+                    old = next((item for item in old_rules if item["prefix"] == rule["prefix"]), None)
+                    if (old is None or set(rule["options"]) - set(old["options"])) and rule["prefix"] not in pending:
+                        pending.append(rule["prefix"])
+                data["pending_shell_prefix_notices"] = pending
             workspace_changed = "workspace_root" in values and values["workspace_root"] != data["settings"].get("workspace_root")
-            desktop_changed = "desktop_access" in values and bool(values["desktop_access"]) != bool(data["settings"].get("desktop_access"))
-            permission_changed = any(key in values and values[key] != data["settings"].get(key) for key in ("permission_mode", "allowed_write_tools", "workspace_root", "desktop_access"))
+            if any(key in values and values[key] != data["settings"].get(key)
+                   for key in ("permission_mode", "allowed_write_tools", "denied_tools", "workspace_root", "desktop_access")):
+                for row in data["tasks"].values():
+                    if row["status"] not in TERMINAL:
+                        row.pop("task_grants", None)
+                        if "allowed_write_tools" in values:
+                            row["allowed_write_tools"] = [rule for rule in row.get("allowed_write_tools", [])
+                                                          if rule in values["allowed_write_tools"]]
+            desktop_revoked = bool(data["settings"].get("desktop_access")) and values.get("desktop_access") is False
+            permission_changed = desktop_revoked or any(key in values and values[key] != data["settings"].get(key) for key in ("allowed_write_tools", "denied_tools", "workspace_root"))
+            prefix_changed = "shell_allow_prefixes" in values and values["shell_allow_prefixes"] != data["settings"].get("shell_allow_prefixes", [])
             changed = any(data["settings"].get(key) != value for key, value in values.items())
             for key in budget.SEGMENT_LIMITS:
                 if key in values:
@@ -2058,11 +2312,19 @@ class AgentRuntime(AgentLoop):
                 # The owner's own pick is never replaced by a later shipped default.
                 data[PERMISSION_MODE_SOURCE] = "owner"
             data["settings"].update(values)
-            if permission_changed:
+            if permission_changed or any(key in values for key in ("permission_mode", "desktop_access")):
                 for row in data["tasks"].values():
-                    if desktop_changed and not row.get("archived"):
-                        row.setdefault("local_execution", {})["desktop_access"] = bool(data["settings"].get("desktop_access"))
-                    if row["status"] not in TERMINAL:
+                    if not row.get("archived"):
+                        bound = row.setdefault("local_execution", {})
+                        bound["desktop_access"] = desktop_enabled(
+                            row["permission_mode"], bound.get("desktop_access") and data["settings"].get("desktop_access"))
+            if {"web_search_mode", "web_allowed_domains"} & values.keys():
+                for row in data["tasks"].values():
+                    bound = row.setdefault("local_execution", {})
+                    bound.update(restrict_web_policy(bound, data["settings"]))
+            if permission_changed or prefix_changed:
+                for row in data["tasks"].values():
+                    if row["status"] not in TERMINAL and (permission_changed or row["permission_mode"] == "confirm_changes"):
                         previous_updated_at = row["updated_at"]
                         preserve_activity = row["status"] in {"paused", "waiting_approval", "waiting_input"}
                         row.update(approved=None, pending_approval=None)
@@ -2098,6 +2360,7 @@ class AgentRuntime(AgentLoop):
         # Display metadata must not hold the encrypted state lock or refresh
         # providers. Task admission still resolves its current model separately.
         settings = {**DEFAULT_SETTINGS, **self._EXTRA_SETTINGS, **saved["settings"]}
+        settings["shell_allow_prefixes"] = [shell_prefix_rule(rule) for rule in settings["shell_allow_prefixes"]]
         policy = self._settings_context_policy(settings, saved["provenance"], display_only=True)
         return {
             **settings,
@@ -2113,6 +2376,33 @@ class AgentRuntime(AgentLoop):
             return sanitized(self.catalog.get_model(model_id))
         return next((row for row in self.models() if row.get("id") == model_id), None)
 
+    def _resolve_subagent_spawn(self, parent: dict, args: dict) -> dict:
+        """Resolve catalog capabilities outside the active-store transaction."""
+        settings = self.settings()
+        fork_all = args.get("fork_turns") == "all"
+        model_id = (parent["model_id"] if fork_all else
+                    args.get("model_id") or settings.get("default_subagent_model_id") or parent["model_id"])
+        model = self._model_metadata(model_id)
+        if model is None or not model.get("available") or model.get("agent_supported") is not True:
+            choices = sorted(row["id"] for row in self.models() if row.get("available") and row.get("agent_supported") is True)[:5]
+            raise AgentToolRejected("agent_subagent_model_unknown", correction="Choose an available agent model: " + ", ".join(choices))
+        explicit = not fork_all and args.get("reasoning_effort") is not None
+        requested = (parent.get("reasoning_effort") if fork_all else args.get("reasoning_effort") or
+                     settings.get("default_subagent_reasoning_effort") or parent.get("reasoning_effort"))
+        effort = None
+        if requested is not None:
+            try:
+                effort = reasoning.validate(model, requested)
+            except AgentError:
+                if explicit:
+                    supported = reasoning.metadata(model.get("supported_reasoning_efforts")).get("supported_reasoning_efforts", [])
+                    raise AgentToolRejected("agent_reasoning_effort_unsupported",
+                        correction="Supported reasoning efforts for this model: " + (", ".join(supported) or "none exposed")) from None
+        capabilities = reasoning.metadata(model.get("supported_reasoning_efforts"), model.get("default_reasoning_effort"))
+        return {**args, "resolved_model_id": model_id, "resolved_effort": effort,
+                "effective_effort": effort or capabilities.get("default_reasoning_effort"),
+                "resolved_destination": self._destination(model)}
+
     def preview_model_switch(self, task_id: str, model_id: str) -> dict:
         return model_switch.preview(self, task_id, model_id)
 
@@ -2126,9 +2416,38 @@ class AgentRuntime(AgentLoop):
         self.store.transaction(sync_after_switch)
         return res
 
+    SKILL_SYNC_THROTTLE_SECONDS = 10.0
+
+    def _maybe_sync_workspace_skills(
+        self,
+        workspace_root: str | None,
+        *,
+        desktop_access: bool = False,
+    ) -> None:
+        if self.extensions is None or not workspace_root:
+            return
+        ws_path = Path(workspace_root).expanduser()
+        try:
+            ws_key = os.path.normcase(str(ws_path.resolve()))
+        except OSError:
+            ws_key = os.path.normcase(str(ws_path))
+        now_mono = time.monotonic()
+        with self._skill_sync_lock:
+            last_at = self._skill_sync_last_at.get(ws_key)
+            if last_at is not None and (now_mono - last_at) < self.SKILL_SYNC_THROTTLE_SECONDS:
+                return
+            self._skill_sync_last_at[ws_key] = now_mono
+        self.extensions.store.sync_discovered_skills(
+            workspace_roots=[ws_path],
+            desktop_access=desktop_access,
+        )
+
     def skills(self) -> dict:
         if self.extensions is not None:
-            return {"skills": self.extensions.store.enabled_skills_catalog()}
+            ws = self.store.inspect(lambda d: (d.get("settings") or {}).get("workspace_root"))
+            if not ws:
+                ws = self.store.default_workspace()
+            return {"skills": self.extensions.store.enabled_skills_catalog(workspace_root=ws)}
         return {"skills": knowledge.catalog()}
 
     def _resolve_skills(
@@ -2136,22 +2455,32 @@ class AgentRuntime(AgentLoop):
         explicit_ids: Any,
         message_text_val: str = "",
         *,
+        workspace_root: str | None = None,
         default_project: bool = False,
         warnings_out: list[dict] | None = None,
     ) -> list[dict]:
         enabled_catalog = (
-            self.extensions.store.enabled_skills_catalog()
+            self.extensions.store.enabled_skills_catalog(workspace_root=workspace_root)
             if self.extensions is not None
             else knowledge.catalog()
         )
-        enabled_by_lower = {
-            str(item["id"]).lower(): str(item["id"])
-            for item in enabled_catalog
-            if isinstance(item, dict) and isinstance(item.get("id"), str)
-        }
+        enabled_by_lower: dict[str, str] = {}
+        for item in enabled_catalog:
+            if isinstance(item, dict) and isinstance(item.get("id"), str):
+                cid = str(item["id"])
+                enabled_by_lower[cid.lower()] = cid
+                raw_name = item.get("name")
+                if isinstance(raw_name, str) and raw_name:
+                    enabled_by_lower.setdefault(raw_name.lower(), cid)
         explicit_warnings: list[dict] = []
         if self.extensions is not None:
-            selected = list(self.extensions.store.select_skills(explicit_ids, warnings=explicit_warnings))
+            selected = list(
+                self.extensions.store.select_skills(
+                    explicit_ids,
+                    workspace_root=workspace_root,
+                    warnings=explicit_warnings,
+                )
+            )
         else:
             selected = knowledge.select(explicit_ids)
         if isinstance(explicit_ids, list) and len(explicit_ids) > 0 and not selected and explicit_warnings:
@@ -2162,11 +2491,15 @@ class AgentRuntime(AgentLoop):
 
         if isinstance(message_text_val, str) and "$" in message_text_val:
             mentioned_ids: list[str] = []
+            missing_ids = self.extensions.store.missing_skill_ids() if self.extensions is not None else set()
             for match in re.finditer(
-                r"(?<![A-Za-z0-9_-])\$([A-Za-z0-9][A-Za-z0-9_-]{0,63})(?![A-Za-z0-9_-])",
+                r"(?<![A-Za-z0-9_-])\$([A-Za-z0-9][A-Za-z0-9_.-]{0,63})(?![A-Za-z0-9_-])",
                 message_text_val,
             ):
-                canonical_id = enabled_by_lower.get(match.group(1).lower())
+                token = match.group(1).rstrip(".")
+                canonical_id = enabled_by_lower.get(match.group(1).lower()) or enabled_by_lower.get(token.lower())
+                if canonical_id is None and token.lower() in missing_ids:
+                    raise AgentError("agent_invalid_skills")
                 if (
                     canonical_id
                     and canonical_id not in seen_ids
@@ -2178,7 +2511,11 @@ class AgentRuntime(AgentLoop):
                 mention_warnings: list[dict] = []
                 if self.extensions is not None:
                     mentioned_selected = list(
-                        self.extensions.store.select_skills(mentioned_ids, warnings=mention_warnings)
+                        self.extensions.store.select_skills(
+                            mentioned_ids,
+                            workspace_root=workspace_root,
+                            warnings=mention_warnings,
+                        )
                     )
                 else:
                     mentioned_selected = knowledge.select(mentioned_ids)
@@ -2293,29 +2630,126 @@ class AgentRuntime(AgentLoop):
     def reset_memory(self, value: dict) -> dict:
         return memory_integration.reset_owner_memory(self, value)
 
+    def erase_owner_data(self, scopes) -> dict:
+        """Erase selected private records through the ordinary owner controls.
+
+        The scheduler gate prevents another step starting while stop drains the
+        existing calls. A still-running operation fails cleanup, rather than
+        deleting its cancellation state or claiming that erasure succeeded.
+        """
+        scopes = set(scopes) & {"agent_history", "agent_memory"}
+        if not scopes:
+            return {"erased": []}
+        with self._run_lock:
+            state = self.store.read()
+            for task_id in state["tasks"]:
+                self.action(task_id, {"action": "stop"})
+            local = getattr(self.tools, "local", self.tools)
+            processes = getattr(local, "processes", None)
+            if processes is not None:
+                for task_id in [*state["tasks"], *state.get("archives", {})]:
+                    stopped = processes.recover_operation(task_id)
+                    if not stopped.get("ok"):
+                        raise AgentError("agent_task_busy")
+            deadline = time.monotonic() + 30
+            while any(self._task_run(task_id) for task_id in state["tasks"]):
+                if time.monotonic() >= deadline:
+                    raise AgentError("agent_task_busy")
+                time.sleep(.02)
+            if "agent_memory" in scopes:
+                self.reset_memory({"expected_generation": self.memory_snapshot()["generation"],
+                                   "client_request_id": str(uuid.uuid4()), "scope": {"kind": "all"}})
+            if "agent_history" in scopes:
+                state = self.store.read()
+                rows = [lifecycle.find(self.store, state, task_id)
+                        for task_id in [*state["tasks"], *state.get("archives", {})]]
+                # Include children before a parent's cascading delete makes
+                # their attachment paths unreachable. Originals and project
+                # business outputs outside this managed directory remain.
+                for row in rows:
+                    workspace = Path(row["local_execution"]["workspace_root"]).resolve()
+                    attachment_dir = workspace / ".ryn" / "attachments" / row["id"]
+                    self._erase_private_directory(attachment_dir, workspace)
+                for row in rows:
+                    current = self.store.read()
+                    if row["id"] in current.get("deleted_tasks", {}):
+                        continue  # A parent's delete already removed this child.
+                    current_row = lifecycle.find(self.store, current, row["id"])
+                    result = self._lifecycle(row["id"], {
+                        "expected_control_revision": current_row["control_revision"],
+                        "client_request_id": str(uuid.uuid4()),
+                    }, "delete")
+                    if result.get("cleanup_pending"):
+                        raise AgentError("agent_task_cleanup_failed")
+                # Retry tombstones from an earlier partial attempt as well.
+                pending = [tid for tid, tomb in self.store.read().get("deleted_tasks", {}).items()
+                           if tomb.get("cleanup_pending")]
+                if pending and self._cleanup_deleted_tasks(pending):
+                    raise AgentError("agent_task_cleanup_failed")
+                # Private record stores only. Keep browser-profile (sign-ins),
+                # extensions_pkgs, skill libraries and the business dedup ledger.
+                for name in ("tasks", "archives", "results", "files", "quarantine", "baselines", "artifact-transfers",
+                             "browser", "render"):
+                    self._erase_private_directory(self.store.root / name, self.store.root)
+            # The previous root can retain a deleted task or reset memory. Keep
+            # the current root (settings, surviving memory, durable tombstones).
+            def clear_previous(_data):
+                self.store.prev_path.unlink(missing_ok=True)
+                self.store.purge_orphan_snapshots()
+            self.store.transaction(clear_previous)
+        return {"erased": sorted(scopes)}
+
+    @staticmethod
+    def _erase_private_directory(directory: Path, boundary: Path) -> None:
+        if not directory.exists() and not directory.is_symlink():
+            return
+        # A user-replaced directory must never expand a privacy erase outside
+        # its explicit storage/workspace boundary (including Windows junctions).
+        if directory.resolve() != boundary.resolve() / directory.relative_to(boundary):
+            raise AgentError("agent_task_cleanup_failed")
+        shutil.rmtree(directory)
+
     def list_automations(self) -> dict:
         return self.store.transaction(lambda data: automations.list_automations_in_tx(self.store, data))
 
     def create_automation(self, value: dict) -> dict:
         if not isinstance(value, dict):
             raise AgentError("agent_invalid_request")
-        item = self.store.transaction(lambda data: automations.create_or_update_automation_in_tx(self.store, data, value))
+        def _save(data):
+            try:
+                return automations.create_or_update_automation_in_tx(self.store, data, value)
+            except AgentError as exc:
+                if str(exc) != "agent_automation_write_failed":
+                    raise
+                return {"_file_write_error": str(exc)}
+        item = self.store.transaction(_save)
+        if item.get("_file_write_error"):
+            raise AgentError(item["_file_write_error"])
         return {"automation": item}
 
     def update_automation(self, automation_id: str, value: dict) -> dict:
         if not isinstance(value, dict) or not str(automation_id or "").strip():
             raise AgentError("agent_invalid_request")
+        automation_id = automations._validated_automation_id(automation_id)
         def _upd(data):
             automations.ensure_automation_state(data)
             if automation_id not in data["automations"]:
                 raise AgentError("agent_automation_not_found")
-            return automations.create_or_update_automation_in_tx(self.store, data, value, automation_id=automation_id)
+            try:
+                return automations.create_or_update_automation_in_tx(self.store, data, value, automation_id=automation_id)
+            except AgentError as exc:
+                if str(exc) != "agent_automation_write_failed":
+                    raise
+                return {"_file_write_error": str(exc)}
         item = self.store.transaction(_upd)
+        if item.get("_file_write_error"):
+            raise AgentError(item["_file_write_error"])
         return {"automation": item}
 
     def delete_automation(self, automation_id: str) -> dict:
         if not str(automation_id or "").strip():
             raise AgentError("agent_invalid_request")
+        automation_id = automations._validated_automation_id(automation_id)
         deleted = self.store.transaction(lambda data: automations.delete_automation_in_tx(self.store, data, automation_id))
         if not deleted:
             raise AgentError("agent_automation_not_found")
@@ -2324,6 +2758,7 @@ class AgentRuntime(AgentLoop):
     def run_automation_now(self, automation_id: str) -> dict:
         if not str(automation_id or "").strip():
             raise AgentError("agent_invalid_request")
+        automation_id = automations._validated_automation_id(automation_id)
         outcome = self.store.transaction(
             lambda data: automation_worker.trigger_automation_in_tx(self, data, automation_id, force=True)
         )
@@ -2370,7 +2805,8 @@ class AgentRuntime(AgentLoop):
         return self.store.transaction(update)
 
     def tool_catalog(self) -> list[dict]:
-        return [sanitized({"name": spec["function"]["name"], **self.tools.metadata(spec["function"]["name"])}) for spec in self.tools.specs()]
+        available = [sanitized({"name": spec["function"]["name"], **self.tools.metadata(spec["function"]["name"])}) for spec in self.tools.specs()]
+        return available + [sanitized(item) for item in getattr(self.tools, "unavailable_tools", lambda: [])()]
 
     def list_tasks(self, archived: bool = False) -> list[dict]:
         if archived:
@@ -2410,7 +2846,7 @@ class AgentRuntime(AgentLoop):
                 return current
             # Unchanged since the caller's copy: only fields that move on their own.
             return {"id": task_id, "revision": row["revision"], "unchanged": True,
-                    **{key: current[key] for key in ("run_timing", "budget", "allowed_actions", "run_state", "streaming", "subagents") if key in current}}
+                    **{key: current[key] for key in ("run_timing", "budget", "allowed_actions", "run_state", "streaming", "subagents", "waiting_for_subagents") if key in current}}
         found = self.store.inspect(view)
         if found is not None:
             return found
@@ -2419,7 +2855,16 @@ class AgentRuntime(AgentLoop):
                            active_run=self._task_run(task_id), monotonic_now=time.monotonic(), data=data)
 
     def lifecycle(self, task_id: str, value: dict, operation: str) -> dict:
-        with credential_control.gate(self.store, task_id):
+        data = self.store.read()
+        deleted = data.get("deleted_tasks", {}).get(task_id)
+        if deleted:
+            ids = [task_id, *deleted.get("descendant_ids", [])]
+        else:
+            row = lifecycle.find(self.store, data, task_id)
+            ids = [child["id"] for child in lifecycle.tree_rows(self.store, data, row)]
+        with contextlib.ExitStack() as gates:
+            for key in sorted(set(ids)):
+                gates.enter_context(credential_control.gate(self.store, key))
             return self._lifecycle(task_id, value, operation)
 
     def rename_task(self, task_id: str, value: dict) -> dict:
@@ -2454,23 +2899,36 @@ class AgentRuntime(AgentLoop):
             except AgentError:
                 archived = None  # change() reports the precise error.
             if archived is not None and archived.get("archived"):
-                self._relieve_storage("restore", exclude={task_id}, need_bytes=len(encoded(archived)), need_tasks=1)
+                rows = lifecycle.restore_rows(self.store, self.store.read(), archived)
+                self._relieve_storage("restore", exclude={child["id"] for child in rows},
+                                      need_bytes=sum(len(encoded(child)) for child in rows), need_tasks=len(rows))
         result = lifecycle.change(self.store, task_id, value, operation, event, now,
                                   on_mutate=memory_integration.on_task_lifecycle_in_tx)
         if result.get("deleted"):
+            ids = [*result.get("descendant_ids", []), task_id]
+            result["cleanup_pending"] = self._cleanup_deleted_tasks(ids)
+        return result if result.get("deleted") else public_task(result, settings=self.settings())
+
+    def _cleanup_deleted_tasks(self, ids):
+        any_pending = False
+        for task_id in ids:
             pending = True
             try:
                 results.purge(self.store, task_id)
                 lifecycle.purge_archive(self.store, task_id)
                 self.store.transaction(lambda _data: self.store.purge_orphan_snapshots())
                 if hasattr(self.tools, "forget_task"):
-                    self.tools.forget_task(task_id, operation_ids=self.store.read()["deleted_tasks"][task_id].get("operation_ids", []))
+                    deleted = self.store.read()["deleted_tasks"][task_id]
+                    options = {"operation_ids": deleted.get("operation_ids", [])}
+                    if deleted.get("attachment_dirs"):
+                        options["attachment_dirs"] = deleted["attachment_dirs"]
+                    self.tools.forget_task(task_id, **options)
                 pending = False
             except Exception:
                 pass  # Tombstone wins; the same DELETE safely retries cleanup.
             self.store.transaction(lambda data: data["deleted_tasks"][task_id].update(cleanup_pending=pending))
-            result["cleanup_pending"] = pending
-        return result if result.get("deleted") else public_task(result, settings=self.settings())
+            any_pending |= pending
+        return any_pending
 
     def get_result(self, task_id: str, result_id: str, offset=0, limit=8192) -> dict:
         row = lifecycle.find(self.store, self.store.read(), task_id)
@@ -2507,9 +2965,12 @@ class AgentRuntime(AgentLoop):
         row = self._file_artifact_row(task_id)
         return {**artifacts.listing(self, row), **workspace_artifacts.listing(row), "pending_files": row["pending_file_commands"]}
 
-    def read_file_artifact(self, task_id: str, file_id: str) -> dict:
+    def read_file_artifact(self, task_id: str, file_id: str, stream: bool = False) -> dict:
         from . import workspace_artifacts
         row = self._file_artifact_row(task_id)
+        path = workspace_artifacts.location(row, file_id)
+        if stream and path.stat().st_size > workspace_artifacts.STREAM_THRESHOLD_BYTES:
+            return workspace_artifacts.open_stream(row, file_id)
         return workspace_artifacts.read(row, file_id)
 
     def open_file_artifact(self, task_id: str, file_id: str, action: str) -> dict:
@@ -2528,14 +2989,14 @@ class AgentRuntime(AgentLoop):
         return {"events": hydrated_events(row, [item for item in row["events"] if item["seq"] > after]), "cursor": row["event_cursor"], "status": row["status"], "revision": row["revision"], "control_revision": row["control_revision"]}
 
     def create(self, value: dict, *, _continuation=None) -> dict:
-        if set(value) - {"message", "model_id", "title", "client_request_id", "scope", "expected_destination_revision", "skill_ids", "budget_limits", "response_language", "project_id", "reasoning_effort", "attachments"}:
+        if set(value) - {"message", "model_id", "title", "client_request_id", "scope", "expected_destination_revision", "skill_ids", "budget_limits", "response_language", "project_id", "reasoning_effort", "attachments", "allow_model_goal_creation", "workspace_root"}:
+            raise AgentError("agent_invalid_request")
+        if "allow_model_goal_creation" in value and type(value["allow_model_goal_creation"]) is not bool:
             raise AgentError("agent_invalid_request")
         if value.get("response_language") not in {None, "zh-CN", "en"}:
             raise AgentError("agent_invalid_request")
         prepared = parse_attachments(value.get("attachments"))
         content = message_text(value.get("message") or ("Please review the attached files." if prepared else ""))
-        skipped_skills: list[dict] = []
-        skills = self._resolve_skills(value.get("skill_ids"), content, warnings_out=skipped_skills)
         budget.validate_limits(value.get("budget_limits", {}))
         request_id = value.get("client_request_id")
         if request_id is not None:
@@ -2545,12 +3006,43 @@ class AgentRuntime(AgentLoop):
             except ValueError:
                 raise AgentError("agent_invalid_request") from None
         fingerprint = digest({"request": value, "continuation_from": _continuation["id"]}) if _continuation else digest(value)
-        if request_id:
-            current = self.store.read()
-            existing = lifecycle.duplicate(self.store, current, request_id, fingerprint)
-            if existing is not None:
-                return public_task(existing, settings=current["settings"])
         configuration = self.store.read()
+        if request_id:
+            existing = lifecycle.duplicate(self.store, configuration, request_id, fingerprint)
+            if existing is not None:
+                return public_task(existing, settings=configuration["settings"])
+        cfg_settings = {**DEFAULT_SETTINGS, **configuration["settings"]}
+        task_workspace_root = cfg_settings.get("workspace_root") or self.store.default_workspace()
+        explicit_workspace = "workspace_root" in value and value.get("project_id") is None
+        if explicit_workspace:
+            from .local_tools import validate_configuration
+            validate_configuration({"workspace_root": value["workspace_root"]})
+            if not value["workspace_root"]:
+                raise AgentError("agent_invalid_workspace")
+            task_workspace_root = str(Path(value["workspace_root"]).resolve(strict=True))
+        if value.get("project_id") is not None:
+            proj_id = value["project_id"]
+            proj_row = (configuration.get("projects") or {}).get(proj_id) if isinstance(proj_id, str) else None
+            if isinstance(proj_row, dict) and proj_row.get("enabled") and proj_row.get("path"):
+                task_workspace_root = str(proj_row["path"])
+        elif _continuation and not explicit_workspace:
+            cont_src = configuration.get("tasks", {}).get(_continuation["id"])
+            if isinstance(cont_src, dict):
+                cont_ws = (cont_src.get("local_execution") or {}).get("workspace_root")
+                if cont_ws:
+                    task_workspace_root = str(cont_ws)
+        if cfg_settings.get("enabled"):
+            self._maybe_sync_workspace_skills(
+                task_workspace_root,
+                desktop_access=bool(cfg_settings.get("desktop_access", False)),
+            )
+        skipped_skills: list[dict] = []
+        skills = self._resolve_skills(
+            value.get("skill_ids"),
+            content,
+            workspace_root=task_workspace_root,
+            warnings_out=skipped_skills,
+        )
         uses_default = not value.get("model_id")
         model_id = value.get("model_id") or configuration["settings"]["model_id"]
         if not isinstance(model_id, str) or not model_id:
@@ -2613,16 +3105,26 @@ class AgentRuntime(AgentLoop):
             row["base_instructions"] = select_base_instructions()
             row["context_budget_provenance"] = data.get("settings_context_budget_provenance", "default_auto" if settings["max_context_chars"] is None else "legacy_ambiguous_manual")
             initialize(row)
+            if value.get("allow_model_goal_creation"):
+                row["allow_model_goal_creation"] = True
             if effort is not None:
                 row["reasoning_effort"] = effort
-            row["local_execution"] = {"workspace_root": settings.get("workspace_root") or self.store.default_workspace(), "desktop_access": settings.get("desktop_access", False)}
+            row["local_execution"] = {"workspace_root": settings.get("workspace_root") or self.store.default_workspace(), "desktop_access": desktop_enabled(settings["permission_mode"], settings.get("desktop_access"))}
+            if explicit_workspace:
+                row["local_execution"].update(workspace_root=task_workspace_root, workspace_source="task")
+            row["local_execution"].update(restrict_web_policy({}, settings))
             if value.get("project_id") is not None:
                 row["project"] = copy.deepcopy(projects.selected(data, value["project_id"], refresh=True))
                 row["local_execution"].update(workspace_root=row["project"]["path"],
                                               project_id=row["project"]["id"], project_generation=row["project"]["generation"])
-                truncation = projects.instructions_truncation(row)
-                if truncation is not None:
-                    event(row, "project_instructions_truncated", **truncation)
+            elif source is None:
+                collected = projects.collect_instructions(row["local_execution"]["workspace_root"],
+                    fallback_names=settings["project_doc_fallback_filenames"])
+                if collected["files"]:
+                    row["workspace_instructions"] = {**collected, "path": collected["files"][0]["path"]}
+            truncation = projects.instructions_truncation(row)
+            if truncation is not None:
+                event(row, "project_instructions_truncated", **truncation)
             if source is None:
                 merged_initial, dropped_skills = self._merge_task_skills([], skills)
                 row["skills"] = merged_initial
@@ -2660,12 +3162,11 @@ class AgentRuntime(AgentLoop):
                             "model_destination_confirmed", "scope", "scope_revision", "context_epoch",
                             "data_policy_state", "base_instructions", "prompt_version", "skills",
                             "dropped_skill_ids", "reasoning_effort", "response_language", "context_budget_provenance",
-                            "verify_text_responses"):
+                            "verify_text_responses", "workspace_instructions"):
                     if key in source:
                         row[key] = copy.deepcopy(source[key])
-                modes = {row["permission_mode"], settings["permission_mode"]}
-                row["permission_mode"] = next(mode for mode in ("read_only", "confirm_changes", "workspace", "automatic") if mode in modes)
-                row["local_execution"]["desktop_access"] = bool(row["local_execution"].get("desktop_access") and settings.get("desktop_access"))
+                row["local_execution"]["desktop_access"] = desktop_enabled(row["permission_mode"], row["local_execution"].get("desktop_access") and settings.get("desktop_access"))
+                row["local_execution"].update(restrict_web_policy(row["local_execution"], settings))
                 merged_cont, dropped_skills = self._merge_task_skills(row.get("skills"), skills)
                 row["skills"] = merged_cont
                 if effort is not None:
@@ -2686,7 +3187,17 @@ class AgentRuntime(AgentLoop):
                 row["continued_from"] = source["id"]
                 row["continuation_request_fingerprint"] = _continuation["fingerprint"]
                 row["continuation_root"] = source.get("continuation_root", source["id"])
+                row["queued_messages"] = source.pop("queued_messages", [])
+                if _continuation.get("queued_item_id"):
+                    row["queued_messages"] = [item for item in row["queued_messages"]
+                                              if item["id"] != _continuation["queued_item_id"]]
+                row["queued_message_seq"] = source.get("queued_message_seq", 0)
+                source.pop("queued_messages_paused_reason", None)
+                row["queued_messages_paused_reason"] = None
+                self._queue_size(row)
+                source["queued_messages"] = []
                 source["continued_to"] = row["id"]
+                source["context_exhausted"] = False
                 event(source, "continued_in_new_task", task_id=row["id"])
                 event(row, "continued_from", task_id=source["id"])
             self._record_skill_events_in_tx(
@@ -2704,195 +3215,415 @@ class AgentRuntime(AgentLoop):
             self._queued_since[created["id"]] = time.monotonic()
         return created
 
+    def get_queued(self, task_id: str) -> dict:
+        def read(data):
+            row = lifecycle.find(self.store, data, task_id)
+            return {"queued_messages": copy.deepcopy(row.get("queued_messages", [])),
+                    "queued_messages_paused_reason": row.get("queued_messages_paused_reason")}
+        return self.store.inspect(read)
+
+    @staticmethod
+    def _queue_writable(row: dict) -> None:
+        if row.get("archived"):
+            raise AgentError("agent_task_archived")
+        if row.get("continued_to"):
+            raise AgentError("agent_task_continued")
+
+    def _queued_value(self, row: dict, value: dict) -> dict:
+        if set(value) - {"message", "intent", "attachments", "reasoning_effort", "client_request_id", "paused_reason", "skill_ids"}:
+            raise AgentError("agent_invalid_request")
+        if value.get("paused_reason") not in (None, "paused", "failed", "interrupted", "cancelled"):
+            raise AgentError("agent_invalid_request")
+        prepared = parse_attachments(value.get("attachments"))
+        content = message_text(value.get("message") or ("Please review the attached files." if prepared else ""))
+        intent = value.get("intent", "information")
+        if intent not in ("steer", "information"):
+            raise AgentError("agent_invalid_request")
+        # The queue is part of the task's bounded encrypted row, not a second archive.
+        if len(content.encode("utf-8")) > 1024 * 1024:
+            raise AgentError("agent_task_limit")
+        result = {"message": content, "intent": intent}
+        if "skill_ids" in value:
+            result["skill_ids"] = [skill["id"] for skill in self._resolve_skills(
+                value["skill_ids"], workspace_root=(row.get("local_execution") or {}).get("workspace_root"))]
+        if "reasoning_effort" in value:
+            result["reasoning_effort"] = reasoning.validate(self._model_metadata(row["model_id"]), value["reasoning_effort"])
+        if prepared is not None:
+            holder = {"content": content}
+            attach_to_message(self.store, row, holder, prepared)
+            result["attachments"] = [{key: item[key] for key in ("id", "name", "media_type", "path", "size")}
+                                     for item in holder.get("attachments", [])]
+        return result
+
+    @staticmethod
+    def _queue_size(row: dict) -> None:
+        if len(encoded(row)) > event_compaction.TASK_BYTES_HARD_LIMIT:
+            raise AgentError("agent_task_limit")
+
+    def queue_message(self, task_id: str, value: dict) -> dict:
+        def enqueue(data):
+            row = lifecycle.find(self.store, data, task_id)
+            self._queue_writable(row)
+            receipt = {**value, "queue_operation": "enqueue"}
+            if request_replayed(row, receipt):
+                return public_task(row, settings=data["settings"])
+            items = row.setdefault("queued_messages", [])
+            if len(items) >= 100:
+                raise AgentError("agent_queue_limit")
+            item = self._queued_value(row, value)
+            row["queued_message_seq"] = row.get("queued_message_seq", 0) + 1
+            item.update(id=value.get("client_request_id") or str(uuid.uuid4()),
+                        seq=row["queued_message_seq"], created_at=now())
+            items.append(item)
+            if value.get("paused_reason"):
+                row["queued_messages_paused_reason"] = value["paused_reason"]
+            event(row, "message_queued", item_id=item["id"])
+            remember_request(row, receipt)
+            self._queue_size(row)
+            if row["status"] == "completed":
+                self._dispatch_queued_in_tx(data, row)
+            return public_task(row, settings=data["settings"])
+        result = self.store.transaction(enqueue)
+        if result.get("queued_messages_paused_reason") == "continuation_required":
+            return self._continue_queued(task_id, result["queued_messages"][0]["id"])
+        return result
+
+    def update_queued(self, task_id: str, item_id: str, value: dict) -> dict:
+        def update(data):
+            row = lifecycle.find(self.store, data, task_id)
+            self._queue_writable(row)
+            item = next((item for item in row.get("queued_messages", []) if item["id"] == item_id), None)
+            if item is None:
+                raise AgentError("agent_queue_item_not_found")
+            if value == {"send_now": True}:
+                self._dispatch_queued_in_tx(data, row, item_id=item_id)
+            else:
+                merged = {key: item[key] for key in ("message", "intent", "reasoning_effort", "skill_ids") if key in item}
+                merged.update(value)
+                replacement = self._queued_value(row, merged)
+                if "attachments" not in value and "attachments" in item:
+                    replacement["attachments"] = item["attachments"]
+                item.update(replacement)
+                event(row, "queued_message_updated", item_id=item_id)
+            self._queue_size(row)
+            return public_task(row, settings=data["settings"])
+        try:
+            return self.store.transaction(update)
+        except ContinueInNewTask:
+            return self._continue_queued(task_id, item_id)
+
+    def _continue_queued(self, task_id: str, item_id: str) -> dict:
+        old = self.store.inspect(lambda data: task(data, task_id))
+        item = next(item for item in old["queued_messages"] if item["id"] == item_id)
+        value = {key: item[key] for key in ("message", "reasoning_effort", "skill_ids") if key in item}
+        if item.get("attachments"):
+            value["attachments"] = [{key: file[key] for key in ("name", "media_type", "path")}
+                                    for file in item["attachments"]]
+        return self._continue_in_new_task(task_id, value, item["message"], queued_item_id=item_id)
+
+    def delete_queued(self, task_id: str, item_id: str) -> dict:
+        def delete(data):
+            row = lifecycle.find(self.store, data, task_id)
+            self._queue_writable(row)
+            items = row.get("queued_messages", [])
+            index = next((i for i, item in enumerate(items) if item["id"] == item_id), None)
+            if index is None:
+                raise AgentError("agent_queue_item_not_found")
+            items.pop(index)
+            event(row, "queued_message_deleted", item_id=item_id)
+            return public_task(row, settings=data["settings"])
+        return self.store.transaction(delete)
+
+    def reorder_queued(self, task_id: str, value: dict) -> dict:
+        def reorder(data):
+            row = lifecycle.find(self.store, data, task_id)
+            self._queue_writable(row)
+            ids = value.get("ids")
+            items = row.get("queued_messages", [])
+            if (set(value) != {"ids"} or not isinstance(ids, list)
+                    or not all(isinstance(item, str) for item in ids)
+                    or len(ids) != len(items) or set(ids) != {item["id"] for item in items}):
+                raise AgentError("agent_invalid_request")
+            by_id = {item["id"]: item for item in items}
+            row["queued_messages"] = [by_id[item_id] for item_id in ids]
+            event(row, "queued_messages_reordered")
+            return public_task(row, settings=data["settings"])
+        return self.store.transaction(reorder)
+
+    def _dispatch_queued_in_tx(self, data: dict, row: dict, *, item_id: str | None = None) -> str | None:
+        items = row.get("queued_messages", [])
+        if not items or (item_id is None and row.get("queued_messages_paused_reason")):
+            return
+        item = next(item for item in items if item["id"] == item_id) if item_id else items[0]
+        value = {key: item[key] for key in ("message", "reasoning_effort", "skill_ids") if key in item}
+        value.update(intent=item["intent"], expected_control_revision=row["control_revision"],
+                     expected_goal_revision=row["goal"]["revision"])
+        if item_id and row["status"] in {"queued", "running", "waiting_input", "waiting_approval"}:
+            value["intent"] = "steer"
+        if item.get("attachments"):
+            value["attachments"] = [{key: file[key] for key in ("name", "media_type", "path")}
+                                    for file in item["attachments"]]
+        # Admission can reject an unavailable attachment or a budget/context limit.
+        # Keep the completed answer and the original queue if that happens.
+        saved = copy.deepcopy(data) if item_id is None else None
+        items.remove(item)
+        try:
+            self._add_in_tx(data, row, value)
+        except (AgentError, ContinueInNewTask) as exc:
+            if saved is None:
+                raise
+            row_id = row["id"]
+            row.clear()
+            row.update(saved["tasks"][row_id])
+            data.clear()
+            data.update(saved)
+            data["tasks"][row_id] = row
+            reason = "continuation_required" if isinstance(exc, ContinueInNewTask) else str(exc)
+            row["queued_messages_paused_reason"] = reason
+            event(row, "queued_messages_paused", reason=reason)
+            return item["id"] if isinstance(exc, ContinueInNewTask) else None
+        row["queued_messages_paused_reason"] = None
+        event(row, "queued_message_dispatched", item_id=item["id"])
+
     def add_message(self, task_id: str, value: dict) -> dict:
+        if set(value) - {"message", "intent", "expected_revision", "expected_control_revision", "expected_goal_revision", "client_request_id", "reasoning_effort", "edit_message_index", "attachments", "skill_ids"}:
+            raise AgentError("agent_invalid_request")
+        if "edit_message_index" in value:
+            prepared = parse_attachments(value.get("attachments"))
+            content = message_text(value.get("message") or ("Please review the attached files." if prepared else ""))
+
+            def _task_ws(data: dict) -> str | None:
+                row = data.get("tasks", {}).get(task_id)
+                if isinstance(row, dict):
+                    ws = (row.get("local_execution") or {}).get("workspace_root")
+                    if ws:
+                        return str(ws)
+                return (data.get("settings") or {}).get("workspace_root") or self.store.default_workspace()
+
+            task_ws = self.store.inspect(_task_ws)
+            skipped_skills: list[dict] = []
+            added_skills = self._resolve_skills(
+                value.get("skill_ids"),
+                content,
+                workspace_root=task_ws,
+                warnings_out=skipped_skills,
+            )
+            return self._edit_message(
+                task_id, value, content, prepared,
+                added_skills=added_skills, skipped_skills=skipped_skills,
+            )
+
+        try:
+            return self.store.transaction(lambda data: self._add_in_tx(data, task(data, task_id), value))
+        except ContinueInNewTask:
+            return self._continue_in_new_task(task_id, value, message_text(value.get("message") or "Please review the attached files."))
+
+    def _add_in_tx(self, data: dict, row: dict, value: dict) -> dict:
+        """Admit both immediate owner messages and durable queued follow-ups."""
         if set(value) - {"message", "intent", "expected_revision", "expected_control_revision", "expected_goal_revision", "client_request_id", "reasoning_effort", "edit_message_index", "attachments", "skill_ids"}:
             raise AgentError("agent_invalid_request")
         prepared = parse_attachments(value.get("attachments"))
         content = message_text(value.get("message") or ("Please review the attached files." if prepared else ""))
-        skipped_skills: list[dict] = []
-        added_skills = self._resolve_skills(value.get("skill_ids"), content, warnings_out=skipped_skills)
-        if "edit_message_index" in value:
-            return self._edit_message(
-                task_id,
-                value,
-                content,
-                prepared,
-                added_skills=added_skills,
-                skipped_skills=skipped_skills,
-            )
-        intent = value.get("intent")
-        if intent not in {None, "steer", "information"}:
-            raise AgentError("agent_invalid_request")
 
-        def add(data):
-            row = task(data, task_id)
-            if row.get("continued_to"):
-                raise ContinueInNewTask()
-            if request_replayed(row, value):
-                return public_task(row, settings=data["settings"])
-            check_version(row, value, goal=intent is not None)
-            if not data["settings"]["enabled"]:
-                raise AgentError("agent_disabled")
-            if acknowledgeable(row):
-                if intent is not None and not allowed_actions(row, data["settings"])[intent]["enabled"]:
-                    raise AgentError("agent_operation_unresolved")
-                self._acknowledge_unknown_in_tx(row)
-            resumable_interrupted = row["status"] == "interrupted" and (not row["in_flight"] or recoverable_read_in_flight(row)) and not ambiguous(row)
-            if intent is None and ((row["status"] not in {"completed", "failed", "paused", "cancelled"} and not resumable_interrupted) or (row["in_flight"] and not resumable_interrupted) or row["queue"] or row["pending_approval"] or row["pending_input"]):
-                raise AgentError("agent_task_busy")
+        task_ws = ((row.get("local_execution") or {}).get("workspace_root")
+                   or data["settings"].get("workspace_root") or self.store.default_workspace())
+        skipped_skills: list[dict] = []
+        added_skills = self._resolve_skills(
+            value.get("skill_ids"),
+            content,
+            workspace_root=task_ws,
+            warnings_out=skipped_skills,
+        )
+        requested_intent = value.get("intent")
+        if requested_intent not in {None, "auto", "steer", "information"}:
+            raise AgentError("agent_invalid_request")
+        intent = requested_intent
+        if intent == "auto":
+            intent = "steer" if row["status"] in {"queued", "running", "waiting_approval", "waiting_input"} else None
+        if row.get("continued_to"):
+            raise ContinueInNewTask()
+        if request_replayed(row, value):
+            return public_task(row, settings=data["settings"])
+        check_version(row, value, goal=intent is not None and requested_intent != "auto")
+        if not data["settings"]["enabled"]:
+            raise AgentError("agent_disabled")
+        if row.get("context_exhausted"):
+            raise ContinueInNewTask()
+        if acknowledgeable(row):
             if intent is not None and not allowed_actions(row, data["settings"])[intent]["enabled"]:
-                raise AgentError("agent_operation_unresolved" if ambiguous(row) else "agent_invalid_transition")
-            # A long conversation is condensed, never refused. Only if it is
-            # still too large does it continue in a new linked conversation.
-            size = len(encoded(row))
-            if event_compaction.needs_compaction(row, size):
-                # Full goal copies from older builds go first: they repeat every earlier message.
-                shrunk = compact_goal_history(row)
-                if event_compaction.compact_until_small(row) or shrunk:
-                    size = len(encoded(row))
-            if event_compaction.over_hard_limit(row, size, reserve_events=2 + len(skipped_skills) + 1):
+                raise AgentError("agent_operation_unresolved")
+            self._acknowledge_unknown_in_tx(row)
+        resumable_interrupted = row["status"] == "interrupted" and (not row["in_flight"] or recoverable_read_in_flight(row)) and not ambiguous(row)
+        if intent is None and ((row["status"] not in {"completed", "failed", "paused", "cancelled"} and not resumable_interrupted) or (row["in_flight"] and not resumable_interrupted) or row["queue"] or row["pending_approval"] or row["pending_input"]):
+            raise AgentError("agent_task_busy")
+        if intent is not None and not allowed_actions(row, data["settings"])[intent]["enabled"]:
+            raise AgentError("agent_operation_unresolved" if ambiguous(row) else "agent_invalid_transition")
+        # A long conversation is condensed, never refused. Only if it is
+        # still too large does it continue in a new linked conversation.
+        size = len(encoded(row))
+        if event_compaction.needs_compaction(row, size):
+            # Full goal copies from older builds go first: they repeat every earlier message.
+            shrunk = compact_goal_history(row)
+            removed = event_compaction.compact_until_small(row)
+            if not lifecycle.eligible(row):
+                removed += event_compaction.compact_in_turn(row)
+            if removed or shrunk:
+                size = len(encoded(row))
+        if event_compaction.over_hard_limit(row, size, reserve_events=2 + len(skipped_skills) + 1):
+            if lifecycle.eligible(row):
                 raise ContinueInNewTask()
-            effort = reasoning.validate(self._model_metadata(row["model_id"]), value["reasoning_effort"]) if "reasoning_effort" in value else None
-            if row["status"] == "interrupted" and row["in_flight"]:
-                if not recoverable_read_in_flight(row) or ambiguous(row):
-                    raise AgentError("agent_operation_unresolved")
-                flight = row["in_flight"]
-                err_code = row.get("error") or "agent_read_interrupted"
-                cleanup_ok, recovery = self._recover_read_operation_details(row, flight, error=err_code)
-                if not cleanup_ok:
-                    raise AgentError("agent_operation_unresolved")
-                if flight.get("effect") == "write":
-                    self._settle_interrupted_read(row, flight, err_code, recovery=recovery)
-                row["in_flight"] = None
-                row["approved"] = None
-            # Recover old, unbound conversations when the owner continues them.
-            # Never relocate an existing workspace or change an in-flight grant.
-            if (not (row.get("local_execution") or {}).get("workspace_root")
-                    and not data["settings"].get("workspace_root")
-                    and not row.get("in_flight") and not ambiguous(row)):
-                row.setdefault("local_execution", {})["workspace_root"] = self.store.default_workspace()
-            # Original evidence survives compaction, so its archive size is not
-            # the next prompt size. Only immutable owner constraints form a hard
-            # context floor; the normal loop may compact the remaining history.
-            message = {"role": "user", "content": content, "message_id": "owner_" + uuid.uuid4().hex,
-                       "ui": {"kind": "steer" if intent == "steer" else "information" if intent == "information" else "message", "text": content}}
-            attach_to_message(self.store, row, message, prepared)
-            merged_skills, dropped_skills = self._merge_task_skills(row.get("skills"), added_skills)
-            prospective_dropped = list(
-                dict.fromkeys([*(row.get("dropped_skill_ids") or []), *dropped_skills])
-            )
-            owners = [message for message in [*row["messages"], *row.get("pending_user_messages", [])] if message["role"] == "user"]
-            prospective = {**row, "messages": [*owners, message], "skills": merged_skills,
-                           "dropped_skill_ids": prospective_dropped,
-                           "context_checkpoint": None, "tool_menu": None}
-            # Fixed instruction layers plus compacted-rule owner messages (including
-            # this new message), an empty checkpoint and tool schemas form the pinned
-            # floor. Continue in a linked new conversation only when that floor no
-            # longer fits capacity; a message too large on its own is still refused.
-            capacity = self._effective_capacity(row)[0]
-            try:
-                (future_specs, _), authority_bytes = self._menu(prospective)
-                too_large = authority_bytes + len(encoded(future_specs)) > capacity
-            except AgentError as exc:
-                if str(exc) != "agent_tool_schema_limit":
-                    raise
-                too_large = True
-            if too_large:
-                if not self._continuation_fits(row, prospective, message, content):
-                    raise AgentError("agent_context_limit")
-                raise ContinueInNewTask()
-            if len(encoded(row)) + len(encoded(message)) > event_compaction.TASK_BYTES_HARD_LIMIT:
-                raise ContinueInNewTask()
-            memory_natural.stamp_single_owner_message_in_tx(data, message)
-            row["skills"] = merged_skills
-            self._record_skill_events_in_tx(
-                row,
-                skipped_warnings=skipped_skills,
-                dropped_skill_ids=dropped_skills,
-            )
-            ended = row["status"] in {"completed", "failed", "interrupted", "cancelled"} or bool(row.get("turn_stopped"))
-            if effort is not None:
-                # Running requests already own an immutable task snapshot.
-                # This preference starts with the next admitted request.
-                row["reasoning_effort"] = effort
-            budget.new_round(row)
-            if ended:
-                wrap_reason = (row.get("outcome") or {}).get("budget_wrap_up_reason")
-                budget.extend_defaults_for_owner_turn(row, wrap_reason)
-                b_state = budget.public(row)
-                b_limits = b_state["limits"]
-                b_life = b_state["lifetime"]
-                if budget.is_hard(row, "max_total_tokens") and b_life["charged_tokens"] >= b_limits["max_total_tokens"]:
-                    raise AgentError("agent_token_budget_exhausted")
-                if budget.is_hard(row, "max_total_model_calls") and b_life["charged_model_calls"] >= b_limits["max_total_model_calls"]:
-                    raise AgentError("agent_model_call_budget_exhausted")
-                if budget.time_remaining(row) <= 0:
-                    raise AgentError("agent_time_budget_exhausted")
-            elif row["status"] == "paused" and not row.get("in_flight"):
-                exhausted = budget.exhausted_hard_limit(row)
-                if exhausted:
-                    raise AgentError(exhausted)  # A new turn never bypasses a hard budget.
-            if intent != "information" or ended:
-                owner_update(row, message)
-            # Clearing automation_run_id switches off unattended developer instructions
-            # and post-turn automation settlement while keeping source/automation_id for UI provenance.
-            row.update(approved=None, pending_approval=None, pending_input=None, result="",
-                       latest_turn_is_silent_heartbeat=False, automation_run_id=None)
-            if row.get("fork"):
-                row["fork"]["awaiting_instruction"] = False
-            row.setdefault("pending_user_messages", []).append(message)
-            was_stopped = row.pop("turn_stopped", False)
-            row["pending_control"] = {"kind": "steer", "remain_paused": row["status"] == "paused" and bool(row.get("in_flight")) and intent is not None and not was_stopped}
-            if ended or intent is None or was_stopped or (row["status"] == "paused" and not row.get("in_flight")):
-                row.update(steps=0, elapsed_seconds=0.0)
-                budget.restart_segment_audit(row)
-            event(row, "goal_changed" if intent == "steer" else "information_added" if intent else "message_added", goal_revision=row["goal"]["revision"])
+            event_compaction.note_near_limit(row, size, reserve_events=2 + len(skipped_skills) + 1)
+        effort = reasoning.validate(self._model_metadata(row["model_id"]), value["reasoning_effort"]) if "reasoning_effort" in value else None
+        if row["status"] == "interrupted" and row["in_flight"]:
+            if not recoverable_read_in_flight(row) or ambiguous(row):
+                raise AgentError("agent_operation_unresolved")
+            flight = row["in_flight"]
+            err_code = row.get("error") or "agent_read_interrupted"
+            cleanup_ok, recovery = self._recover_read_operation_details(row, flight, error=err_code)
+            if not cleanup_ok:
+                raise AgentError("agent_operation_unresolved")
+            if flight.get("effect") == "write":
+                self._settle_interrupted_read(row, flight, err_code, recovery=recovery)
+            row["in_flight"] = None
+            row["approved"] = None
+        # Recover old, unbound conversations when the owner continues them.
+        # Never relocate an existing workspace or change an in-flight grant.
+        if (not (row.get("local_execution") or {}).get("workspace_root")
+                and not data["settings"].get("workspace_root")
+                and not row.get("in_flight") and not ambiguous(row)):
+            row.setdefault("local_execution", {})["workspace_root"] = self.store.default_workspace()
+        # Original evidence survives compaction, so its archive size is not
+        # the next prompt size. Only immutable owner constraints form a hard
+        # context floor; the normal loop may compact the remaining history.
+        message = {"role": "user", "content": content, "message_id": "owner_" + uuid.uuid4().hex,
+                   "ui": {"kind": "steer" if intent == "steer" else "information" if intent == "information" else "message", "text": content}}
+        attach_to_message(self.store, row, message, prepared)
+        merged_skills, dropped_skills = self._merge_task_skills(row.get("skills"), added_skills)
+        prospective_dropped = list(
+            dict.fromkeys([*(row.get("dropped_skill_ids") or []), *dropped_skills])
+        )
+        owners = [message for message in [*row["messages"], *row.get("pending_user_messages", [])] if _is_owner_user_message(message)]
+        prospective = {**row, "messages": [*owners, message], "skills": merged_skills,
+                       "dropped_skill_ids": prospective_dropped,
+                       "context_checkpoint": None, "tool_menu": None}
+        # Fixed instruction layers plus compacted-rule owner messages (including
+        # this new message), an empty checkpoint and tool schemas form the pinned
+        # floor. Continue in a linked new conversation only when that floor no
+        # longer fits capacity; a message too large on its own is still refused.
+        capacity = self._effective_capacity(row)[0]
+        try:
+            (future_specs, _), authority_bytes = self._menu(prospective)
+            too_large = authority_bytes + len(encoded(future_specs)) > capacity
+        except AgentError as exc:
+            if str(exc) != "agent_tool_schema_limit":
+                raise
+            too_large = True
+        if too_large:
+            if not self._continuation_fits(row, prospective, message, content):
+                raise AgentError("agent_context_limit")
+            raise ContinueInNewTask()
+        if len(encoded(row)) + len(encoded(message)) > event_compaction.TASK_BYTES_HARD_LIMIT:
+            raise ContinueInNewTask()
+        row["queued_messages_paused_reason"] = None
+        memory_natural.stamp_single_owner_message_in_tx(data, message)
+        row["skills"] = merged_skills
+        self._record_skill_events_in_tx(
+            row,
+            skipped_warnings=skipped_skills,
+            dropped_skill_ids=dropped_skills,
+        )
+        ended = row["status"] in {"completed", "failed", "interrupted", "cancelled"} or bool(row.get("turn_stopped"))
+        if effort is not None:
+            # Running requests already own an immutable task snapshot.
+            # This preference starts with the next admitted request.
+            row["reasoning_effort"] = effort
+        budget.new_round(row)
+        if ended:
+            wrap_reason = (row.get("outcome") or {}).get("budget_wrap_up_reason")
+            budget.extend_defaults_for_owner_turn(row, wrap_reason)
+            b_state = budget.public(row)
+            b_limits = b_state["limits"]
+            b_life = b_state["lifetime"]
+            if budget.is_hard(row, "max_total_tokens") and b_life["charged_tokens"] >= b_limits["max_total_tokens"]:
+                raise AgentError("agent_token_budget_exhausted")
+            if budget.is_hard(row, "max_total_model_calls") and b_life["charged_model_calls"] >= b_limits["max_total_model_calls"]:
+                raise AgentError("agent_model_call_budget_exhausted")
+            if budget.time_remaining(row) <= 0:
+                raise AgentError("agent_time_budget_exhausted")
+        elif row["status"] == "paused" and not row.get("in_flight"):
+            exhausted = budget.exhausted_hard_limit(row)
+            if exhausted:
+                raise AgentError(exhausted)  # A new turn never bypasses a hard budget.
+        if intent != "information" or ended:
+            owner_update(row, message)
+            row["open_questions"] = []
+        # Clearing automation_run_id switches off unattended developer instructions
+        # and post-turn automation settlement while keeping source/automation_id for UI provenance.
+        row.update(approved=None, pending_approval=None, pending_input=None, result="",
+                   latest_turn_is_silent_heartbeat=False, automation_run_id=None)
+        row.pop("unattended_blocked", None)
+        if row.get("fork"):
+            row["fork"]["awaiting_instruction"] = False
+        if not row.get("in_flight"):
+            row.pop("manual_compaction", None)
+        row.setdefault("pending_user_messages", []).append(message)
+        was_stopped = row.pop("turn_stopped", False)
+        row.pop("retired_writes", None)
+        row["pending_control"] = {"kind": "steer", "remain_paused": row["status"] == "paused" and bool(row.get("in_flight")) and intent is not None and not was_stopped}
+        if not ended:
+            row["pending_control"]["mid_turn"] = True
+        if ended or intent is None or was_stopped or (row["status"] == "paused" and not row.get("in_flight")):
+            row.update(steps=0, elapsed_seconds=0.0)
+            budget.restart_segment_audit(row)
+        event(row, "goal_changed" if intent == "steer" else "information_added" if intent else "message_added", goal_revision=row["goal"]["revision"])
+        # A suspended wait must return its steering receipt before the
+        # owner turn cancels the remaining proposals and enters history.
+        if not (row.get("subagent_wait") and row["status"] == "queued" and row.get("queue")):
+            row.pop("subagent_wait", None)
             close_queue(row, event, "agent_owner_changed")
             settle(row, event, data=data)
-            if row.get("subagent_ids") and "@" in content:
-                routed_ids: set[str] = set()
-                for token in re.findall(r"@([A-Za-z0-9_-]+)", content):
-                    tok_low = token.strip().lower()
-                    if not tok_low or tok_low in {"all", "*"}:
-                        continue
-                    try:
-                        matched = subagents.resolve_subagent_targets(data, row, token)
-                        for child in matched:
-                            cid = child.get("id")
-                            if not cid or cid in routed_ids:
-                                continue
-                            meta = child.get("subagent_meta") or {}
-                            nick_low = str(meta.get("nickname") or "").lower()
-                            tname_low = str(meta.get("task_name") or "").lower()
-                            if tok_low not in {nick_low, tname_low}:
-                                continue
-                            if not meta.get("closed"):
-                                routed_ids.add(cid)
-                                if child.get("status") == "running" or child.get("in_flight"):
-                                    subagents.send_message_in_tx(data, row, {"target": cid, "message": content})
-                                else:
-                                    subagents.followup_task_in_tx(data, row, {"target": cid, "prompt": content})
-                    except Exception:
-                        pass
-            remember_request(row, value)
-            return public_task(row, settings=data["settings"], data=data)
-        try:
-            return self.store.transaction(add)
-        except ContinueInNewTask:
-            return self._continue_in_new_task(task_id, value, content)
+        if row.get("subagent_ids") and "@" in content:
+            routed_ids: set[str] = set()
+            for token in re.findall(r"@([A-Za-z0-9_-]+)", content):
+                tok_low = token.strip().lower()
+                if not tok_low or tok_low in {"all", "*"}:
+                    continue
+                try:
+                    matched = subagents.resolve_subagent_targets(data, row, token)
+                    for child in matched:
+                        cid = child.get("id")
+                        if not cid or cid in routed_ids:
+                            continue
+                        meta = child.get("subagent_meta") or {}
+                        nick_low = str(meta.get("nickname") or "").lower()
+                        tname_low = str(meta.get("task_name") or "").lower()
+                        if tok_low not in {nick_low, tname_low}:
+                            continue
+                        if not meta.get("closed"):
+                            routed_ids.add(cid)
+                            if child.get("status") == "running" or child.get("in_flight"):
+                                subagents.send_message_in_tx(data, row, {"target": cid, "message": content})
+                            else:
+                                subagents.followup_task_in_tx(data, row, {"target": cid, "prompt": content})
+                except Exception:
+                    pass
+        remember_request(row, value)
+        row["queued_messages_paused_reason"] = None
+        return public_task(row, settings=data["settings"], data=data)
 
     def _continuation_fits(self, row: dict, prospective: dict, message: dict, content: str) -> bool:
         """Whether this message, as the first message of a continued conversation, fits the model."""
         first_text = CONTINUATION_PREFIX + event_compaction.continuation_summary(row) + CONTINUATION_SEPARATOR + content
         first = {**message, "content": first_text if isinstance(message.get("content"), str) else message["content"]}
-        alone = {**prospective, "messages": [first], "goal": {**row["goal"], "text": first_text, "constraints": []}}
+        alone = {**prospective, "messages": [first], "context_checkpoint": None, "tool_menu": None,
+                 "goal": {**row["goal"], "text": first_text, "constraints": []}}
         try:
             (specs, _), authority_bytes = self._menu(alone)
         except AgentError:
             return False
         return authority_bytes + len(encoded(specs)) <= self._effective_capacity(row)[0]
 
-    def _continue_in_new_task(self, task_id: str, value: dict, content: str) -> dict:
+    def _continue_in_new_task(self, task_id: str, value: dict, content: str, *, queued_item_id: str | None = None) -> dict:
         """The conversation is too large even after condensing: continue it in a new, linked one."""
         old = lifecycle.find(self.store, self.store.read(), task_id)
         fingerprint = digest({"source_task_id": task_id, **{k: v for k, v in value.items()
@@ -2903,6 +3634,8 @@ class AgentRuntime(AgentLoop):
             if child.get("continuation_request_fingerprint") != fingerprint:
                 raise AgentError("agent_continuation_already_exists")
             return public_task(child, settings=data["settings"], data=data)
+        if old.get("context_exhausted") and not self._continuation_fits(old, old, {"role": "user", "content": content}, content):
+            raise AgentError("agent_context_limit")
         summary = event_compaction.continuation_summary(old)
         body = {"message": CONTINUATION_PREFIX + summary + CONTINUATION_SEPARATOR + content,
                 "model_id": old["model_id"],
@@ -2916,7 +3649,28 @@ class AgentRuntime(AgentLoop):
                 body[key] = value[key]
         if isinstance(old.get("project"), dict) and old["project"].get("id"):
             body["project_id"] = old["project"]["id"]
-        return self.create(body, _continuation={"id": task_id, "revision": old["revision"], "fingerprint": fingerprint})
+        return self.create(body, _continuation={"id": task_id, "revision": old["revision"], "fingerprint": fingerprint,
+                                                "queued_item_id": queued_item_id})
+
+    def _auto_continue_context_exhausted(self, task_id: str) -> None:
+        row = self.store.read().get("tasks", {}).get(task_id)
+        if (not row or row["status"] != "failed" or not row.get("context_exhausted")
+                or row.get("permission_mode") != "automatic"
+                or event_compaction.continuation_depth(row.get("title") or "") >= 5):
+            return
+        exhausted = next((item for item in reversed(row["events"]) if item["type"] == "context_exhausted"), None)
+        if exhausted is None:
+            return
+        content = ("Continue the unfinished work from the previous conversation.\n\n" + row["goal"]["text"])
+        content = content.encode("utf-8")[:4000].decode("utf-8", errors="ignore")
+        value = {"message": content, "client_request_id": str(uuid.uuid5(
+            uuid.NAMESPACE_URL, f"ryn-context-exhausted:{task_id}:{exhausted['seq']}"))}
+        try:
+            self._continue_in_new_task(task_id, value, content)
+        except AgentError:
+            # A full task quota, a changed owner decision or an oversized first
+            # message leaves the failed conversation available for the owner.
+            return
 
     def _edit_message(
         self,
@@ -2981,6 +3735,8 @@ class AgentRuntime(AgentLoop):
             row.update(status="paused", approved=None, pending_approval=None, pending_input=None,
                        latest_turn_is_silent_heartbeat=False, automation_run_id=None,
                        pending_control={"kind": "edit_message", "message_index": index, "message": replacement})
+            row["open_questions"] = []
+            row.pop("unattended_blocked", None)
             event(row, "message_edit_requested", message_index=index, operation_in_flight=bool(row["in_flight"]))
             close_queue(row, event, "agent_owner_changed")
             settle(row, event, data=data)
@@ -2989,9 +3745,14 @@ class AgentRuntime(AgentLoop):
         return self.store.transaction(edit)
 
     def action(self, task_id: str, value: dict) -> dict:
-        if set(value) - {"action", "expected_revision", "expected_control_revision", "expected_goal_revision", "approval_id", "pending_input_id", "answers", "client_request_id", "subagent_id", "target"}:
+        if set(value) - {"action", "permission_mode", "expected_revision", "expected_control_revision", "expected_goal_revision", "approval_id", "pending_input_id", "answers", "client_request_id", "subagent_id", "target", "message_index", "remember", "remember_prefix"}:
             raise AgentError("agent_invalid_request")
         action = value.get("action")
+        if "remember_prefix" in value and (type(value["remember_prefix"]) is not bool or action != "approve" or value.get("remember")):
+            raise AgentError("agent_invalid_request")
+        if value.get("remember") not in {None, "task", "always"} or (value.get("remember") and action != "approve"):
+            raise AgentError("agent_invalid_request")
+        rule_names = self._owner_rule_catalog() if value.get("remember") == "always" else {}
 
         def apply(data):
             row = task(data, task_id)
@@ -3015,6 +3776,29 @@ class AgentRuntime(AgentLoop):
                 subagents.interrupt_agent_in_tx(data, row, {"target": "all"})
                 remember_request(row, value)
                 return public_task(row, settings=data["settings"], data=data)
+            elif action == "rollback":
+                if not data["settings"]["enabled"]:
+                    raise AgentError("agent_disabled")
+                if not allowed_actions(row, data["settings"])["rollback"]["enabled"]:
+                    raise AgentError("agent_operation_unresolved" if ambiguous(row) else "agent_invalid_transition")
+                index = value.get("message_index")
+                if (type(index) is not int or index < 0 or index >= len(row["messages"])
+                        or row["messages"][index].get("role") != "user"
+                        or row["messages"][index].get("ui", {}).get("hidden")):
+                    raise AgentError("agent_invalid_message_index")
+                if not any(m["role"] == "user" and not m.get("ui", {}).get("hidden") for m in row["messages"][:index]):
+                    raise AgentError("agent_rollback_first_message_use_edit")
+                if event_compaction.needs_compaction(row, len(encoded(row))):
+                    event_compaction.compact_until_small(row)
+                if len(row["events"]) >= 998 or len(encoded(row)) > 2 * 1024 * 1024:
+                    raise AgentError("agent_task_limit")
+                row.update(status="paused", approved=None, pending_approval=None, pending_input=None,
+                           latest_turn_is_silent_heartbeat=False, automation_run_id=None,
+                           pending_control={"kind": "rollback", "message_index": index})
+                row.pop("unattended_blocked", None)
+                event(row, "message_rollback_requested", message_index=index, operation_in_flight=bool(row["in_flight"]))
+                close_queue(row, event, "agent_owner_changed")
+                settle(row, event, data=data)
             elif action == "cancel":
                 retry_policy.stop(row)
                 if row["status"] not in {"completed", "failed", "cancelled"}:
@@ -3036,6 +3820,12 @@ class AgentRuntime(AgentLoop):
                     if stream:
                         row["messages"].append({"role": "assistant", "content": stream["text"],
                                                 "context_epoch": row.get("context_epoch", 0), "interrupted": True})
+                    if data["settings"].get("interrupt_message_enabled", True):
+                        while row["messages"] and row["messages"][-1].get("ui", {}).get("kind") == "turn_aborted":
+                            row["messages"].pop()
+                        row["messages"].append({"role": "user", "content": TURN_ABORTED_NOTE,
+                                                "ui": {"kind": "turn_aborted", "hidden": True},
+                                                "context_epoch": row.get("context_epoch", 0)})
                     row.update(status="paused", pending_approval=None, approved=None, pending_input=None,
                                pending_control={"kind": "stop"}, turn_stopped=True)
                     event(row, "paused", operation_in_flight=bool(row["in_flight"]), reason="owner_stopped")
@@ -3064,6 +3854,31 @@ class AgentRuntime(AgentLoop):
                 settle(row, event, data=data)
                 subagents.on_subagent_settled_in_tx(data, row)
                 subagents.cascade_stop_subagents_in_tx(data, row, reason="owner_pause", close=False)
+            elif action == "compact":
+                if not allowed_actions(row, data["settings"])["compact"]["enabled"]:
+                    raise AgentError("agent_invalid_transition")
+                row["manual_compaction"] = {"return_status": row["status"]}
+                row.update(status="queued", error=None)
+                row["control_revision"] += 1
+                if row.get("pending_input"):
+                    row["pending_input"]["control_revision"] = row["control_revision"]
+                event(row, "manual_compaction_requested")
+            elif action == "set_permission":
+                if not allowed_actions(row, data["settings"])["set_permission"]["enabled"]:
+                    raise AgentError("agent_invalid_transition")
+                mode = value.get("permission_mode")
+                if not isinstance(mode, str) or mode not in PERMISSION_MODES:
+                    raise AgentError("agent_invalid_permission_mode")
+                old_mode = row["permission_mode"]
+                row.update(permission_mode=mode, approved=None, pending_approval=None)
+                row.setdefault("local_execution", {})["desktop_access"] = desktop_enabled(mode, data["settings"].get("desktop_access"))
+                row.pop("task_grants", None)
+                if row["status"] == "waiting_approval":
+                    row["status"] = "paused"
+                row["control_revision"] += 1
+                event(row, "permission_changed", old_mode=old_mode, new_mode=mode)
+                if row.get("pending_input"):
+                    row["pending_input"]["control_revision"] = row["control_revision"]
             elif action == "resume":
                 if (row.get("fork") or {}).get("awaiting_instruction"):
                     raise AgentError("agent_fork_instruction_required")
@@ -3097,6 +3912,7 @@ class AgentRuntime(AgentLoop):
                 budget.restart_segment_audit(row)
                 for key in ("budget_limited", "budget_stop", "budget_wrap_up_reason"):
                     row.get("outcome", {}).pop(key, None)
+                row["queued_messages_paused_reason"] = None
                 retry_policy.resume(row)
                 row["status"] = "waiting_input" if row["pending_input"] else "waiting_approval" if row["pending_approval"] else "queued"
                 row["error"] = None
@@ -3117,10 +3933,51 @@ class AgentRuntime(AgentLoop):
                 if not data["settings"]["enabled"]:
                     raise AgentError("agent_disabled")
                 if action == "approve":
-                    if "read_only" in {row["permission_mode"], data["settings"]["permission_mode"]}:
+                    if row["permission_mode"] == "read_only":
                         raise AgentError("agent_permission_denied")
                     row["approved"] = {**approval, "revision": row["revision"]}
-                    event(row, "approved", approval_id=approval["id"], tool=approval["tool"])
+                    remembered = {}
+                    if value.get("remember_prefix"):
+                        if row["permission_mode"] != "confirm_changes" or approval.get("approval_basis") != "confirm_changes":
+                            raise AgentError("agent_shell_prefix_invalid")
+                        from .execution_policy import shell_prefix_candidate
+                        rule = shell_prefix_candidate(call["arguments"]) if call["name"] == "ryn_shell_execute" else None
+                        if rule is None:
+                            raise AgentError("agent_shell_prefix_invalid")
+                        rules = [shell_prefix_rule(item) for item in data["settings"].get("shell_allow_prefixes", [])]
+                        prior = next((item for item in rules if item["prefix"] == rule["prefix"]), None)
+                        added = prior is None or bool(set(rule["options"]) - set(prior["options"]))
+                        if prior is None:
+                            rules.append(rule)
+                        else:
+                            prior["options"] = list(dict.fromkeys([*prior["options"], *rule["options"]]))
+                        data["settings"]["shell_allow_prefixes"] = rules
+                        if added:
+                            data["settings_revision"] = data.get("settings_revision", 0) + 1
+                            pending = data.setdefault("pending_shell_prefix_notices", [])
+                            if rule["prefix"] not in pending:
+                                pending.append(rule["prefix"])
+                            event(row, "prefix_allowed", prefix=rule["prefix"], options=rule["options"])
+                    if value.get("remember") == "always":
+                        from .execution_policy import owner_tool_key
+                        rule = owner_tool_key(call, self.tools.metadata(call["name"]))
+                        allowed = list(dict.fromkeys([*data["settings"]["allowed_write_tools"], rule]))
+                        self._validate_owner_rules({"allowed_write_tools": allowed}, data["settings"], rule_names)
+                        if allowed != data["settings"]["allowed_write_tools"]:
+                            data["settings"]["allowed_write_tools"] = allowed
+                            data["settings_revision"] = data.get("settings_revision", 0) + 1
+                        row["allowed_write_tools"] = list(dict.fromkeys([*row.get("allowed_write_tools", []), rule]))
+                        remembered = {"remember": "always", "owner_rule": rule}
+                    if value.get("remember") == "task":
+                        from .execution_policy import approval_keys
+                        keys = approval_keys(call, {**self.tools.metadata(call["name"]),
+                            "workspace_root": (row.get("local_execution") or {}).get("workspace_root", "")})
+                        grants = row.setdefault("task_grants", {})
+                        if keys and len(set(grants) | set(keys)) <= 256:
+                            grants.update({key: {"approval_id": approval["id"], "task_id": row["id"],
+                                "goal_revision": row["goal"]["revision"], "scope_revision": row["scope_revision"]} for key in keys})
+                            remembered = {"remember": "task", "approval_keys": keys}
+                    event(row, "approved", approval_id=approval["id"], tool=approval["tool"], **remembered)
                 else:
                     from .execution_policy import OWNER_DENIED_CORRECTION
                     denied = {"error": "owner_denied_operation", "not_executed": True, "no_mutation": True,
@@ -3132,11 +3989,15 @@ class AgentRuntime(AgentLoop):
                 row.update(pending_approval=None, status="queued")
             elif action == "answer":
                 pending = row.get("pending_input")
-                if row["status"] != "waiting_input" or not pending or value.get("pending_input_id") != pending["id"]:
+                nonblocking = False
+                if not pending or pending["id"] != value.get("pending_input_id"):
+                    pending = next((q for q in row.get("open_questions", []) if q["id"] == value.get("pending_input_id")), None)
+                    nonblocking = True
+                if not pending or (not nonblocking and row["status"] != "waiting_input"):
                     raise AgentError("agent_input_mismatch")
                 if not data["settings"]["enabled"]:
                     raise AgentError("agent_disabled")
-                if pending["goal_revision"] != row["goal"]["revision"] or pending["scope_revision"] != row["scope_revision"] or pending["control_revision"] != row["control_revision"]:
+                if pending["goal_revision"] != row["goal"]["revision"] or pending["scope_revision"] != row["scope_revision"] or (not nonblocking and pending["control_revision"] != row["control_revision"]):
                     raise AgentError("agent_input_mismatch")
                 if pending["kind"] == "credential_ref":
                     raise AgentError("agent_secure_credential_form_required")
@@ -3145,21 +4006,39 @@ class AgentRuntime(AgentLoop):
                 if not isinstance(answers, dict) or set(answers) - set(fields):
                     raise AgentError("agent_invalid_answer")
                 for key, field in fields.items():
+                    if not answers:
+                        break  # An explicit empty answer asks us to use an assumption.
                     answer = answers.get(key)
                     if answer is None and not field["required"]:
                         continue
                     if not isinstance(answer, str) or not answer.strip() or len(answer) > 2000 or (field["type"] == "choice" and answer not in {o["value"] for o in field["options"]}):
                         raise AgentError("agent_invalid_answer")
                 message = {"role": "user", "message_id": "owner_" + uuid.uuid4().hex,
-                           "content": "Owner supplied information (not new permission): " + encoded(answers).decode(),
+                           "content": ("Owner supplied information (not new permission): " + encoded(answers).decode()) if answers else
+                                      "No answer was given: continue with your best stated assumption; do not ask the same question again.",
                            "ui": {"kind": "input_answer", "prompt": pending["prompt"], "pending_input_id": pending["id"],
                                   "fields": [{"label": fields[key]["label"], "value": next((option["label"] for option in fields[key].get("options", []) if option["value"] == answer), answer)}
                                              for key, answer in answers.items()]}}
                 memory_natural.stamp_single_owner_message_in_tx(data, message)
-                row["messages"].append(message)
                 budget.new_round(row)
-                row.update(pending_input=None, status="queued")
-                event(row, "input_answered", pending_input_id=pending["id"])
+                if nonblocking:
+                    row["open_questions"] = [q for q in row["open_questions"] if q["id"] != pending["id"]]
+                    if row.get("in_flight") or row.get("queue") or row["status"] == "running":
+                        row.setdefault("pending_user_messages", []).append(message)
+                        if not row.get("pending_control"):
+                            row["pending_control"] = {"kind": "information"}
+                    else:
+                        row["messages"].append(message)
+                        if row["status"] not in {"waiting_input", "waiting_approval"}:
+                            if row["status"] in {"completed", "failed", "paused", "cancelled", "interrupted"}:
+                                row.update(steps=0, elapsed_seconds=0.0, result="", error=None)
+                                budget.restart_segment_audit(row)
+                            row["status"] = "queued"
+                    event(row, "input_answered", pending_input_id=pending["id"], blocking=False)
+                else:
+                    row["messages"].append(message)
+                    row.update(pending_input=None, status="queued")
+                    event(row, "input_answered", pending_input_id=pending["id"])
             elif action == "reconcile":
                 if not allowed_actions(row, data["settings"])["reconcile"]["enabled"] or not hasattr(self.tools, "reconcile"):
                     raise AgentError("agent_invalid_transition")
@@ -3181,10 +4060,10 @@ class AgentRuntime(AgentLoop):
                         outcome = "not_executed"
                         if flight.get("effect") == "write":
                             outcome = self._settle_interrupted_read(row, flight, err_code, recovery=recovery)
+                        may_continue = self._read_may_continue_after_restart(row, flight, data)
                         row["in_flight"] = None
                         row["approved"] = None
                         settle(row, event, data=data)
-                        may_continue = self._read_may_continue_after_restart(row, flight, data)
                         row["reconciliation"] = {
                             "state": "executed" if outcome == "confirmed" else "not_executed",
                             "attempts": attempts,
@@ -3259,12 +4138,23 @@ class AgentRuntime(AgentLoop):
         except AgentError:
             pass  # A notice must never fail the request itself.
 
+    def _fit_image_history(self, row, messages, specs):
+        try:
+            output_policy._enforce_analysis_bounds(output_policy.analyze_request(messages, specs))
+        except AgentError as exc:
+            messages, omitted = image_capabilities.omit_old_images_for_limits(messages, exc)
+            if not omitted:
+                raise
+            output_policy._enforce_analysis_bounds(output_policy.analyze_request(messages, specs))
+            self._note_shared_image_resize(row["id"], {"carrier": "local", "resized": 0, "omitted": omitted, "omitted_old": omitted})
+        return messages
+
     def _note_shared_image_resize(self, task_id: str, report: dict) -> None:
         def note(data):
             row = data["tasks"].get(task_id)
             if row is not None:
-                event(row, "images_resized_for_shared_route",
-                      **{key: report[key] for key in ("carrier", "images", "resized", "original_bytes", "final_bytes")
+                event(row, "images_omitted_for_limits" if report.get("carrier") == "local" else "images_resized_for_shared_route",
+                      **{key: report[key] for key in ("carrier", "images", "resized", "original_bytes", "final_bytes", "omitted", "omitted_old")
                          if type(report.get(key)) in (int, str)})
         try:
             self.store.transaction(note)
@@ -3343,12 +4233,12 @@ class AgentRuntime(AgentLoop):
         )
         if not is_hint_read_unknown and (
             row.get("permission_mode") != "automatic"
-            or settings.get("permission_mode") != "automatic"
-            or flight.get("authorization") != "automatic"
+            or flight.get("authorization") not in {"automatic", "owner_rule"}
         ):
             return False
         if (
             not settings.get("enabled")
+            or write_permission_revoked(row, settings)
             or row.get("pending_control")
             or row.get("pending_approval")
             or row.get("pending_input")
@@ -3404,7 +4294,9 @@ class AgentRuntime(AgentLoop):
         }
         if isinstance(hint, str) and hint:
             result["hint"] = hint
-        truncated_details = self._truncate_unknown_error_details(error_details)
+        truncated_details = flight.get("partial_file_details")
+        if not isinstance(truncated_details, dict):
+            truncated_details = self._truncate_unknown_error_details(error_details)
         if truncated_details is not None:
             result["details"] = truncated_details
         if repeated_unknown:
@@ -3486,17 +4378,13 @@ class AgentRuntime(AgentLoop):
         )
         return outcome
 
-    def _read_may_continue_after_restart(self, row: dict, flight: dict, data: dict) -> bool:
+    def _may_continue_after_restart(self, row: dict, data: dict) -> bool:
         if (
             not data["settings"].get("enabled")
-            or row.get("pending_control")
+            or row.get("status") in {"cancelled", "paused", "editing"}
+            or (row.get("pending_control") and row["pending_control"].get("kind") != "steer")
             or row.get("pending_input")
             or row.get("pending_approval")
-            or flight.get("control_revision") != row["control_revision"]
-            or flight.get("goal_revision") != row["goal"]["revision"]
-            or flight.get("scope_revision") != row["scope_revision"]
-            or flight.get("context_epoch", 0) != row.get("context_epoch", 0)
-            or flight.get("authority") != model_retry_authority(data["settings"])
             or write_permission_revoked(row, data["settings"])
             or budget.hard_run_limit(row)
             or budget.time_remaining(row) <= 0
@@ -3527,13 +4415,27 @@ class AgentRuntime(AgentLoop):
                 return False
         else:
             current_root = data["settings"].get("workspace_root") or self.store.default_workspace()
-        if bound.get("workspace_root", "") != current_root:
+        effective_root = bound.get("workspace_root", "")
+        if not effective_root and row.get("permission_mode") == "automatic" and not bound.get("project_id"):
+            effective_root = current_root
+        if effective_root != current_root and (bound.get("project_id") or bound.get("workspace_source") != "task"):
             return False
         try:
             self._validate_context(row, cheap_only=True, control_state=data)
         except AgentError:
             return False
         return True
+
+    def _read_may_continue_after_restart(self, row: dict, flight: dict, data: dict) -> bool:
+        steer = (row.get("pending_control") or {}).get("kind") == "steer"
+        return bool(
+            self._may_continue_after_restart(row, data)
+            and (steer or (flight.get("control_revision") == row["control_revision"]
+                           and flight.get("goal_revision") == row["goal"]["revision"]))
+            and flight.get("scope_revision") == row["scope_revision"]
+            and flight.get("context_epoch", 0) == row.get("context_epoch", 0)
+            and flight.get("authority") == model_retry_authority(data["settings"])
+        )
 
     def adopt_shipped_permission_mode(self, mode: str) -> bool:
         """Record legacy mode provenance without changing a saved mode.
@@ -3574,8 +4476,9 @@ class AgentRuntime(AgentLoop):
                 flight = row.get("in_flight")
                 if flight or row["status"] == "running" or row.get("approved"):
                     was_cancelled = row["status"] == "cancelled" or (row.get("pending_control") or {}).get("kind") == "cancel"
-                    was_paused = row["status"] == "paused" or (row.get("pending_control") or {}).get("kind") == "pause"
-                    was_editing = (row.get("pending_control") or {}).get("kind") == "edit_message"
+                    was_paused = row["status"] == "paused" or (row.get("pending_control") or {}).get("kind") in {"pause", "stop"}
+                    was_editing = (row.get("pending_control") or {}).get("kind") in {"edit_message", "rollback"}
+                    steer_pending = (row.get("pending_control") or {}).get("kind") in {"steer", "scope", "permissions"}
                     workspace_root = (row.get("local_execution") or {}).get("workspace_root", "")
                     is_verified_read = bool(
                         flight
@@ -3592,52 +4495,7 @@ class AgentRuntime(AgentLoop):
                     recovery = None
                     if is_verified_read or (flight and flight.get("effect") == "read" and flight.get("dispatched")):
                         cleanup_ok, recovery = self._recover_read_operation_details(row, flight, error="agent_node_restarted")
-                    if is_verified_read and flight.get("effect") == "write":
-                        if not cleanup_ok:
-                            row.update(
-                                status="cancelled" if was_cancelled else "interrupted",
-                                approved=None,
-                                error="agent_node_restarted",
-                            )
-                            event(
-                                row,
-                                "interrupted",
-                                ambiguous_write=False,
-                                continued=False,
-                                cleanup_confirmed=False,
-                            )
-                        else:
-                            may_continue = (
-                                not was_cancelled
-                                and not was_paused
-                                and self._read_may_continue_after_restart(row, flight, data)
-                            )
-                            settled_outcome = self._settle_interrupted_read(row, flight, "agent_node_restarted", recovery=recovery)
-                            row["in_flight"] = None
-                            row["approved"] = None
-                            settle(row, event, data=data)
-                            if was_editing:
-                                # The owner already committed the replacement turn.
-                                # Its old flight settled above; do not overwrite the
-                                # edited branch's queued/paused state with recovery.
-                                may_continue = row["status"] == "queued"
-                            elif was_cancelled:
-                                row.update(status="cancelled", error="agent_node_restarted")
-                            elif was_paused:
-                                row.update(status="paused", error="agent_node_restarted")
-                            elif may_continue:
-                                row.update(status="queued", error=None)
-                            else:
-                                row.update(status="interrupted", error="agent_node_restarted")
-                            event(
-                                row,
-                                "interrupted",
-                                ambiguous_write=False,
-                                continued=may_continue,
-                                cleanup_confirmed=True,
-                                ledger_outcome=settled_outcome,
-                            )
-                    elif (
+                    if (
                         ambiguous_write
                         and not was_cancelled
                         and not was_paused
@@ -3659,20 +4517,74 @@ class AgentRuntime(AgentLoop):
                             auto_acknowledged=True,
                         )
                     else:
-                        row.update(status="interrupted", approved=None, error="agent_write_outcome_unknown" if ambiguous_write else "agent_node_restarted")
                         if ambiguous_write:
+                            row.update(status="interrupted", approved=None, error="agent_write_outcome_unknown")
                             verification.record(row, flight, "unknown", now(), flight=flight)
                             self._schedule_reconciliation(row)
-                        if not ambiguous_write:
+                            event(row, "interrupted", ambiguous_write=True)
+                        else:
+                            read_flight = bool(flight and flight.get("dispatched") and (is_verified_read or flight.get("effect") == "read"))
+                            may_continue = (self._read_may_continue_after_restart(row, flight, data) if read_flight
+                                            else self._may_continue_after_restart(row, data))
+                            settled_outcome = None
                             if cleanup_ok:
+                                if read_flight:
+                                    settled_outcome = self._settle_interrupted_read(row, flight, "agent_node_restarted", recovery=recovery)
                                 row["in_flight"] = None
+                                row["approved"] = None
                                 settle(row, event, data=data)
-                            if not (was_editing and cleanup_ok):
-                                row["status"] = "cancelled" if was_cancelled else "interrupted"
-                        event(row, "interrupted", ambiguous_write=ambiguous_write)
+                            owner_continued = (cleanup_ok and steer_pending and row["status"] == "queued"
+                                               and not was_cancelled and not was_paused and not was_editing)
+                            auto_continued = (cleanup_ok and may_continue and not owner_continued
+                                              and not was_cancelled and not was_paused and not was_editing
+                                              and row.get("restart_auto_continued") != row["goal"]["revision"])
+                            if was_editing and cleanup_ok:
+                                continued = row["status"] == "queued"
+                            elif was_cancelled or was_paused:
+                                row.update(status="cancelled" if was_cancelled else "paused", error="agent_node_restarted")
+                                continued = False
+                            elif owner_continued or auto_continued:
+                                row.update(status="queued", error=None)
+                                continued = True
+                                if auto_continued:
+                                    row["restart_auto_continued"] = row["goal"]["revision"]
+                                    note = {**host_note("restart", "Ryn 在任务运行中重启；从已记录历史继续，重复任何操作前先查状态。"),
+                                            "context_epoch": row.get("context_epoch", 0), "ui": {"kind": "information", "hidden": True}}
+                                    messages = row["messages"]
+                                    index = len(messages) - 1 if row.get("queue") and messages[-1].get("tool_calls") else len(messages)
+                                    messages.insert(index, note)
+                            else:
+                                row.update(status="interrupted", approved=None, error="agent_node_restarted")
+                                continued = False
+                            event(row, "interrupted", ambiguous_write=False, continued=continued,
+                                  reason="owner_message_pending" if owner_continued else "node_restarted",
+                                  **({"cleanup_confirmed": cleanup_ok} if read_flight else {}),
+                                  **({"ledger_outcome": settled_outcome} if settled_outcome else {}))
+                if row.get("status") == "paused":
+                    row.pop("manual_compaction", None)
                 if row.get("status") not in {"completed", "cancelled", "failed"}:
                     _note_lost_background_processes(row, boot_id)
-        self.store.transaction(reconcile)
+            deleted_ids = []
+            # Old releases removed only the parent. Repair only explicit children;
+            # top-level conversations must never be inferred to be orphans.
+            for row in list(data["tasks"].values()):
+                parent = row.get("parent_task_id")
+                if row["id"] not in data["tasks"] or not parent or parent in data["tasks"]:
+                    continue
+                rows = lifecycle.tree_rows(self.store, data, copy.deepcopy(row))
+                if parent in data.get("deleted_tasks", {}):
+                    lifecycle.delete_rows_in_tx(data, rows, now, on_mutate=memory_integration.on_task_lifecycle_in_tx)
+                    deleted_ids.extend(child["id"] for child in rows)
+                else:
+                    subagents.cascade_stop_subagents_in_tx(data, row, close=True)
+                    rows = lifecycle.tree_rows(self.store, data, copy.deepcopy(row))
+                    lifecycle._archive_tree(self.store, data, rows, event,
+                        on_mutate=memory_integration.on_task_lifecycle_in_tx,
+                        reason="parent_archived" if parent in data.get("archives", {}) else "orphan")
+            return deleted_ids
+        deleted_ids = self.store.transaction(reconcile)
+        if deleted_ids:
+            self._cleanup_deleted_tasks(deleted_ids)
 
     def _schedule_reconciliation(self, row):
         prior = row.get("reconciliation")
@@ -3758,7 +4670,7 @@ class AgentRuntime(AgentLoop):
                 result["outcome"] == "executed" and context_valid
                 and row["status"] == "interrupted" and not row.get("pending_control")
                 and not row.get("pending_input") and not row.get("pending_approval")
-                and flight.get("authorization") in {"approved", "automatic"}
+                and flight.get("authorization") in {"approved", "automatic", "task_grant", "owner_rule"}
                 and flight.get("control_revision") == row["control_revision"]
                 and flight.get("goal_revision") == row["goal"]["revision"]
                 and flight.get("scope_revision") == row["scope_revision"]
@@ -3792,7 +4704,13 @@ class AgentRuntime(AgentLoop):
         read_recovery: dict | None = None,
         error_details: str | None = None,
         diagnostics: dict | None = None,
+        operation_details: dict | None = None,
     ) -> None:
+        context_metrics = None
+        if code == "agent_context_limit":
+            current = task(self.store.read(), task_id)
+            context_metrics = {"request_bytes": self._request_context_bytes(current),
+                               "capacity_bytes": self._effective_capacity(current)[0]}
         def fail(data):
             from .execution_policy import verified_read_classification
             row = task(data, task_id)
@@ -3811,6 +4729,8 @@ class AgentRuntime(AgentLoop):
                 and not is_verified_read
             )
             if ambiguous_write:
+                if isinstance(operation_details, dict) and "applied_paths" in operation_details:
+                    flight["partial_file_details"] = sanitized(operation_details)
                 is_hint_read_unknown = (
                     code == "agent_mcp_outcome_unknown_reported" and _flight_has_server_hint_read(flight)
                 )
@@ -3874,6 +4794,9 @@ class AgentRuntime(AgentLoop):
                     safe_diag = diagnostic_log.safe_diagnostics(diagnostics)
                     if row.get("connection_recovery"):
                         retry_policy.reset(row)
+                    if context_metrics is not None:
+                        row["context_exhausted"] = True
+                        event(row, "context_exhausted", **context_metrics)
                     row.update(status="failed", error=code, approved=None)
                     event(
                         row,
@@ -3884,6 +4807,8 @@ class AgentRuntime(AgentLoop):
                     )
                 subagents.on_subagent_settled_in_tx(data, row)
         self.store.transaction(fail)
+        if context_metrics is not None:
+            self._auto_continue_context_exhausted(task_id)
 
     def _operation_error(
         self,
@@ -3930,7 +4855,7 @@ class AgentRuntime(AgentLoop):
         error_text: str | None = None,
     ) -> None:
         """Only proven no-side-effect failures may return to the correction loop."""
-        if selected.get("verification"):
+        if selected.get("verification") and code != "agent_context_limit":
             def verification_failed(data):
                 row = task(data, selected["id"])
                 flight = row.get("in_flight") or {}
@@ -3972,6 +4897,11 @@ class AgentRuntime(AgentLoop):
                 "store_persistence_seconds": round(claim_persist + prep_persist, 4),
             }
             safe_diag = diagnostic_log.safe_diagnostics(diagnostics)
+            overflow_bytes = overflow_base_capacity = None
+            if code == "agent_model_context_overflow":
+                overflow_row = task(self.store.read(), selected["id"])
+                overflow_bytes = overflow_row["context_usage"]["request_bytes"]
+                overflow_base_capacity = self._effective_capacity({**overflow_row, "context_density_penalty": 1.0})[0]
             req_id = selected.get("_request_id")
             attempt = selected.get("_attempt", int(selected.get("model_retry_count", 0)) + 1)
             diagnostic_log.failure(
@@ -4006,7 +4936,8 @@ class AgentRuntime(AgentLoop):
                 run_limit = budget.hard_run_limit(row)
                 error = ("agent_permission_denied" if authority != selected.get("_model_retry_authority") else
                          run_limit if run_limit else
-                         code if not network and maximum is not None and count >= maximum else None)
+                         "agent_model_unavailable" if code == "agent_model_starting" and count >= maximum else
+                         code if not network and code != "agent_model_context_overflow" and maximum is not None and count >= maximum else None)
                 row.pop("pending_control", None)
                 extra_event = {
                     "step": row["steps"],
@@ -4015,14 +4946,30 @@ class AgentRuntime(AgentLoop):
                     **({"request_id": req_id} if req_id else {}),
                     **({"diagnostics": safe_diag} if safe_diag else {}),
                 }
+                recovery_key = [row.get("context_epoch", 0), row["goal"]["revision"]]
+                # A checkpoint retires the trigger, not the one-shot recovery.
+                # Only an accepted main turn completes that recovery.
+                if code == "agent_model_context_overflow" and row.get("context_overflow_recovery") == recovery_key:
+                    error = error or "agent_context_limit"
                 if error in budget.LIMIT_CODES:
                     budget.stop_for_limit(row, error, **extra_event)
                     subagents.on_subagent_settled_in_tx(data, row)
                     return True
                 if error:
+                    if code == "agent_model_starting" and error == "agent_model_unavailable":
+                        row.pop("connection_recovery", None)
                     row.update(status="failed", error=error)
                     event(row, "failed", error=error, **extra_event)
                     subagents.on_subagent_settled_in_tx(data, row)
+                    return True
+                if code == "agent_model_context_overflow":
+                    row["context_overflow"] = {"step": row["steps"], "request_bytes": overflow_bytes}
+                    row["context_density_penalty"] = min(row.get("context_density_penalty", 1.0),
+                        int(.85 * overflow_bytes) / overflow_base_capacity)
+                    row["context_overflow_recovery"] = recovery_key
+                    row.pop("connection_recovery", None)
+                    row.update(status="queued", error=None, model_retry_authority=authority)
+                    event(row, "model_retry_scheduled", error=code, retry_count=count, **extra_event)
                     return True
                 waiting_for_network = network and maximum is None
                 if network:
@@ -4132,6 +5079,9 @@ class AgentRuntime(AgentLoop):
                 result.update(expected_goal_revision=current["goal"]["revision"],
                               expected_plan_revision=current["plan"]["revision"],
                               allowed_criterion_ids=[item["id"] for item in current["criteria"]])
+            if call["name"] in goals.TOOL_NAMES and code in goals.CORRECTIONS:
+                result.setdefault("correction", goals.CORRECTIONS[code])
+                result["expected_goal_id"] = (current.get("thread_goal") or {}).get("id")
             if call["effect"] == "read" and read_connection:
                 from .diagnostics import safe_label
                 result.update({key: safe_label(read_connection.get(key)) for key in ("connection_id", "connection_name")})
@@ -4149,6 +5099,11 @@ class AgentRuntime(AgentLoop):
             def reject(data):
                 nonlocal can_continue_cleanly
                 row = task(data, selected["id"])
+                if (code == "agent_unattended_approval_blocked" and row.get("automation_run_id")
+                        and row.get("automation_run_id") == selected.get("automation_run_id")):
+                    blocked = row.setdefault("unattended_blocked", [])
+                    if len(blocked) < 20:
+                        blocked.append({"tool": call["name"], "reason": details["reason"]})
                 row.update(in_flight=None, approved=None, pending_approval=None)
                 row["elapsed_seconds"] += time.monotonic() - started
                 consecutive_same_error = 0
@@ -4229,9 +5184,10 @@ class AgentRuntime(AgentLoop):
                 read_recovery=read_recovery,
                 error_details=fail_details,
                 diagnostics=diagnostics,
+                operation_details=details,
             )
 
-    def run_continuously(self) -> WorkerRunResult:
+    def run_continuously(self, cancelled=None) -> WorkerRunResult:
         """Worker entry point: consecutive steps without a scheduler interval between them.
 
         run_once stays exactly one step. Only a step that ended normally continues
@@ -4241,6 +5197,8 @@ class AgentRuntime(AgentLoop):
         deadline = time.monotonic() + CONTINUE_SECONDS
         activity = False
         while True:
+            if cancelled is not None and cancelled.is_set():
+                return WorkerRunResult(activity=activity)
             result = self.run_once()
             if not result.activity:
                 return WorkerRunResult(activity=activity)
@@ -4269,7 +5227,7 @@ class AgentRuntime(AgentLoop):
                     "pending_control": bool(row.get("pending_control")),
                     "kind": (row.get("in_flight") or {}).get("kind")}
                     for key, row in data["tasks"].items()},
-                "queued": any(row["status"] == "queued" and retry_policy.ready(row) for row in data["tasks"].values()),
+                "queued": any(row["status"] == "queued" and retry_policy.ready(row) and (row.get("manual_compaction") or subagents.wait_ready(data, row)) for row in data["tasks"].values()),
                 "waiting": any(row["status"] == "waiting_approval" and row.get("queue") for row in data["tasks"].values()),
                 "unresolved": next((row["id"] for row in data["tasks"].values()
                                     if ambiguous(row) and row.get("reconciliation", {}).get("state") == "pending"), None)})
@@ -4281,7 +5239,7 @@ class AgentRuntime(AgentLoop):
                 if peek["waiting"]:
                     self._refresh_waiting_reads(self._waiting_policy_snapshot())
                     # A released dialog is claimable in this same tick.
-                    peek["queued"] = self.store.inspect(lambda data: any(row["status"] == "queued" and retry_policy.ready(row) for row in data["tasks"].values()))
+                    peek["queued"] = self.store.inspect(lambda data: any(row["status"] == "queued" and retry_policy.ready(row) and (row.get("manual_compaction") or subagents.wait_ready(data, row)) for row in data["tasks"].values()))
                 unresolved = task(self.store.read(), peek["unresolved"]) if peek["unresolved"] else None
                 if unresolved:
                     self._run_lock.release()
@@ -4297,11 +5255,17 @@ class AgentRuntime(AgentLoop):
                         if row["status"] == "queued":
                             row["status"] = "paused"
                         continue
-                    if row["status"] != "queued" or not retry_policy.ready(row):
+                    if row["status"] != "queued" or not retry_policy.ready(row) or (not row.get("manual_compaction") and not subagents.wait_ready(data, row)):
                         continue
+                    if row.get("subagent_wait") and (not row["queue"] or row["queue"][0]["call_id"] != row["subagent_wait"]["call_id"]):
+                        row.pop("subagent_wait")
                     retry_policy.charge_wait(row)
                     if budget.time_remaining(row) <= 0:
-                        budget.stop_for_limit(row, "agent_time_budget_exhausted")
+                        if row.get("manual_compaction"):
+                            row["status"] = row.pop("manual_compaction")["return_status"]
+                            event(row, "context_compaction_rejected", source="manual", error="agent_time_budget_exhausted")
+                        else:
+                            budget.stop_for_limit(row, "agent_time_budget_exhausted")
                         subagents.on_subagent_settled_in_tx(data, row)
                         continue
                     if row.get("model_retry_count", 0) and row.get("model_retry_authority") != model_retry_authority(data["settings"]):
@@ -4320,6 +5284,10 @@ class AgentRuntime(AgentLoop):
                         boundary = budget.segment_boundary(row)
                     if boundary:
                         code = "agent_time_limit" if boundary == "max_seconds" else "agent_step_limit"
+                        if row.get("manual_compaction"):
+                            row["status"] = row.pop("manual_compaction")["return_status"]
+                            event(row, "context_compaction_rejected", source="manual", error=code)
+                            continue
                         if row.get("verification"):
                             verification.finish(row, error=code)
                             event(row, "verification_finished", outcome=row["outcome"]["status"], error=code)
@@ -4330,7 +5298,7 @@ class AgentRuntime(AgentLoop):
                         subagents.on_subagent_settled_in_tx(data, row)
                         continue
                     row["status"] = "running"
-                    row["in_flight"] = {"kind": "verification" if row.get("verification") else "tool" if row["queue"] else "model", "dispatched": False,
+                    row["in_flight"] = {"kind": "model" if row.get("manual_compaction") else "verification" if row.get("verification") else "tool" if row["queue"] else "model", "dispatched": False,
                                         "goal_revision": row["goal"]["revision"], "control_revision": row["control_revision"], "scope_revision": row["scope_revision"]}
                     queued_at = self._queued_since.pop(row["id"], None)
                     scheduler_wait_seconds = max(0.0, claim_started - queued_at) if queued_at is not None else 0.0
@@ -4388,7 +5356,9 @@ class AgentRuntime(AgentLoop):
                 cancelled.reason = reason
                 return reason is not None
 
-            if selected.get("verification"):
+            if selected.get("manual_compaction"):
+                self._model(selected, cancelled, started)
+            elif selected.get("verification"):
                 self._verify(selected, cancelled, started)
             elif selected["queue"]:
                 self._tool(selected, cancelled, started)
@@ -4425,6 +5395,7 @@ class AgentRuntime(AgentLoop):
                     code,
                     started,
                     read_connection=exc.connection if isinstance(exc, AgentReadFailure) else None,
+                    correction=getattr(exc, "correction", None),
                     details=getattr(exc, "details", None),
                     diagnostics=getattr(exc, "diagnostics", None),
                     error_text=err_text,
@@ -4433,8 +5404,8 @@ class AgentRuntime(AgentLoop):
         except ValueError as exc:
             # Only explicitly enumerated boundary codes may reach the owner.
             # Arbitrary provider exceptions can contain URLs or credentials.
-            safe = {"agent_context_limit", "agent_inference_failed", "agent_invalid_model_response",
-                    "agent_model_busy", "agent_model_output_limit", "agent_model_unavailable",
+            safe = {"agent_context_limit", "agent_image_too_large", "agent_image_count_limit", "agent_inference_failed", "agent_invalid_model_response",
+                    "agent_model_busy", "agent_model_output_limit", "agent_model_unavailable", "agent_model_starting",
                     "agent_model_tools_unsupported", "agent_output_truncated", "agent_tool_call_limit", "agent_unknown_tool",
                     "agent_approval_preview_changed", "agent_friend_inactive", "agent_friend_model_not_shareable",
                     "agent_model_not_shareable", "agent_model_uses_personal_space_access",
@@ -4494,7 +5465,7 @@ class AgentRuntime(AgentLoop):
     def _change_review(self, row: dict):
         """Net file changes this task made through file tools, or None when there is nothing to review."""
         tool = getattr(self.tools, "change_review", None)
-        root = (row.get("local_execution") or {}).get("workspace_root", "")
+        root = self._task_workspace_root(row)
         goal = row["goal"]["revision"]
         if tool is None or not root or not any(
                 r.get("effect") == "write" and r.get("status") == "confirmed" and r.get("goal_revision") == goal

@@ -138,7 +138,7 @@ def test_loading_past_capacity_releases_the_oldest_load_first(monkeypatch):
                            {"load": ["ryn_browser_action", "ryn_render_inspect", "ryn_computer_action"]}, capacity_bytes=tight)
 
 
-def test_small_windows_replace_loads_instead_of_accumulating():
+def test_small_windows_accumulate_loads_while_they_fit():
     business = specs(SPECS)
     _, state = tool_menu.project(business, [], {}, max_context_bytes=12000, authority_bytes=1000, epoch=0, goal_revision=1,
                                  pinned_names=tool_menu.CORE_TOOLS)
@@ -146,7 +146,7 @@ def test_small_windows_replace_loads_instead_of_accumulating():
     capacity = tool_menu.capacity(12000, 1000)
     _, state = tool_menu.discover(business, [], lambda _: {"effect": "read"}, state, {"load": ["ryn_file_read"]}, capacity_bytes=capacity)
     _, state = tool_menu.discover(business, [], lambda _: {"effect": "read"}, state, {"load": ["ryn_file_list"]}, capacity_bytes=capacity)
-    assert state["loaded_names"] == ["ryn_file_list"]
+    assert state["loaded_names"] == ["ryn_file_read", "ryn_file_list"]
 
 
 def test_duplicate_anchor_with_unique_context_succeeds_and_duplicate_full_context_is_rejected(local):  # noqa: F811

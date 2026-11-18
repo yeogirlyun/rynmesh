@@ -312,6 +312,7 @@ def test_cli_sharing_requires_personal_space_ai_policy_and_publishes_plural_cata
         "text": "local CLI connected", "input_tokens": 4, "output_tokens": 3, "duration_ms": 1})
     with TestClient(app) as client:
         assert client.post("/api/local/llm/cli-services/codex_cli/setup").status_code == 200
+        app.state.llm_agent_services["active_cli_managers"]()["codex_cli"].adapter.current_models()
         # Desktop use works before enabling personal-space sharing and never
         # attempts a P2P connection back to itself.
         local = client.get("/api/local/llm/services").json()["services"][0]

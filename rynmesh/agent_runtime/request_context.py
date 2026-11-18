@@ -111,7 +111,9 @@ def _select_compacted_owner_messages(
     max_bytes: int = COMPACT_USER_MESSAGE_MAX_BYTES,
     keep_latest_images: bool = True,
 ) -> list[dict]:
-    owners = [copy.deepcopy(message) for message in messages if message.get("role") == "user"]
+    owners = [copy.deepcopy(message) for message in messages if message.get("role") == "user"
+              and not message.get("synthetic")
+              and (message.get("ui") or {}).get("kind") != "runtime_note"]
     if not owners or max_bytes <= 0:
         return []
     first_keep_images = len(owners) == 1 and keep_latest_images
@@ -145,7 +147,7 @@ def _select_compacted_owner_messages(
 
 
 
-def normalize_history(messages: list[dict]) -> list[dict]:
+def normalize_history(messages: list[dict], repairs: list | None = None) -> list[dict]:
     """Pair tool exchanges on a copy, retaining owner content and local metadata.
 
     A repaired missing output is not an execution receipt. Orphan and duplicate
@@ -166,7 +168,12 @@ def normalize_history(messages: list[dict]) -> list[dict]:
             continue
         ids = [call.get("id") for call in calls]
         if any(not isinstance(call_id, str) or not call_id for call_id in ids) or len(set(ids)) != len(ids):
-            raise ValueError("invalid historical tool call ids")
+            message.pop("tool_calls")
+            if not message.get("content"):
+                message["content"] = "[tool calls with invalid ids omitted]"
+            if repairs is not None:
+                repairs.append({"index": index - 1, "reason": "invalid_tool_call_ids", "calls": len(calls)})
+            ids = []  # Consume adjacent outputs below without projecting any of them.
         epoch = message.get("context_epoch", 0)
         outputs = {}
         while index < len(source) and source[index].get("role") == "tool":
@@ -201,22 +208,25 @@ def _checkpoint_boundary(history, through):
 
 
 def build_context(instructions, history, *, guidance=(), plan=(), checkpoint=None,
-                  checkpoint_note=None, tail=(), owner_budget: int = COMPACT_USER_MESSAGE_MAX_BYTES) -> list[dict]:
+                  checkpoint_note=None, tail=(), owner_budget: int = COMPACT_USER_MESSAGE_MAX_BYTES,
+                  repairs: list | None = None) -> list[dict]:
     """Assemble ordered layers while bounding compacted earlier owner messages.
 
     The caller supplies already scope-filtered history and a server-generated
-    checkpoint note (including current receipts when needed). 选中技能是 owner 选择的 user 片段,
-    placed in guidance before saved preferences; summaries and saved preferences
-    remain assistant data, never developer authority.
+    checkpoint note (including current receipts when needed). Selected skills and
+    memory are contextual user fragments: skills precede saved preferences, then
+    memory follows in guidance before plan/history. Checkpoint summaries remain
+    assistant data; none of these fragments grant developer authority.
     """
     prefix = [*copy.deepcopy(instructions), *copy.deepcopy(guidance), *copy.deepcopy(plan)]
     if checkpoint is None:
-        return [*prefix, *normalize_history(history), *copy.deepcopy(tail)]
+        return [*prefix, *normalize_history(history, repairs=repairs), *copy.deepcopy(tail)]
     through = _checkpoint_boundary(history, checkpoint["through"])
     suffix_has_owner = any(
         isinstance(m, dict)
         and m.get("role") == "user"
-        and (m.get("ui") or {}).get("kind") != "subagent_notification"
+        and not m.get("synthetic")
+        and (m.get("ui") or {}).get("kind") not in {"subagent_notification", "runtime_note"}
         for m in history[through:]
     )
     owners = _select_compacted_owner_messages(
@@ -229,4 +239,4 @@ def build_context(instructions, history, *, guidance=(), plan=(), checkpoint=Non
     if not isinstance(checkpoint_note, str):
         raise ValueError("context checkpoint note must be text")
     return [*prefix, *owners, {"role": "assistant", "content": checkpoint_note},
-            *normalize_history(history[through:]), *copy.deepcopy(tail)]
+            *normalize_history(history[through:], repairs=repairs), *copy.deepcopy(tail)]

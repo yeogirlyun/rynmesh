@@ -692,6 +692,7 @@ def _dispatch_tool(store: RynmeshStore, tool_name: str, arguments: dict[str, Any
         )
     if tool_name == "rynmesh_register_job_capacity":
         return store.register_job_capacity(
+            owner="manual",
             capabilities=_string_list(arguments.get("capabilities", [])),
             network_id=str(arguments.get("network_id", "rynmesh-main") or "rynmesh-main"),
             capacity_units=int(arguments.get("capacity_units", 1) or 1),

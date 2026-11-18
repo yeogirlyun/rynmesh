@@ -59,7 +59,8 @@ def test_file_create_edit_search_and_readback(local):
     assert tools.perform("ryn_file_search", {"path": ".", "query": "世界"}, context, lambda: False)["matches"][0]["line"] == 1
 
 
-def test_search_prunes_generated_directories_and_reads_store_once(local):
+def test_search_prunes_generated_directories_and_reads_store_once(local, monkeypatch):
+    monkeypatch.setattr("rynmesh.agent_runtime.local_tools.resolve_rg_executable", lambda: None)
     tools, context, workspace, state = local
     (workspace / ".gitignore").write_text("generated-cache/\n*.log\n", encoding="utf-8")
     generated = workspace / "generated-cache"
@@ -83,11 +84,12 @@ def test_search_prunes_generated_directories_and_reads_store_once(local):
     # One policy read for the start path and one for the root; never one per scanned file.
     assert len(reads) <= 4
     explicit = tools.perform("ryn_file_search", {"path": "generated-cache", "query": "needle"}, context, lambda: False)
-    assert explicit["scanned_files"] == 30 and len(explicit["matches"]) == 15 and explicit["next_offset"] == 15
+    assert explicit["scanned_files"] == 30 and len(explicit["matches"]) == 30 and explicit["next_offset"] is None
 
 
 def test_search_reaches_shallow_source_before_deep_generated_trees(local, monkeypatch):
     from rynmesh.agent_runtime import local_tools
+    monkeypatch.setattr(local_tools, "resolve_rg_executable", lambda: None)
     tools, context, workspace, _ = local
     deep = workspace / "aaa" / "b" / "c" / "d"
     deep.mkdir(parents=True)
@@ -101,7 +103,8 @@ def test_search_reaches_shallow_source_before_deep_generated_trees(local, monkey
     assert any(Path(match["path"]).name == "real.py" for match in result["matches"])
 
 
-def test_gitignore_pruning_is_partial_and_conservative(local):
+def test_gitignore_pruning_is_partial_and_conservative(local, monkeypatch):
+    monkeypatch.setattr("rynmesh.agent_runtime.local_tools.resolve_rg_executable", lambda: None)
     tools, context, workspace, _ = local
     (workspace / "build").mkdir()
     (workspace / "build" / "a.txt").write_text("needle\n", encoding="utf-8")
@@ -312,14 +315,14 @@ def test_budget_notice_reaches_the_model_once_and_is_not_written_to_the_receipt(
             break
     assert current["status"] == "completed", current.get("error")
     final_request = requests[-1]["messages"]  # Normal completion has no extra checker request.
-    notices = [m for m in final_request if m.get("role") == "tool" and "Server budget notice" in m.get("content", "")]
+    notices = [m for m in final_request if m.get("role") == "user" and "Server budget notice" in m.get("content", "")]
     assert len(notices) == 1 and "5 of 7" in notices[0]["content"] and "Conclude from the evidence" in notices[0]["content"]
     assert "make the change now" not in notices[0]["content"]
     assert all("server_note" not in json.dumps(e.get("result", {})) for e in current["events"] if e["type"] == "tool_result")
     stored_row = runtime.store.read()["tasks"][task["id"]]
     assert all("server_note" not in json.dumps(r.get("result", {})) for r in stored_row.get("receipts", []))
 
-    # Verify multi-read streamed publication attaches server_note only to the last newly
+    # Verify multi-read streamed publication stores notice metadata only on the last newly
     # published tool message and never advances budget_notice_level on rejected/idempotent calls.
     row = {
         "id": "task-batch",
@@ -358,8 +361,13 @@ def test_budget_notice_reaches_the_model_once_and_is_not_written_to_the_receipt(
     records[0]["stamp"] = stamp
     assert _publish(row, records) is True
     assert row["budget_notice_level"] == 1
-    published_tools = [json.loads(m["content"]) for m in row["messages"] if m.get("role") == "tool"]
-    assert "server_note" not in published_tools[0] and "5 of 7" in published_tools[1]["server_note"]
+    from rynmesh.agent_runtime.prompt import provider_messages
+
+    published = provider_messages(row["messages"])
+    assert [m["role"] for m in published] == ["assistant", "tool", "tool", "user"]
+    assert [json.loads(m["content"]) for m in published[1:3]] == [r["result"] for r in records]
+    assert '<host_note kind="budget">' in published[-1]["content"]
+    assert "5 of 7" in published[-1]["content"]
     assert all("server_note" not in r["result"] for r in records)
     assert all("server_note" not in e["result"] for e in row["events"] if e["type"] == "tool_result")
     row["steps"] = 6  # Crosses 85% threshold, but idempotent re-publish has no unanswered calls.
@@ -438,6 +446,7 @@ def test_shell_environment_does_not_inherit_node_configuration_or_secrets(local,
 
 def test_search_has_a_wall_clock_bound_and_reports_why_it_stopped(local, monkeypatch):
     from rynmesh.agent_runtime import local_tools
+    monkeypatch.setattr(local_tools, "resolve_rg_executable", lambda: None)
     tools, context, workspace, _ = local
     (workspace / "a.txt").write_text("needle\n", encoding="utf-8")
     monkeypatch.setattr(local_tools, "MAX_SEARCH_SECONDS", 0.0)
@@ -450,7 +459,8 @@ def test_search_has_a_wall_clock_bound_and_reports_why_it_stopped(local, monkeyp
     assert result["incomplete"] is True and result["stopped_reason"] == "file_limit"
 
 
-def test_search_skips_binary_suffixes_without_reading(local):
+def test_search_skips_binary_suffixes_without_reading(local, monkeypatch):
+    monkeypatch.setattr("rynmesh.agent_runtime.local_tools.resolve_rg_executable", lambda: None)
     tools, context, workspace, _ = local
     (workspace / "image.png").write_bytes(b"needle\x00\x01")
     (workspace / "notes.txt").write_text("needle\n", encoding="utf-8")
@@ -459,7 +469,8 @@ def test_search_skips_binary_suffixes_without_reading(local):
     assert result["binary_files_skipped"] == 1 and result["scanned_files"] == 1
 
 
-def test_search_stops_when_agent_is_disabled_or_cancelled_mid_scan(local):
+def test_search_stops_when_agent_is_disabled_or_cancelled_mid_scan(local, monkeypatch):
+    monkeypatch.setattr("rynmesh.agent_runtime.local_tools.resolve_rg_executable", lambda: None)
     tools, context, workspace, state = local
     for index in range(250):
         (workspace / f"f{index:03d}.txt").write_text("nothing\n", encoding="utf-8")
@@ -640,7 +651,10 @@ def test_real_browser_dom_fill_click_upload_and_screenshot(local):
         pytest.skip("Chromium is not installed")
     tools, context, workspace, state = local
     context["local_execution"]["desktop_access"] = True
-    state.transaction(lambda data: data["settings"].update(desktop_access=True))
+    def grant_desktop(data):
+        data["settings"]["desktop_access"] = True
+        data["tasks"][context["task_id"]]["local_execution"]["desktop_access"] = True
+    state.transaction(grant_desktop)
     tools._browser = Browser(tools.home, tools.processes, headless=True)
     (workspace / "form.html").write_text('<input id="name"><input id="upload" type="file"><button id="submit" onclick="document.querySelector(\'#answer\').textContent=document.querySelector(\'#name\').value">OK</button><p id="answer"></p>', encoding="utf-8")
     (workspace / "upload.txt").write_text("upload", encoding="utf-8")
@@ -816,6 +830,7 @@ def test_windows_accessibility_write_and_readback(local):
     tools, context, workspace, state = local
     context["local_execution"]["desktop_access"] = True
     state.transaction(lambda data: data["settings"].update(desktop_access=True))
+    state.transaction(lambda data: data["tasks"][context["task_id"]]["local_execution"].update(desktop_access=True))
     title = "Ryn acceptance " + uuid.uuid4().hex[:8]
     command = "Add-Type -AssemblyName System.Windows.Forms; $form=[Windows.Forms.Form]::new(); $form.Text='" + title + "'; $edit=[Windows.Forms.TextBox]::new(); $edit.Name='ryn_test_input'; $form.Controls.Add($edit); [void]$form.ShowDialog()"
     ident = tools.processes.start(shell_command("powershell", command), workspace, "task", 20, tools.allowed(context), lambda: False)

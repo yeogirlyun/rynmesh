@@ -130,7 +130,8 @@ def test_photography_explicit_save_update_forget_and_context_formatting(tmp_path
     sel, msgs, wm = store.transaction(step_select_and_format)
     assert len(sel["selected"]) == 3
     assert len(msgs) == 1
-    assert msgs[0]["role"] == "assistant"
+    assert msgs[0]["role"] == "user"
+    assert msgs[0]["content"].startswith("<memory_context>")
     assert "富士 X-T5" in msgs[0]["content"]
     assert "XF16-55mm F2.8" in msgs[0]["content"]
     assert len(msgs[0]["content"].encode("utf-8")) <= sel["max_bytes"]

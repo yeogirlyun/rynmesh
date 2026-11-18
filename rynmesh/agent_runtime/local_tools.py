@@ -2,15 +2,20 @@
 from __future__ import annotations
 
 import copy
+import base64
+import codecs
 import difflib
 import fnmatch
 import hashlib
 import json
 import os
 import platform
+import queue
 import re
 import shutil
+import subprocess
 import threading
+import tempfile
 import time
 import uuid
 from collections import deque
@@ -18,6 +23,7 @@ from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ..services.document_text import decode_text
 from . import local_processes
 from .diagnostic_log import failure
 from .local_processes import (
@@ -28,15 +34,19 @@ from .local_processes import (
     shell_command,
 )
 from .local_specs import NAMES, SPECS
-from .protocol import bound_preview
+from .protocol import bound_preview, sanitized
 from .store import AgentError, AgentToolRejected, encoded
 
 MAX_FILE = 1024 * 1024
 READ_MAX_FILE = 64 * 1024 * 1024
+STREAM_READ_THRESHOLD = 8 * 1024 * 1024
 # Characters per ryn_file_read page. 6000 meant an 18 KB source file needed four model round trips.
 MAX_READ_CHARS = 12000
 MAX_SEARCH_FILES = 1000
 MAX_SEARCH_SECONDS = 30.0
+MAX_RG_MATCHES = 5000
+_INVENTORY_FILE_TOOLS = frozenset({"ryn_file_write", "ryn_file_edit", "ryn_file_manage", "ryn_apply_patch",
+                                    "ryn_download_file", "ryn_image_generate", "ryn_table_export", "ryn_craft_action"})
 # Generated or vendored trees. Searching one of them explicitly (path inside it) still works.
 SEARCH_SKIP_DIRS = frozenset({".git", "node_modules", ".venv", "venv", "target", "__pycache__",
                               ".pytest_cache", ".ruff_cache", ".mypy_cache", ".tox"})
@@ -64,55 +74,6 @@ def _has_invalid_windows_parts(path_obj: Path) -> bool:
         for part in path_obj.parts
         if part not in {path_obj.anchor, ".", ".."}
     )
-
-
-def _control_char_ratio(text: str, *, include_pua: bool = False) -> float:
-    if not text:
-        return 0.0
-    suspicious = 0
-    for ch in text:
-        cp = ord(ch)
-        if (cp < 32 and ch not in ("\t", "\n", "\r", "\f", "\b", "\x1b")) or cp == 0x7F or (0x80 <= cp <= 0x9F):
-            suspicious += 1
-        elif include_pua and ((0xE000 <= cp <= 0xF8FF) or cp >= 0xF0000):
-            suspicious += 1
-    return suspicious / len(text)
-
-
-def decode_text(raw: bytes) -> tuple[str, str]:
-    """Decode text bytes: UTF-8 BOM -> UTF-16 BOM -> strict UTF-8 -> gb18030 -> UnicodeDecodeError."""
-    if not isinstance(raw, (bytes, bytearray, memoryview)):
-        raise TypeError("decode_text requires a bytes-like object")
-    data = bytes(raw)
-    if not data:
-        return "", "utf-8"
-    if data.startswith(b"\xef\xbb\xbf"):
-        text = data[3:].decode("utf-8", errors="strict")
-        if "\x00" in text or "\ufffd" in text or _control_char_ratio(text) > 0.05:
-            raise UnicodeDecodeError("utf-8-sig", data, 0, len(data), "binary control bytes")
-        return text, "utf-8-sig"
-    if data.startswith(b"\xff\xfe") and not data.startswith(b"\xff\xfe\x00\x00"):
-        text = data[2:].decode("utf-16-le", errors="strict")
-        if "\x00" in text or "\ufffd" in text or _control_char_ratio(text) > 0.02:
-            raise UnicodeDecodeError("utf-16-le", data, 0, len(data), "binary control bytes")
-        return text, "utf-16-le"
-    if data.startswith(b"\xfe\xff"):
-        text = data[2:].decode("utf-16-be", errors="strict")
-        if "\x00" in text or "\ufffd" in text or _control_char_ratio(text) > 0.02:
-            raise UnicodeDecodeError("utf-16-be", data, 0, len(data), "binary control bytes")
-        return text, "utf-16-be"
-    try:
-        text = data.decode("utf-8", errors="strict")
-    except UnicodeDecodeError:
-        pass
-    else:
-        if "\x00" in text or "\ufffd" in text or _control_char_ratio(text) > 0.05:
-            raise UnicodeDecodeError("utf-8", data, 0, len(data), "binary control bytes")
-        return text, "utf-8"
-    text = data.decode("gb18030", errors="strict")
-    if "\x00" in text or "\ufffd" in text or _control_char_ratio(text, include_pua=True) > 0.02:
-        raise UnicodeDecodeError("gb18030", data, 0, len(data), "binary or excessive control/PUA characters")
-    return text, "gb18030"
 
 
 def encode_text(
@@ -370,6 +331,128 @@ def gitignored_directory_names(root):
             frozenset(name for name in root_only if not reincluded(name)))
 
 
+def _search_page(matches, per_file, offset, **coverage):
+    ranked = sorted(per_file.items(), key=lambda item: (-item[1][0], item[0]))
+    return {"matches": matches[offset:offset + 50],
+            "next_offset": offset + 50 if offset + 50 < len(matches) else None,
+            "total_matches": len(matches),
+            "files_matched": [{"path": p, "matches": c, "first_line": f} for p, (c, f) in ranked[:50]],
+            "files_matched_total": len(per_file), **coverage}
+
+
+def _rg_search(executable, path, args, cancelled, check_policy):
+    """Read bounded rg JSON while keeping idle processes cancellable."""
+    argv = [executable, "--json", "--line-number", "--max-columns", "300", "--max-count", "200",
+            "--max-filesize", "8M", "--sort", "path", "--no-require-git",
+            "--hidden"]  # the Python scan has always included dotfiles such as .github
+    if not args.get("regex", False):
+        argv.append("-F")
+    if not args.get("case_sensitive", True):
+        argv.append("-i")
+    if args.get("file_pattern"):
+        argv += ["--glob" if args.get("case_sensitive", True) else "--iglob",
+                 args["file_pattern"].replace("\\", "/")]
+    for name in sorted(SEARCH_SKIP_DIRS):
+        argv += ["--glob", f"!**/{name}/**"]
+    directory = path.parent if path.is_file() else path
+    argv += ["--", args["query"], path.name if path.is_file() else "."]
+    lines = queue.Queue(maxsize=128)
+    done = threading.Event()
+    matches, per_file = [], {}
+    scanned, binary, stopped = 0, 0, None
+    started = last_policy = time.monotonic()
+    with tempfile.TemporaryFile() as errors:
+        process = subprocess.Popen(argv, cwd=directory, stdin=subprocess.DEVNULL,
+                                   stdout=subprocess.PIPE, stderr=errors,
+                                   env=local_processes.child_environment(),
+                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+
+        def read_lines():
+            for line in iter(process.stdout.readline, b""):
+                while not done.is_set():
+                    try:
+                        lines.put(line, timeout=0.1)
+                        break
+                    except queue.Full:
+                        continue
+                if done.is_set():
+                    return
+            while not done.is_set():
+                try:
+                    lines.put(None, timeout=0.1)
+                    return
+                except queue.Full:
+                    continue
+
+        reader = threading.Thread(target=read_lines, daemon=True)
+        reader.start()
+
+        def json_text(value):
+            return value["text"] if "text" in value else base64.b64decode(value["bytes"]).decode("utf-8", errors="replace")
+
+        try:
+            while True:
+                if cancelled():
+                    raise AgentToolRejected("agent_cancelled")
+                now = time.monotonic()
+                if now - started >= MAX_SEARCH_SECONDS:
+                    stopped = "time_limit"
+                    break
+                if now - last_policy >= 1.0:
+                    check_policy()
+                    last_policy = now
+                try:
+                    line = lines.get(timeout=0.1)
+                except queue.Empty:
+                    continue
+                if line is None:
+                    break
+                event = json.loads(line)
+                data = event["data"]
+                if event["type"] == "match":
+                    candidate = str(directory / json_text(data["path"]))
+                    number = data["line_number"]
+                    matches.append({"path": candidate, "line": number,
+                                    "text": json_text(data["lines"]).rstrip("\r\n")[:300]})
+                    entry = per_file.setdefault(candidate, [0, number])
+                    entry[0] += 1
+                    if len(matches) >= MAX_RG_MATCHES:
+                        stopped = "match_limit"
+                        break
+                elif event["type"] == "end":
+                    scanned += 1
+                    if data.get("binary_offset") is not None:
+                        binary += 1
+                        candidate = str(directory / json_text(data["path"]))
+                        matches = [match for match in matches if match["path"] != candidate]
+                        per_file.pop(candidate, None)
+                    elif data["stats"]["matched_lines"] >= 200:
+                        stopped = "match_limit"
+                elif event["type"] == "summary":
+                    scanned = data["stats"]["searches"]
+        finally:
+            done.set()
+            if process.poll() is None:
+                process.kill()
+            process.wait()
+            reader.join()
+            process.stdout.close()
+        errors.seek(0)
+        diagnostic = errors.read(4096).decode("utf-8", errors="replace")
+    if stopped is None and process.returncode not in (0, 1):
+        if args.get("regex") and "regex" in diagnostic.lower():
+            return None  # Python-valid expressions such as lookaround need the existing scanner.
+        raise AgentToolRejected("agent_file_search_failed", correction=diagnostic[:1000])
+    return _search_page(matches, per_file, args.get("offset", 0), engine="rg",
+                        scanned_files=scanned, skipped_files=0, binary_files_skipped=binary,
+                        non_text_files=0, non_text_file_paths=[], too_large_files=0,
+                        incomplete=stopped is not None, stopped_reason=stopped,
+                        pruned_directories=[], pruned_count=0,
+                        coverage="rg ignore rules and binary detection; maximum 8 MiB/file, 200 matching lines/file, "
+                                 "5000 matching lines total. UTF-8 search; non-UTF-8/GBK files are not transcoded "
+                                 "(ASCII can match). Skipped/ignored/oversized file counts are not enumerated by rg.")
+
+
 def walk_files(start, workspace_root, skip, root_only, pruned, cancelled):
     """Breadth-first, sorted walk: shallow source is reached before deep generated trees.
 
@@ -426,12 +509,32 @@ def _line_indent(line: str) -> int | None:
 _HEADER_PREFIXES = ("#", "//", "/*", "*", "*/", "@", "#[", "///", "--")
 
 
+def _read_page_chars(context):
+    window = context.get("context_window_chars")
+    return max(MAX_READ_CHARS, min(48000, window // 16)) if type(window) is int else MAX_READ_CHARS
+
+
+def _decode_stream_sample(raw, *, final=False):
+    candidates = ("utf-16",) if raw.startswith((b"\xff\xfe", b"\xfe\xff")) else (
+        ("utf-8-sig",) if raw.startswith(b"\xef\xbb\xbf") else ("utf-8", "gb18030"))
+    for codec in candidates:
+        decoder = codecs.getincrementaldecoder(codec)()
+        try:
+            decoder.decode(raw, final=final)
+            pending = len(decoder.getstate()[0])
+            return decode_text(raw[:-pending] if pending else raw)
+        except UnicodeError:
+            continue
+    raise UnicodeError("not a supported text window")
+
+
 def _read_indentation_block(
     lines: list[str],
     args: dict,
     path: Path,
     raw_path: str,
     total_lines: int,
+    max_chars=None,
 ) -> tuple[int, list[str]]:
     """Codex read_file.rs-aligned indentation block reader."""
     anchor_1based = args.get("anchor_line") or args.get("start_line") or 1
@@ -530,13 +633,31 @@ def _read_indentation_block(
         end_idx -= 1
 
     selected = lines[start_idx:min(end_idx, start_idx + max_lines)]
+    max_chars = MAX_READ_CHARS if max_chars is None else max_chars
     chunk, size = [], 0
     for line in selected:
-        if chunk and size + len(line) > MAX_READ_CHARS:
+        if not chunk and len(line) > max_chars:
+            chunk.append(line[:max_chars])
+            break
+        if size + len(line) > max_chars:
             break
         chunk.append(line)
         size += len(line)
     return start_idx, chunk
+
+
+def _local_operation_unconfirmed(exc):
+    details = None
+    if hasattr(exc, "applied_paths"):
+        details = sanitized({"applied_paths": exc.applied_paths[:20], "failed_path": exc.failed_path,
+                             "note": "Files listed were written; re-read them before retrying."})
+    return AgentError("agent_local_operation_unconfirmed", details=details)
+
+
+def _shell_timeout_details(args, result):
+    """Use the same bounded evidence for the first timeout and a durable replay."""
+    return {"output": result["output"][-4000:], "stop_reason": result["stop_reason"],
+            "timeout_seconds": args.get("timeout_seconds") or local_processes.DEFAULT_READ_SHELL_TIMEOUT}
 
 
 class LocalTools:
@@ -556,6 +677,7 @@ class LocalTools:
         self._renderer = None
         self._web_search = None
         self._reads = {}
+        self._workspace_snapshots = {}
         if self.home is not None:
             try:
                 from .local_browser import sweep_orphan_profiles
@@ -626,6 +748,21 @@ class LocalTools:
                     if not entry[1]:
                         self._path_locks.pop(key, None)
 
+    def _inventory_signature(self, task_id):
+        row = self.store.read().get("tasks", {}).get(task_id, {})
+        return tuple((r.get("operation_id"), r.get("confirmed_at")) for r in row.get("receipts", [])
+                     if r.get("status") == "confirmed" and r.get("tool") in _INVENTORY_FILE_TOOLS)
+
+    def _before_command_snapshot(self, root, task_id):
+        from . import workspace_artifacts
+        with self.lock:
+            now = time.monotonic()
+            self._workspace_snapshots = {key: item for key, item in self._workspace_snapshots.items() if now - item[1] <= 2}
+            previous = self._workspace_snapshots.get(task_id)
+            if previous and previous[0] == root and previous[2] == self._inventory_signature(task_id):
+                return previous[3]
+            return workspace_artifacts.snapshot(root)
+
     def _command_artifacts(self, result, task_id):
         from . import workspace_artifacts
         if result.get("running"):
@@ -634,19 +771,32 @@ class LocalTools:
         with self.lock:
             if "workspace_files" not in item and item.get("workspace_snapshot"):
                 root, before = item.pop("workspace_snapshot")
-                item["workspace_files"] = workspace_artifacts.command_files(root, before)
-            return {**result, "workspace_files": item.get("workspace_files", [])}
+                signature = self._inventory_signature(task_id)
+                changes = workspace_artifacts.command_files(root, before)
+                item["workspace_files"] = changes["files"]
+                item["workspace_files_complete"] = changes["inventory_complete"]
+                item["workspace_files_truncated"] = changes["truncated"]
+                item["workspace_files_total"] = changes["total_changes"]
+                self._workspace_snapshots[task_id] = (root, time.monotonic(), signature, changes["after"])
+            return {**result, "workspace_files": item.get("workspace_files", []),
+                    **{key: item[key] for key in ("workspace_files_complete", "workspace_files_truncated", "workspace_files_total") if key in item}}
 
     def _publish_command_artifacts(self, result, context, operation_id):
         """Persist completed command outputs even when the model never polls the process."""
-        if result.get("running") or not result.get("workspace_files"):
+        if result.get("running") or (not result.get("workspace_files") and "workspace_files_complete" not in result):
             return not result.get("running")
         record = self.ledger_factory().get(operation_id)
         if not record or record.get("status") != "confirmed" or record["binding"].get("task_id") != context["task_id"]:
             return
         def save(data):
             row = data.get("tasks", {}).get(context["task_id"])
-            if not row or row.get("local_execution") != context["local_execution"]:
+            bound = dict((row or {}).get("local_execution") or {})
+            expected = dict(context["local_execution"])
+            # Web restrictions do not change a completed command's file binding.
+            for key in ("web_search_mode", "web_allowed_domains"):
+                bound.pop(key, None)
+                expected.pop(key, None)
+            if not row or bound != expected:
                 return False
             receipts = row.setdefault("workspace_file_receipts", {})
             if operation_id in receipts:
@@ -654,7 +804,8 @@ class LocalTools:
             receipts[operation_id] = {"operation_id": operation_id, "tool": "ryn_shell_execute", "status": "confirmed",
                                       "goal_revision": context.get("goal_revision") or row.get("goal", {}).get("revision"),
                                       "confirmed_at": datetime.now(timezone.utc).isoformat(),
-                                      "result": {"workspace_files": result["workspace_files"]}}
+                                      "result": {key: value for key, value in result.items()
+                                                 if key.startswith("workspace_files") or key == "process_id"}}
             row["file_artifact_revision"] = row.get("file_artifact_revision", 0) + 1
             row["revision"] += 1
             return True
@@ -716,7 +867,7 @@ class LocalTools:
             return {
                 "settings": raw_data["settings"],
                 "projects": raw_data.get("projects", {}),
-                "tasks": {task_id: {"permission_mode": row.get("permission_mode")}} if isinstance(row, dict) else {},
+                "tasks": {task_id: {"permission_mode": row.get("permission_mode"), "local_execution": row.get("local_execution") or {}}} if isinstance(row, dict) else {},
             }
 
         data = state if state is not None else self.store.inspect(_project)
@@ -734,9 +885,6 @@ class LocalTools:
                 raise AgentToolRejected(str(exc)) from None
         else:
             current_root = current.get("workspace_root") or self.store.default_workspace()
-        if bound.get("workspace_root", "") != current_root:
-            raise AgentToolRejected("agent_workspace_changed_new_task_required")
-        settings_mode = current["permission_mode"] if current.get("permission_mode") in _PERMISSION_ORDER else "workspace"
         row_info = (data.get("tasks") or {}).get(task_id) if task_id else None
         if isinstance(row_info, dict):
             row_mode = row_info["permission_mode"] if row_info.get("permission_mode") in _PERMISSION_ORDER else "workspace"
@@ -744,14 +892,19 @@ class LocalTools:
             row_mode = context["permission_mode"]
         else:
             row_mode = "workspace"
-        modes = {settings_mode, row_mode}
-        if context.get("permission_mode") in _PERMISSION_ORDER:
-            modes.add(context["permission_mode"])
-        effective_mode = next((m for m in _PERMISSION_ORDER if m in modes), "workspace")
+        workspace_root = bound.get("workspace_root", "")
+        if not workspace_root and row_mode == "automatic" and not bound.get("project_id"):
+            workspace_root = current_root
+        if workspace_root != current_root and (bound.get("project_id") or bound.get("workspace_source") != "task"):
+            raise AgentToolRejected("agent_workspace_changed_new_task_required")
+        row_desktop = (row_info.get("local_execution") or {}).get("desktop_access") if isinstance(row_info, dict) else bound.get("desktop_access")
+        from .execution_policy import desktop_access_enabled
         return {
-            "workspace_root": bound.get("workspace_root", ""),
-            "desktop_access": bool(bound.get("desktop_access") and current.get("desktop_access")),
-            "permission_mode": effective_mode,
+            "workspace_root": workspace_root,
+            "desktop_access": desktop_access_enabled(
+                {"permission_mode": row_mode, "local_execution": {"desktop_access": row_desktop}}, current),
+            "permission_mode": row_mode,
+            "allow_outside_workspace": row_mode == current.get("permission_mode") == "automatic",
         }
 
     def _shell_cwd(self, value, context, policy=None):
@@ -764,7 +917,7 @@ class LocalTools:
             raise AgentToolRejected("agent_local_path_invalid")
         expanded = os.path.expanduser(value) if (value == "~" or value.startswith(("~/", "~\\"))) else value
         requested = Path(expanded)
-        if policy.get("permission_mode") == "automatic" and requested.is_absolute():
+        if policy.get("allow_outside_workspace", False) and requested.is_absolute():
             if os.name == "nt" and _has_invalid_windows_parts(requested):
                 raise AgentToolRejected("agent_local_path_invalid")
             cwd = requested.resolve()
@@ -788,7 +941,7 @@ class LocalTools:
         expanded = os.path.expanduser(value) if (value == "~" or value.startswith(("~/", "~\\"))) else value
         requested = Path(expanded)
         is_abs = requested.is_absolute()
-        outside_ok = policy.get("permission_mode") == "automatic" and is_abs
+        outside_ok = policy.get("allow_outside_workspace", False) and is_abs
         # Windows ADS/device names bypass ordinary file semantics; check all segments before & after resolve.
         if os.name == "nt" and _has_invalid_windows_parts(requested):
             raise AgentToolRejected("agent_local_path_invalid")
@@ -812,8 +965,73 @@ class LocalTools:
             raise AgentToolRejected("agent_local_file_too_large")
         return raw
 
-    def read_window(self, path, *, max_bytes: int = READ_MAX_FILE):
-        return self.raw(path, max_bytes=max_bytes)
+    def read_window(self, path, *, max_bytes: int = READ_MAX_FILE, offset=0, limit=None):
+        if limit is None:
+            return self.raw(path, max_bytes=max_bytes)
+        if not path.is_file() or path.stat().st_size > max_bytes:
+            raise AgentToolRejected("agent_local_file_missing_or_too_large")
+        with path.open("rb") as stream:
+            stream.seek(offset)
+            return stream.read(limit)
+
+    def _large_read_page(self, path, args, context, cancelled):
+        if args.get("start_line") is not None or args.get("mode") == "indentation":
+            raise AgentToolRejected("agent_local_large_file_requires_offset",
+                correction="Files above 8 MiB use byte-offset pages. Read with offset=0, then continue with next_offset.")
+        size, offset = path.stat().st_size, args.get("offset", 0)
+        if offset > size:
+            raise AgentToolRejected("agent_local_offset_invalid",
+                correction=f"Use a byte offset between 0 and {size}.", details={"field_path": "offset", "bytes": size})
+        head = self.read_window(path, limit=65536)
+        try:
+            _, encoding = _decode_stream_sample(head)
+        except UnicodeError:
+            raise AgentToolRejected("agent_local_file_not_utf8") from None
+        hasher = hashlib.sha256()
+        hashed = 0
+        with path.open("rb") as stream:
+            while block := stream.read(1024 * 1024):
+                if cancelled():
+                    raise AgentToolRejected("agent_cancelled")
+                hashed += len(block)
+                if hashed > READ_MAX_FILE:
+                    raise AgentToolRejected("agent_local_file_too_large")
+                hasher.update(block)
+        maximum = _read_page_chars(context)
+        raw = self.read_window(path, offset=offset, limit=maximum * 4 + 4)
+        codec = "utf-8" if encoding == "utf-8-sig" else encoding
+        bom = {"utf-8-sig": b"\xef\xbb\xbf", "utf-16-le": b"\xff\xfe", "utf-16-be": b"\xfe\xff"}.get(encoding, b"")
+        prefix = len(bom) if offset == 0 else 0
+        decoder = codecs.getincrementaldecoder(codec)()
+        try:
+            try:
+                text = decoder.decode(raw[prefix:], final=offset + len(raw) >= size)
+            except UnicodeDecodeError:
+                if encoding != "utf-8" or not head.isascii():
+                    raise
+                # An ASCII-only header cannot distinguish UTF-8 from GB18030.
+                encoding = codec = "gb18030"
+                decoder = codecs.getincrementaldecoder(codec)()
+                text = decoder.decode(raw, final=offset + len(raw) >= size)
+            pending = len(decoder.getstate()[0])
+            consumed = raw[prefix:len(raw) - pending if pending else len(raw)]
+            # Reuse the established strict binary/control-character checks.
+            decode_text(bom + consumed)
+        except UnicodeError:
+            raise AgentToolRejected("agent_local_file_not_utf8") from None
+        text = text[:maximum]
+        next_offset = offset + prefix + len(text.encode(codec))
+        if next_offset < size:
+            boundary = text.rfind("\n")
+            if boundary >= 0:
+                text = text[:boundary + 1]
+                next_offset = offset + prefix + len(text.encode(codec))
+        file_sha = hasher.hexdigest()
+        self._record_observed_files(context, {path: file_sha})
+        return {"path": str(path), "text": text, "sha256": file_sha, "bytes": size, "encoding": encoding,
+                "offset": offset, "offset_unit": "bytes", "start_line": None, "end_line": None,
+                "total_lines": None, "next_start_line": None, "next_offset": next_offset if next_offset < size else None,
+                **({"line_truncated": True} if next_offset < size and text and not text.endswith("\n") else {})}
 
     def text(self, path, *, with_encoding: bool = True):
         raw = self.raw(path)
@@ -862,7 +1080,8 @@ class LocalTools:
         directory = self._baseline_dir(task_id)
         from ..file_transactions import file_transaction
         if directory is not None:
-            with file_transaction(directory.parent / ".review.lock"):
+            review = self.file_review(task_id, str(directory.parent))
+            with file_transaction(review.lock), review._usage_transaction():
                 if directory is not None and directory.is_dir():
                     for item in directory.iterdir():
                         try:
@@ -873,6 +1092,8 @@ class LocalTools:
                         directory.rmdir()
                     except OSError:
                         pass
+                if not directory.exists():
+                    review._adjust_usage(-review._usage["tasks"].get(directory.name, 0))
         if getattr(self, "_browser", None) is not None:
             self._browser.close_task(task_id)
         if getattr(self, "native_computer", None) is not None:
@@ -997,6 +1218,10 @@ class LocalTools:
             return self._desktop
 
     def _build_authority_checker(self, context, *, stop_on_paused: bool, cache_ttl: float):
+        expected_root = ((context.get("local_execution") or {}).get("workspace_root")
+                         or context.get("workspace_root")
+                         or self.store.inspect(lambda data: data["settings"].get("workspace_root"))
+                         or self.store.default_workspace())
         stopped_statuses = (
             {"paused", "cancelled", "failed", "interrupted"}
             if stop_on_paused
@@ -1017,7 +1242,7 @@ class LocalTools:
                                 if r.get("operation_id") == context.get("operation_id")), {})
                 operation = {**{key: receipt[key] for key in (
                     "operation_id", "effect", "arguments", "arguments_sha256",
-                    "authorization", "operation_classification",
+                    "authorization", "operation_classification", "extension_binding",
                     "goal_revision", "scope_revision", "context_epoch", "control_revision"
                 ) if key in receipt}, "name": receipt.get("tool")}
             control = {key: row[key] for key in ("status", "permission_mode", "allowed_write_tools", "approved", "local_execution") if key in row}
@@ -1031,7 +1256,7 @@ class LocalTools:
             if cache_ttl > 0.0 and last_checked_at is not None and (now_mono - last_checked_at) < cache_ttl:
                 return last_result
             try:
-                from .execution_policy import decide, shell_read, verified_read_classification
+                from .execution_policy import automatic_flight_allowed, owner_tool_key, shell_read, verified_read_classification
                 # Process watchers poll exit every 50 ms, while authority checks run
                 # once per second (cached); browser checks run on demand. Project only
                 # authority rather than cloning every task transcript on each check.
@@ -1056,23 +1281,29 @@ class LocalTools:
                 and operation.get("authorization") == "read"
                 and shell_read(operation.get("arguments") or {})
             )
-            if operation.get("authorization") == "automatic":
-                if decide(operation, {"effect": operation.get("effect"),
-                    "computer_access": operation.get("computer_access"),
-                    "workstation_permission_tool": operation.get("workstation_permission_tool")}, row, current).action != "execute":
+            if operation.get("effect") == "write" and not authorized_read:
+                owner_key = owner_tool_key(operation, {})
+                if (owner_key in current.get("denied_tools", [])
+                        or (operation.get("authorization") == "owner_rule"
+                            and owner_key not in row.get("allowed_write_tools", []))):
                     consecutive_errors = 0
                     last_checked_at = now_mono
                     last_result = False
                     return False
+            if operation.get("authorization") == "automatic" and not automatic_flight_allowed(operation, row, current):
+                consecutive_errors = 0
+                last_checked_at = now_mono
+                last_result = False
+                return False
             try:
-                workspace_ok = self.policy(context, state)["workspace_root"] == context["local_execution"].get("workspace_root", "")
+                workspace_ok = self.policy(context, state)["workspace_root"] == expected_root
             except AgentToolRejected:
                 workspace_ok = False
             ok = bool(
                 row
                 and current.get("enabled")
                 and row["status"] not in stopped_statuses
-                and (current.get("permission_mode") != "read_only" or authorized_read)
+                and (row.get("permission_mode") != "read_only" or authorized_read)
                 and workspace_ok
             )
             consecutive_errors = 0
@@ -1196,7 +1427,7 @@ class LocalTools:
     def _patch_plan(self, args, context, policy):
         """Resolve and apply every hunk in memory; raises before any file is written."""
         from . import local_patch
-        outside_ok = policy.get("permission_mode") == "automatic"
+        outside_ok = policy.get("allow_outside_workspace", False)
         plan, seen = [], set()
         for operation in local_patch.parse(args["patch"]):
             from .file_review import safe_path
@@ -1323,7 +1554,7 @@ class LocalTools:
             plan = self._patch_plan(args, context, policy)
             # The patch text itself can be large: the preview carries its digest and
             # bounded per-file diffs, and execution re-derives and compares it.
-            budget = max(400, 10000 // len(plan))
+            budget = max(400, 20000 // len(plan))
             preview["operation"] = {"patch_sha256": sha(args["patch"].encode()), "patch_bytes": len(args["patch"].encode())}
             preview["files"] = [{"path": str(item["path"]), "action": item["action"],
                                  **({"destination": str(item["destination"])} if item["destination"] else {}),
@@ -1337,6 +1568,11 @@ class LocalTools:
             path = self.path(args["path"], context)
             preview["path"] = str(path)
             if name in {"ryn_file_write", "ryn_file_edit"}:
+                field = "content" if name == "ryn_file_write" else "new_text"
+                if len(args[field]) > 4000:
+                    content_raw = args[field].encode("utf-8")
+                    preview["operation"].update({field: args[field][:4000], "content_truncated": True,
+                                                 "content_sha256": sha(content_raw), "content_bytes": len(content_raw)})
                 if not path.parent.is_dir() or path.is_dir():
                     raise AgentToolRejected(
                         "agent_local_parent_missing_or_directory",
@@ -1449,7 +1685,7 @@ class LocalTools:
             {"effect": SPECS[name][1]},
             operation_id=operation_id,
             task_id=context["task_id"],
-            workspace_root=policy["workspace_root"],
+            workspace_root=context["local_execution"].get("workspace_root", ""),
             goal_revision=context.get("goal_revision"),
             scope_revision=context.get("scope_revision"),
             context_epoch=context.get("context_epoch"),
@@ -1466,7 +1702,7 @@ class LocalTools:
             and verified_read_classification(
                 {"operation_classification": host_classification},
                 task_id=context["task_id"],
-                workspace_root=policy["workspace_root"],
+                workspace_root=context["local_execution"].get("workspace_root", ""),
                 operation_id=operation_id,
                 tool=name,
                 arguments=args,
@@ -1503,13 +1739,15 @@ class LocalTools:
                             arguments=args,
                         )
                     ):
-                        raise AgentError(prior.get("error", "agent_read_interrupted"))
+                        raise AgentError(prior.get("error", "agent_read_interrupted"),
+                            details=_shell_timeout_details(args, prior["result"])
+                            if prior.get("error") == "agent_shell_timeout" else None)
                     unknown_err = AgentError("agent_write_outcome_unknown")
                     if isinstance(prior.get("error_result"), dict):
                         unknown_err.diagnostics = copy.deepcopy(prior["error_result"])
                     raise unknown_err
                 preview = self.preview(name, args, context)
-                if bound_preview(preview) != bound_preview(expected_preview):
+                if not (is_read_shell and expected_preview is None) and bound_preview(preview) != bound_preview(expected_preview):
                     raise AgentToolRejected("agent_approval_preview_changed")
                 prepared_shell = None
                 if name == "ryn_shell_execute":
@@ -1520,7 +1758,7 @@ class LocalTools:
                     command = prepare_shell_command(args)
                     cwd = self._shell_cwd(args.get("cwd", "."), context, policy)
                     root = self.path(".", context, policy)
-                    before = None if is_read_shell else workspace_artifacts.snapshot(root)
+                    before = None if is_read_shell else self._before_command_snapshot(root, context["task_id"])
                     prepared_shell = (command, cwd, root, before)
                 is_browser_write = name.startswith("ryn_browser_")
                 if is_browser_write:
@@ -1665,7 +1903,7 @@ class LocalTools:
                         ledger.update(operation_id, "not_executed", error=str(exc), operation_classification=host_classification)
                     raise
                 failure("local_execute", exc)
-                raise AgentError("agent_local_operation_unconfirmed") from exc
+                raise _local_operation_unconfirmed(exc) from exc
             except Exception as exc:
                 if name == "ryn_computer_action":
                     diag = (
@@ -1717,7 +1955,7 @@ class LocalTools:
                         and not recovered.get("cleanup_error")
                     ):
                         raise AgentError(err_code) from exc
-                raise AgentError("agent_local_operation_unconfirmed") from exc
+                raise _local_operation_unconfirmed(exc) from exc
             if is_read_shell:
                 if result.get("stop_reason") == "timeout":
                     recovered = self.recover_operation(
@@ -1741,7 +1979,7 @@ class LocalTools:
                             result=result,
                             operation_classification=host_classification,
                         )
-                        raise AgentError("agent_shell_timeout")
+                        raise AgentError("agent_shell_timeout", details=_shell_timeout_details(args, result))
                     raise AgentError("agent_local_operation_unconfirmed")
                 if cancelled() or result.get("stop_reason") in {"permission_or_task_stopped", "owner_or_agent_stopped"}:
                     err_code = getattr(cancelled, "reason", None) or (
@@ -1778,6 +2016,8 @@ class LocalTools:
                     confirmed_at=datetime.now(timezone.utc).isoformat(),
                     operation_classification=host_classification,
                 )
+                if name in _INVENTORY_FILE_TOOLS:
+                    self._workspace_snapshots.pop(context["task_id"], None)
             if name == "ryn_shell_execute":
                 # File delivery cannot change the confirmed execution outcome into an uncertain write.
                 try:
@@ -1812,7 +2052,7 @@ class LocalTools:
                 if len(raw) > 8 * 1024 * 1024 or cancelled():
                     raise AgentToolRejected("agent_cancelled" if cancelled() else "agent_table_output_limit")
                 policy = self.policy(context)
-                outside_ok = policy.get("permission_mode") == "automatic"
+                outside_ok = policy.get("allow_outside_workspace", False)
                 self.file_review(task_id, self.path(".", context, policy)).apply(
                     [(path, None, raw, None)], operation_id=operation_id, outside_ok=outside_ok
                 )
@@ -2013,7 +2253,16 @@ class LocalTools:
                 else f" Selected route does not support image input ({cap.get('image_capability_reason')})."
                 if cap else ""
             )
-            return {"os": platform.system(), **self.policy(context), "shells": [s for s in ("powershell", "pwsh", "cmd", "sh") if shutil.which(s)],
+            shells = local_processes.available_shells()
+            powershell = local_processes.detect_shell("powershell") if "powershell" in shells else None
+            posix_shell = local_processes.detect_shell("sh") if "sh" in shells else None
+            powershell_version = powershell["version"] if powershell else None
+            return {"os": platform.system(), **self.policy(context), "shells": shells,
+                    "powershell_version": powershell_version,
+                    "posix_shell": posix_shell["path"] if posix_shell else None,
+                    "home": str(Path.home()), "temp_dir": tempfile.gettempdir(), "os_version": platform.version(),
+                    **({"powershell_notes": "Windows PowerShell 5.1: no && / || / ?? / ternary; use ; and if"}
+                       if powershell_version and powershell_version.startswith("5.") else {}),
                     "rg_available": bool(resolve_rg_executable()),
                     "browser_installed": bool(find_browser()),
                     **environment_computer_fields(self.store),
@@ -2070,12 +2319,20 @@ class LocalTools:
             path = self.path(args["path"], context)
             offset = args.get("offset", 0)
             if name == "ryn_file_read":
-                raw, text, encoding = self.text(path)
+                if path.is_file() and path.stat().st_size > STREAM_READ_THRESHOLD:
+                    return self._repeat_note(task_id, self._large_read_page(path, args, context, cancelled))
+                raw = self.read_window(path)
+                try:
+                    text, encoding = decode_text(raw)
+                except UnicodeError:
+                    raise AgentToolRejected("agent_local_file_not_utf8") from None
+                maximum = _read_page_chars(context)
                 file_sha = sha(raw)
                 total_lines = text.count("\n") + (0 if not text or text.endswith("\n") else 1)
                 if args.get("mode") == "indentation":
                     lines = text.splitlines(keepends=True)
-                    first, chunk = _read_indentation_block(lines, args, path, args["path"], total_lines)
+                    first, chunk = _read_indentation_block(lines, args, path, args["path"], total_lines, maximum)
+                    line_truncated = bool(chunk and len(lines[first]) > maximum)
                     end_line = first + len(chunk)
                     self._record_observed_files(context, {path: file_sha})
                     return self._repeat_note(task_id, {
@@ -2084,9 +2341,11 @@ class LocalTools:
                         "mode": "indentation", "anchor_line": args.get("anchor_line") or args.get("start_line") or 1,
                         "start_line": (first + 1) if lines else 1, "end_line": max(first + 1, end_line) if lines else 1,
                         "total_lines": total_lines,
-                        "next_start_line": end_line + 1 if end_line < len(lines) else None, "next_offset": None})
+                        "next_start_line": end_line + 1 if not line_truncated and end_line < len(lines) else None,
+                        "next_offset": sum(map(len, lines[:first])) + len(chunk[0]) if line_truncated else None,
+                        **({"line_truncated": True} if line_truncated else {})})
                 if args.get("start_line") is not None:
-                    # Line-addressed paging: lines are never split and the page reports its line range.
+                    # Prefer complete lines; an oversized first line has an offset continuation.
                     lines = text.splitlines(keepends=True)
                     first = args["start_line"] - 1
                     if first >= max(len(lines), 1):
@@ -2097,24 +2356,30 @@ class LocalTools:
                         )
                     chunk, size = [], 0
                     for line in lines[first:first + args.get("max_lines", 400)]:
-                        if chunk and size + len(line) > MAX_READ_CHARS:
+                        if not chunk and len(line) > maximum:
+                            chunk.append(line[:maximum])
+                            break
+                        if size + len(line) > maximum:
                             break
                         chunk.append(line)
                         size += len(line)
                     end_line = first + len(chunk)
+                    line_truncated = bool(chunk and len(lines[first]) > maximum)
                     self._record_observed_files(context, {path: file_sha})
                     return self._repeat_note(task_id, {
                         "path": str(path), "text": "".join(chunk), "sha256": file_sha, "bytes": len(raw),
                         "encoding": encoding,
                         "start_line": first + 1, "end_line": end_line, "total_lines": total_lines,
-                        "next_start_line": end_line + 1 if end_line < len(lines) else None, "next_offset": None})
+                        "next_start_line": end_line + 1 if not line_truncated and end_line < len(lines) else None,
+                        "next_offset": sum(map(len, lines[:first])) + len(chunk[0]) if line_truncated else None,
+                        **({"line_truncated": True} if line_truncated else {})})
                 if offset > len(text):
                     raise AgentToolRejected(
                         "agent_local_offset_invalid",
                         correction=f"File '{args['path']}' has {len(text)} characters; offset={offset} is out of range.",
                         details={"path": str(path), "total_chars": len(text), "field_path": "offset"},
                     )
-                end = min(len(text), offset + MAX_READ_CHARS)
+                end = min(len(text), offset + maximum)
                 if end < len(text):
                     # End the page on a line boundary when the page contains one.
                     boundary = text.rfind("\n", offset, end)
@@ -2127,8 +2392,9 @@ class LocalTools:
                     "path": str(path), "text": text[offset:end], "sha256": file_sha, "bytes": len(raw),
                     "encoding": encoding,
                     "start_line": start_line, "end_line": end_line, "total_lines": total_lines,
-                    "next_start_line": end_line + 1 if end < len(text) else None,
-                    "next_offset": end if end < len(text) else None})
+                    "next_start_line": end_line + 1 if end < len(text) and text[end - 1:end] == "\n" else None,
+                    "next_offset": end if end < len(text) else None,
+                    **({"line_truncated": True} if end < len(text) and text[end - 1:end] != "\n" else {})})
             if name == "ryn_file_list":
                 if not path.is_dir():
                     raise AgentToolRejected(
@@ -2152,6 +2418,11 @@ class LocalTools:
                         correction="The search query is not a valid regular expression. Fix the regex syntax or set regex=false for literal substring search.",
                         details={"query": args["query"][:160], "field_path": "query", "reason": str(exc)[:160]},
                     ) from None
+            rg = resolve_rg_executable()
+            if rg:
+                result = _rg_search(rg, path, args, cancelled, lambda: self.policy(context))
+                if result is not None:
+                    return result
             query_literal = args["query"] if case_sensitive else args["query"].casefold()
             pattern_norm = file_pattern.replace("\\", "/") if isinstance(file_pattern, str) and file_pattern else None
             pattern_has_sep = bool(pattern_norm and "/" in pattern_norm)
@@ -2240,21 +2511,17 @@ class LocalTools:
                         if len(matches) >= 1000:
                             incomplete, stopped = True, "match_limit"
                             break
-            # A page of 15 matches in traversal order cannot rank a broad term; the per-file counts can.
-            ranked = sorted(per_file.items(), key=lambda item: (-item[1][0], item[0]))
-            return {"matches": matches[offset:offset + 15], "next_offset": offset + 15 if offset + 15 < len(matches) else None,
-                    "total_matches": len(matches), "files_matched": [{"path": p, "matches": c, "first_line": f} for p, (c, f) in ranked[:25]],
-                    "files_matched_total": len(per_file),
-                    "scanned_files": scanned, "skipped_files": skipped, "binary_files_skipped": binary,
-                    "non_text_files": non_text, "non_text_file_paths": non_text_paths,
-                    "too_large_files": too_large,
-                    "incomplete": incomplete, "stopped_reason": stopped,
-                    "pruned_directories": pruned[:20], "pruned_count": len(pruned)}
+            # A page in traversal order cannot rank a broad term; the per-file counts can.
+            return _search_page(matches, per_file, offset, engine="python",
+                                scanned_files=scanned, skipped_files=skipped, binary_files_skipped=binary,
+                                non_text_files=non_text, non_text_file_paths=non_text_paths,
+                                too_large_files=too_large, incomplete=incomplete, stopped_reason=stopped,
+                                pruned_directories=pruned[:20], pruned_count=len(pruned))
         if name == "ryn_apply_patch":
             from . import local_patch
             from .file_review import safe_path
             policy = self.policy(context)
-            outside_ok = policy.get("permission_mode") == "automatic"
+            outside_ok = policy.get("allow_outside_workspace", False)
             parsed_ops = local_patch.parse(args["patch"])
             lock_targets = []
             for op in parsed_ops:
@@ -2309,7 +2576,7 @@ class LocalTools:
             from .file_review import safe_path
             policy = self.policy(context)
             root = policy["workspace_root"]
-            outside_ok = policy.get("permission_mode") == "automatic"
+            outside_ok = policy.get("allow_outside_workspace", False)
             safe_path(root, args["path"], allow_directory=name == "ryn_file_manage", outside_ok=outside_ok)
             if args.get("destination"):
                 safe_path(root, args["destination"], outside_ok=outside_ok)
@@ -2432,7 +2699,7 @@ class LocalTools:
                 policy = self.policy(context)
                 cwd = self._shell_cwd(args.get("cwd", "."), context, policy)
                 root = self.path(".", context, policy)
-                before = None if is_read else workspace_artifacts.snapshot(root)
+                before = None if is_read else self._before_command_snapshot(root, task_id)
             else:
                 command, cwd, root, before = prepared_shell
             timeout = (
@@ -2458,6 +2725,7 @@ class LocalTools:
                 operation_id=operation_id or context.get("operation_id"),
                 tty=args.get("tty", False), rows=args.get("rows", 24), cols=args.get("cols", 80),
                 stdin_mode=stdin_mode,
+                permission_mode=self.policy(context)["permission_mode"],
             )
             item = self.processes.get(ident, task_id)
             if before is not None:
@@ -2487,13 +2755,18 @@ class LocalTools:
                 result["partial_command_error"] = True
             return self._command_artifacts(result, task_id)
         if name == "ryn_process_read":
+            budget = context.get("result_budget_bytes", 20000)
+            output_bytes = budget - min(2000, budget // 2)
+            max_chars = min(args.get("max_chars", 12000), max(1000, output_bytes))
             return self._command_artifacts(self.processes.read(args["process_id"], task_id, args.get("offset", 0),
-                wait_seconds=args.get("wait_seconds", 10), cancelled=cancelled, coalesce_empty_poll=True), task_id)
+                wait_seconds=args.get("wait_seconds", 10), cancelled=cancelled, coalesce_empty_poll=True,
+                max_chars=max_chars, _max_output_bytes=output_bytes, fill_page=True), task_id)
         if name == "ryn_process_stop":
             return self._command_artifacts(self.processes.stop(args["process_id"], task_id), task_id)
         if name == "ryn_process_write":
             return self.processes.write(args["process_id"], task_id, args["text"], args.get("eof", False),
-                                        control=args.get("control"), rows=args.get("rows"), cols=args.get("cols"))
+                                        control=args.get("control"), rows=args.get("rows"), cols=args.get("cols"),
+                                        wait_seconds=args.get("wait_seconds"))
         if name.startswith("ryn_browser_"):
             allowed = self.allowed(context)
             def browser_allowed():
@@ -2736,4 +3009,16 @@ class LocalTools:
         if isinstance(row.get("error_result"), dict):
             unknown_out["error"] = str(row.get("error") or row["error_result"].get("error") or "agent_write_outcome_unknown")
             unknown_out["diagnostic"] = copy.deepcopy(row["error_result"])
+        tool = operation.get("tool")
+        review_covered = tool in {"ryn_apply_patch", "ryn_file_write", "ryn_file_edit"} or (
+            tool == "ryn_file_manage" and "before_sha256" in (row.get("preview") or {}))
+        if row["status"] == "dispatched" and review_covered:
+            evidence = self.file_review(context["task_id"], self.policy(context)["workspace_root"]).record_outcome(operation_id)
+            if evidence["all_applied"] or evidence["none_applied"]:
+                result = ({"ok": True, "recovered_from_review_log": True} if evidence["all_applied"]
+                          else {"not_executed": True, "no_mutation": True})
+                result["files"] = evidence["files"]
+                return {"outcome": "executed" if evidence["all_applied"] else "not_executed", "receipt": {
+                    "operation_id": operation_id, "tool": tool, "arguments_sha256": operation["arguments_sha256"], "result": result}}
+            unknown_out.setdefault("diagnostic", {})["files"] = evidence["files"]
         return unknown_out

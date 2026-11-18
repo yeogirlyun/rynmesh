@@ -5,12 +5,14 @@ import copy
 import hashlib
 import os
 import threading
+import time
 
 from ..llm_package import model_settings, peer_binding
 from ..llm_package.model_usage import ModelUsageStore
 from ..llm_package.reasoning import metadata as reasoning_metadata
 from ..llm_package.tool_capabilities import client_tools_contract
 from .image_capabilities import catalog_image_fields
+from . import diagnostic_log
 
 _SPACE_CATALOG_ERROR_REASONS = {
     "space_catalog_unreachable": "无法连接设备（space_catalog_unreachable）",
@@ -31,6 +33,29 @@ def _format_catalog_error(code: str) -> str:
     return _SPACE_CATALOG_ERROR_REASONS.get(code, code)
 
 
+def _cli_output(row, upstream):
+    value = upstream.get("max_output_tokens")
+    basis = "provider_cli_model_metadata"
+    known = True
+    if type(value) is not int:
+        vendor = model_settings.known_vendor_output_metadata(upstream.get("id", ""))
+        value = vendor["max_output_tokens"] if vendor else None
+        basis = vendor["max_output_basis"] if vendor else "unknown_fallback"
+        known = bool(vendor and vendor["max_output_tokens_known"])
+    if type(value) is int and 0 < value <= row["context_window"]:
+        row.update(max_output_tokens=value, max_output_tokens_known=known, max_output_basis=basis)
+    else:
+        row.update(max_output_tokens=4096, max_output_tokens_known=False, max_output_basis="unknown_fallback")
+
+
+def _model_facts(row, upstream):
+    from .model_profiles import CAPACITY_FACTS, FACTS, _valid_fact
+    # Capacity values retain their existing known/basis handling above.
+    for name in FACTS.keys() - CAPACITY_FACTS:
+        if name in upstream and _valid_fact(name, upstream[name]):
+            row[name] = upstream[name]
+
+
 class ModelCatalog:
     def __init__(self, services, store):
         self.services, self.store = services, store
@@ -39,6 +64,46 @@ class ModelCatalog:
         # are rebuilt from the current provider and exact model binding.
         self._cli_metadata = {}
         self._cli_metadata_lock = threading.Lock()
+        self._learned_output_limits = {}
+        self._learned_context_limits = {}
+        self._catalog_cache = {}
+        self._catalog_lock = threading.RLock()
+        self._diagnostics = {}
+        self._usage_store = getattr(self.services.get("source_store"), "usage_store", None)
+        if self._usage_store is None:
+            from pathlib import Path
+            store_home = getattr(self.store, "home", None)
+            usage_path = (store_home / "llm" / "model-usage.json" if store_home is not None
+                          else getattr(self.services.get("source_store"), "path", Path(".")).parent / "model-usage.json")
+            self._usage_store = ModelUsageStore(usage_path)
+
+    def catalog_diagnostics(self):
+        with self._catalog_lock:
+            return copy.deepcopy(self._diagnostics)
+
+    def learn_output_limit(self, target, cap):
+        with self._cli_metadata_lock:
+            self._learned_output_limits[(target["id"], target.get("destination_revision", ""))] = cap
+        with self._catalog_lock:
+            self._catalog_cache.clear()
+
+    def learn_context_limit(self, target, cap):
+        with self._cli_metadata_lock:
+            self._learned_context_limits[(target["id"], target.get("destination_revision", ""))] = cap
+        with self._catalog_lock:
+            self._catalog_cache.clear()
+
+    def mark_streaming_unknown(self, target):
+        sources = self.services["source_store"]
+        with sources.lock:
+            record = sources.read().get(target["source_id"])
+            if not record or self.source_destination_revision(record, target["model_id"]) != target.get("destination_revision"):
+                return
+            record.setdefault("streaming_support", {})[target["model_id"]] = "unknown"
+            record.setdefault("streaming_checked_at", {})[target["model_id"]] = time.time()
+            sources.save(record)
+        with self._catalog_lock:
+            self._catalog_cache.clear()
 
     @staticmethod
     def destination(row):
@@ -69,10 +134,32 @@ class ModelCatalog:
                    destination_revision=peer_binding.local_revision(binding, row["peer_id"]) if valid else "")
 
     def list_models(self, *, selected_model_id=None, display_only=False):
-        sources = self.services["source_store"]
-        records = sources.read()
-        source_index = {sources.model_service_id(record, model): (record, model)
-                        for record in records.values() for model in record["models"]}
+        with self._catalog_lock:
+            sources_revision = getattr(self.services["source_store"], "version", None)
+            usage_revision = (self._usage_store._combined_stamp(), self._usage_store.utc_day())
+            key = (selected_model_id, display_only, sources_revision, usage_revision)
+            now = time.monotonic()
+            self._catalog_cache = {k: v for k, v in self._catalog_cache.items()
+                                   if now - v[0] < 2 and k[2:] == key[2:]}
+            snapshot = self._catalog_cache.get(key)
+        if snapshot is None:
+            records, discovered, usage = self._catalog_inputs(selected_model_id=selected_model_id, display_only=display_only)
+            inputs = records, discovered, usage
+            # Peer regrants and native model swaps can change dispatch authority.
+            bound_services = any(record.get("binding_verified") is True
+                                 or (record.get("service") or {}).get("runtime") == "native_llama_cpp"
+                                 for record in discovered)
+            if display_only or not bound_services:
+                with self._catalog_lock:
+                    self._catalog_cache[key] = (now, inputs)
+        else:
+            inputs = snapshot[1]
+        # Cache metadata inputs, never invocation authority. CLI bindings and
+        # capabilities are rebuilt against the current provider on every call.
+        return self._build_models(*inputs, selected_model_id=selected_model_id, display_only=display_only)
+
+    def _catalog_inputs(self, *, selected_model_id=None, display_only=False):
+        records = self.services["source_store"].read()
         try:
             discover = self.services.get("discover_agent", self.services["discover"])
             if display_only:
@@ -87,8 +174,17 @@ class ModelCatalog:
                 discovered = discover(self.network)
             else:
                 discovered = discover(self.network)
-        except Exception:
+        except Exception as exc:
+            with self._catalog_lock:
+                self._diagnostics["discovery"] = {
+                    "stage": "discover", "error_type": type(exc).__name__, "at": time.time()}
             discovered = []
+        return records, discovered, self._usage_store.read_cached()
+
+    def _build_models(self, records, discovered, usage_snapshot, *, selected_model_id=None, display_only=False):
+        sources = self.services["source_store"]
+        source_index = {sources.model_service_id(record, model): (record, model)
+                        for record in records.values() for model in record["models"]}
         rows = {}
         for value in discovered:
             manifest = value.get("service") or {}
@@ -129,14 +225,26 @@ class ModelCatalog:
                 if local_tool_support == "unsupported":
                     supported = False
             declared_claude_window = (
-                model_settings._known_vendor_context_window(manifest.get("model", ""))
+                model_settings.known_vendor_context_metadata(manifest.get("model", ""))
                 if adapter == "claude_cli" and manifest.get("model")
                 else None
             )
+            inferred_window = (
+                model_settings.known_vendor_context_metadata(manifest.get("model_alias") or service_id)
+                if not is_cli and type(manifest.get("context_window")) is not int else None
+            )
+            window = manifest.get("context_window", 32768)
+            if not is_cli and type(window) is not int:
+                window = 32768
+            if declared_claude_window is not None:
+                window = declared_claude_window["context_window"]
+            elif inferred_window is not None:
+                window = inferred_window["context_window"]
+            vendor_window = declared_claude_window or inferred_window
             cli_basis = manifest.get("context_window_basis") if isinstance(manifest.get("context_window_basis"), str) else ""
             window_known = (
-                (not is_cli and type(manifest.get("context_window")) is int)
-                or declared_claude_window is not None
+                (not is_cli and type(manifest.get("context_window")) is int and cli_basis not in {"vendor_family_guess", "unknown_fallback"})
+                or bool(vendor_window and vendor_window["context_window_known"])
             )
             row = {"id": model_ref, "name": manifest.get("model_alias", service_id),
                    "source": "local_service" if own else "peer", "source_name": value.get("node_name", ""),
@@ -149,23 +257,30 @@ class ModelCatalog:
                    "tool_support": local_tool_support,
                    "agent_support_basis": "adapter_contract" if own else "provider_protocol_contract",
                    **({"agent_support": "experimental"} if adapter == "antigravity_cli" else {}),
-                   "context_window": declared_claude_window if declared_claude_window is not None else manifest.get("context_window", 32768),
+                   "context_window": window,
                    "context_window_known": window_known,
                    "context_window_basis": (
-                       "vendor_family_default"
-                       if declared_claude_window is not None
+                       vendor_window["context_window_basis"]
+                       if vendor_window is not None
+                       else cli_basis
+                       if cli_basis
                        else "provider_manifest"
                        if window_known
                        else (cli_basis or "unknown_fallback")
                    ),
                    "streaming": "streaming" in capabilities or "buffered-streaming" in capabilities,
                    "max_output_tokens": manifest.get("max_output_tokens", 4096),
+                   "max_output_tokens_known": type(manifest.get("max_output_tokens")) is int,
+                   "max_output_basis": "provider_manifest" if type(manifest.get("max_output_tokens")) is int else "unknown_fallback",
                    "sharing": bool(value.get("accepting_orders", value.get("publication_enabled", False))) if own else True,
                    "sharing_basis": "local_service_advertisement" if own else "remote_catalog_advertisement",
                    "sharing_configuration_known": False,
                    "share_scope": ("personal_space" if "personal-space-only" in capabilities else
                                    "friends" if value.get("access_policy") == "explicit_friends" else "none") if own else "unknown"}
+            _model_facts(row, manifest)
             row.update(catalog_image_fields(row, service_record=value))
+            if is_cli:
+                _cli_output(row, {"id": manifest.get("model", "")})
             if not own and "context-estimate:v2" not in capabilities:
                 # Legacy peer providers without context-estimate:v2 admit an order only
                 # when its prompt's UTF-8 bytes plus output fit the window (1 byte/token).
@@ -207,6 +322,7 @@ class ModelCatalog:
                     from ..llm_package.cli_models import context_metadata
                     fallback_basis = row.get("context_window_basis", "unknown_fallback")
                     row.update(context_metadata(value.get("cli_models", []), fallback=row["context_window"], fallback_basis=fallback_basis))
+                    _cli_output(row, next((model for model in value.get("cli_models", []) if model.get("default")), {}))
                     if row["context_window_known"]:
                         row["context_window_basis"] = "provider_cli_model_metadata"
                     for upstream in value.get("cli_models", []):
@@ -222,15 +338,12 @@ class ModelCatalog:
                             "destination_revision": peer_binding.revision(specific, self.store.peer_id),
                             "destination_binding_supported": child_bound is not None, "expected_model_binding": child_bound}
                         rows[identifier].update(context_metadata([upstream], upstream["id"], fallback=row["context_window"], fallback_basis=fallback_basis))
-                        max_output = upstream.get("max_output_tokens")
-                        if not isinstance(max_output, int) and rows[identifier].get("context_window_known"):
-                            max_output = model_settings._known_vendor_max_output_tokens(upstream["id"])
-                        if isinstance(max_output, int) and 0 < max_output <= rows[identifier]["context_window"]:
-                            rows[identifier]["max_output_tokens"] = max_output
+                        _cli_output(rows[identifier], upstream)
                         if rows[identifier]["context_window_known"]:
                             rows[identifier]["context_window_basis"] = "provider_cli_model_metadata"
                         if adapter == "codex_cli":
                             rows[identifier].update(reasoning_metadata(upstream.get("supported_reasoning_efforts"), upstream.get("default_reasoning_effort")))
+                        _model_facts(rows[identifier], upstream)
                         rows[identifier].update(catalog_image_fields(rows[identifier], service_record=value, cli_model_row=upstream))
         # Include drafts/offline sources so absence never masquerades as deletion.
         for service_id, (record, model) in source_index.items():
@@ -260,14 +373,19 @@ class ModelCatalog:
                 **({"custom_tools": True} if verified_custom_tools else {}),
                 "available": bool(prior.get("available") and record.get("enabled") and record.get("status") == "ready"),
                 "availability_basis": "configured_source_readiness_not_live_probe",
-                # A source's two-turn tool probe proves tools, not streaming.
-                "streaming": False,
+                "streaming": record.get("streaming_support", {}).get(model) == "supported",
+                "streaming_basis": "source_probe" if model in record.get("streaming_support", {}) else "unverified",
                 "agent_supported": True, "tool_support": support, "agent_support_basis": "adapter_contract",
                 "context_window": policy["effective"]["context_window"], "max_output_tokens": policy["effective"]["max_output_tokens"],
+                "max_output_tokens_known": policy["effective"]["max_output_tokens_known"],
+                "max_output_basis": policy["effective"]["max_output_basis"],
                 "context_window_basis": policy["context_window_basis"], "context_window_known": policy["context_window_known"],
                 "sharing": model in sources.shared_models(record), "share_scope": policy["effective"]["share_scope"],
                 "sharing_basis": "local_configuration", "sharing_configuration_known": True,
                 "destination_binding_supported": True}
+            rows[model_ref].update(reasoning_metadata(
+                policy["effective"].get("supported_reasoning_efforts"),
+                policy["effective"].get("request_defaults", {}).get("reasoning_effort")))
             rows[model_ref].update(catalog_image_fields(rows[model_ref], source_record=record))
         # CLI sources are containers; each upstream model keeps its identity and diagnostics.
         for row in list(rows.values()):
@@ -299,7 +417,11 @@ class ModelCatalog:
                     self._bind_cli(row, manager, cached=display_only)
                     with self._cli_metadata_lock:
                         self._cli_metadata[row["id"]] = {"manager": manager, "models": copy.deepcopy(upstream)}
-            except Exception:
+            except Exception as exc:
+                with self._catalog_lock:
+                    self._diagnostics.setdefault("cli_models", {})[row["id"]] = {
+                        "stage": "cli_models", "source": row["id"],
+                        "error_type": type(exc).__name__, "at": time.time()}
                 row.update(available=False, local_model_binding=None,
                            destination_binding_supported=False, destination_revision="")
                 continue
@@ -316,41 +438,32 @@ class ModelCatalog:
                 from ..llm_package.cli_models import context_metadata
                 local_fallback_basis = row.get("context_window_basis", "unknown_fallback")
                 rows[identifier].update(context_metadata([model], model["id"], fallback=row["context_window"], fallback_basis=local_fallback_basis))
-                max_output = model.get("max_output_tokens")
-                if not isinstance(max_output, int) and rows[identifier].get("context_window_known"):
-                    max_output = model_settings._known_vendor_max_output_tokens(model["id"])
-                if isinstance(max_output, int) and 0 < max_output <= rows[identifier]["context_window"]:
-                    rows[identifier]["max_output_tokens"] = max_output
+                _cli_output(rows[identifier], model)
                 if row["available"]:
                     self._bind_cli(rows[identifier], manager, model["id"], cached=display_only)
                 if row["adapter"] == "codex_cli":
                     rows[identifier].update(reasoning_metadata(model.get("supported_reasoning_efforts"), model.get("default_reasoning_effort")))
+                _model_facts(rows[identifier], model)
                 rows[identifier].update(catalog_image_fields(rows[identifier], cli_model_row=model))
             default = next((model for model in upstream if model.get("default")), {})
             if row["adapter"] == "codex_cli":
                 row.update(reasoning_metadata(default.get("supported_reasoning_efforts"), default.get("default_reasoning_effort")))
+            _model_facts(row, default)
             row.update(catalog_image_fields(row, cli_model_row=default))
             from ..llm_package.cli_models import context_metadata
             row.update(context_metadata(upstream, fallback=row["context_window"], fallback_basis=row.get("context_window_basis", "unknown_fallback")))
-            default_output = default.get("max_output_tokens")
-            if not isinstance(default_output, int) and row.get("context_window_known"):
-                default_output = model_settings._known_vendor_max_output_tokens(default.get("id", ""))
-            if isinstance(default_output, int) and 0 < default_output <= row["context_window"]:
-                row["max_output_tokens"] = default_output
-        usage_store = getattr(sources, "usage_store", None)
-        if usage_store is None:
-            from pathlib import Path
-            store_home = getattr(self.store, "home", None)
-            usage_path = (
-                store_home / "llm" / "model-usage.json"
-                if store_home is not None
-                else getattr(sources, "path", Path(".")).parent / "model-usage.json"
-            )
-            usage_store = ModelUsageStore(usage_path)
-        usage_snapshot = usage_store.read_cached()
+            _cli_output(row, default)
+        usage_store = self._usage_store
         space_catalog = self.services.get("space_catalog") if isinstance(self.services, dict) else None
         last_errors = getattr(space_catalog, "last_errors", None)
         for row in rows.values():
+            with self._cli_metadata_lock:
+                learned = self._learned_output_limits.get((row["id"], row.get("destination_revision", "")))
+                learned_context = self._learned_context_limits.get((row["id"], row.get("destination_revision", "")))
+            if learned is not None and learned < row.get("max_output_tokens", 4096):
+                row.update(max_output_tokens=learned, max_output_tokens_known=True, max_output_basis="upstream_rejection")
+            if learned_context is not None:
+                row.update(context_window=learned_context, context_window_known=True, context_window_basis="upstream_rejection")
             ms = row.get("model_settings")
             policy = (
                 ms.get("effective")
@@ -383,10 +496,7 @@ class ModelCatalog:
         return sorted(rows.values(), key=lambda row: (row["source"] == "peer", row["name"], row["id"]))
 
     def get_model(self, model_id):
-        try:
-            rows = self.list_models(selected_model_id=model_id)
-        except TypeError:
-            rows = self.list_models()
+        rows = self.list_models(selected_model_id=model_id)
         return next((row for row in rows if row["id"] == model_id), None)
 
     def display_models(self):
@@ -398,7 +508,13 @@ class ModelCatalog:
 
     def refresh_destination(self, model_id):
         """Refresh metadata only; never send task text to repair discovery."""
-        records = self.services["discover"](self.network)
+        with self._catalog_lock:
+            self._catalog_cache.clear()
+        try:
+            records = self.services["discover"](self.network)
+        except Exception as exc:
+            diagnostic_log.failure("discovery_failed", exc)
+            raise ValueError("agent_model_unavailable") from None
         locator = next((row for row in records if row.get("peer_id")
             and model_id.startswith("peer/" + hashlib.sha256(row["peer_id"].encode()).hexdigest() + "/")
             and row.get("access_policy") == "personal_space"), None)
@@ -419,6 +535,8 @@ class ModelCatalog:
                     refresh_error = "space_catalog_refresh_failed"
                 if isinstance(last_errors, dict) and peer_id not in last_errors:
                     last_errors[peer_id] = (refresh_error, 0)
+        with self._catalog_lock:
+            self._catalog_cache.clear()
         row = self.get_model(model_id)
         if row is not None and refresh_error and not row.get("available"):
             row["catalog_refresh_error"] = refresh_error
