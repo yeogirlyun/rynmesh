@@ -33,15 +33,18 @@ def test_both_desktop_grants_are_required():
     assert decide(CALL, META, policy(), policy(desktop=False)).action == "ask"
 
 
-def test_automatic_full_access_still_needs_the_desktop_grant():
+def test_only_full_automatic_bypasses_the_desktop_grant():
     auto = lambda **kw: policy("automatic", **kw)
     assert decide(CALL, META, auto(), auto()).action == "execute"
-    assert decide(CALL, META, auto(desktop=False), auto()).action == "ask"
-    assert decide(CALL, META, auto(), auto(desktop=False)).action == "ask"
-    # Full access covers any desktop server once the owner allowed desktop use.
+    assert decide(CALL, META, auto(desktop=False), auto()).action == "execute"
+    assert decide(CALL, META, auto(), auto(desktop=False)).action == "execute"
+    assert decide(CALL, META, auto(desktop=False), policy()).action == "ask"
+    assert decide(CALL, META, policy(), auto(desktop=False)).action == "ask"
+    # S04-I24 applies to both bundled and external desktop servers.
     external = {"effect": "write", "computer_access": True}
     assert decide(CALL, external, auto(), auto()).action == "execute"
-    assert decide(CALL, external, auto(desktop=False), auto()).action == "ask"
+    assert decide(CALL, external, auto(desktop=False), auto(desktop=False)).action == "execute"
+    assert decide(CALL, external, auto(desktop=False), policy()).action == "ask"
     # Outside automatic, an external server still cannot claim the bundled authority.
     assert decide(CALL, external, policy(), policy()).action == "ask"
 
