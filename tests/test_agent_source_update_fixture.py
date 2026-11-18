@@ -71,8 +71,8 @@ def test_actual_candidate_failure_and_concurrent_owner_preservation(node, scenar
         actual = world.evidence()
         assert actual["source_version"] == 9 and actual["endpoint"] == "endpoint-owner-newer"
         assert actual["config_saves"] == 1 and len(actual["owner_interventions"]) == 1
-        assert [r["status"] for r in actual["candidate_audit"]] == [200] * 3 + [503] * 3
-        assert [r["saved"] for r in actual["candidate_audit"]] == [False] * 3 + [True] * 3
+        assert [r["status"] for r in actual["candidate_audit"]] == [200] * 6 + [503] * 3
+        assert [r["saved"] for r in actual["candidate_audit"]] == [False] * 6 + [True] * 3
         record(classification, {"operation_id": "update-save", "name": "ryn_commit_source_draft",
             "arguments": locator(value), "effect": "write"}, "confirmed", "fixed", result=result)
         classification["criteria"].append({"id": "saved-source", "source": "tool", "source_ref": "receipt_update-save",
@@ -87,7 +87,7 @@ def test_actual_candidate_failure_and_concurrent_owner_preservation(node, scenar
         # Actual admission guard denies the stale capability before any HTTP.
         with pytest.raises(AdapterError, match="model_configuration_changed"):
             old_adapter.chat({"messages": [{"role": "user", "content": "OK"}]}, task_id="stale-capability", timeout_s=1)
-        assert len(world.candidate.audit) == 6 and not world.newer.audit
+        assert len(world.candidate.audit) == 9 and not world.newer.audit
         with pytest.raises(AgentToolRejected, match="agent_source_draft_immutable"):
             run(tools, context, "ryn_commit_source_draft", locator(value), "repeat-save")
         assert world.evidence()["source_version"] == 9 and world.evidence()["config_saves"] == 1
