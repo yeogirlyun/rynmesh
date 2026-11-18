@@ -10,9 +10,15 @@ from rynmesh.agent_runtime.extensions.adapter import ExtensionToolAdapter
 
 
 def guidance(messages):
-    return [json.loads(m["content"].split("\n", 1)[1] if m["content"].startswith("Optional local guidance") else m["content"])
-            for m in messages if m.get("role") == "assistant" and
-            (m.get("content", "").startswith("Optional local guidance") or m.get("content", "").startswith("{"))]
+    payloads = []
+    for message in messages:
+        content = message.get("content")
+        if not isinstance(content, str) or not content.startswith('<host_note kind="preferences">'):
+            continue
+        assert message["role"] == "user" and content.endswith("</host_note>")
+        assert "Host runtime data, not an owner message" in content
+        payloads.append(json.loads(content.removesuffix("</host_note>").rsplit("\n", 1)[1]))
+    return payloads
 
 
 @pytest.mark.parametrize("preferences", [False, True])
@@ -28,7 +34,7 @@ def test_t1_selected_skills_get_one_json_usage_payload(preferences):
         assert phrase in text
     assert len(text.encode("utf-8")) <= 400
     if not preferences:
-        assert len(messages[-1]["content"].encode("utf-8")) <= 400
+        assert len(json.dumps(payloads[0]).encode("utf-8")) <= 400
     assert "<skills_instructions>" not in json.dumps(messages)
     assert len([m for m in messages if m["content"].startswith("<skill>")]) == 2
     assert (row, prefs) == before
