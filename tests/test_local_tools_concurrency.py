@@ -550,7 +550,7 @@ def test_t4_recover_operation_restart_recovery_unchanged(tmp_path, monkeypatch):
         assert rec_intent["ledger_outcome"] == "not_executed"
         assert ledger.get("op_read_intent")["status"] == "not_executed"
 
-        # Write operations remain unsettled (`dispatched`) and `reconcile` reports `unknown`:
+        # The write stays dispatched until its file-review journal is consulted.
         assert rec_write["ok"] is False
         assert rec_write["ledger_settled"] is False
         assert ledger.get("op_write_dispatched")["status"] == "dispatched"
@@ -564,7 +564,8 @@ def test_t4_recover_operation_restart_recovery_unchanged(tmp_path, monkeypatch):
                 },
             },
         )
-        assert reconciled["outcome"] == "unknown"
+        assert reconciled["outcome"] == "not_executed"
+        assert reconciled["receipt"]["result"] == {"not_executed": True, "no_mutation": True, "files": []}
         assert followup_res["written"] is True
         assert (workspace / "after_recovery.txt").read_text(encoding="utf-8") == "recovered_ok\n"
     finally:
