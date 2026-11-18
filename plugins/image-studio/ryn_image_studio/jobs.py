@@ -16,12 +16,12 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from . import generator, sizes
+from . import generator, prompts, sizes
 
 MAX_ACTIVE_PER_CALLER = 20
 MAX_BRIEF = 2000
 MAX_WORDS = 200
-MAX_REFERENCES = 3
+MAX_REFERENCES = 5
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024
 UPLOAD_TTL_S = 24 * 3600
 RETENTION_S = 90 * 24 * 3600
@@ -62,12 +62,7 @@ def _dir_name(caller: str) -> str:
 
 
 def compose_brief(row: dict[str, Any]) -> str:
-    parts = [f"一张{sizes.ratio_phrase(row['width'], row['height'])}的图片。", row["brief"].strip()]
-    if row["words"].strip():
-        parts.append(f"画面中要准确出现这段文字，一字不差：「{row['words'].strip()}」")
-    if json.loads(row["refs"]) or row.get("source_job"):
-        parts.append("参考附带的图片（例如图中的商品或原图），保持主体一致。")
-    return "\n".join(p for p in parts if p)
+    return prompts.compose(row)
 
 
 class JobStore:
@@ -146,18 +141,23 @@ class JobStore:
         count = body.get("count", 1)
         if count not in (1, 2, 4):
             raise JobError("image_bad_count")
-        refs = body.get("references", [])
-        if not isinstance(refs, list) or len(refs) > MAX_REFERENCES or any(not isinstance(r, str) for r in refs):
-            raise JobError("image_bad_references")
-        for ref in refs:
-            self.upload_bytes(caller, ref)  # must exist and belong to this caller
+        references = body.get("references", [])
         source = body.get("source_job")
+        if not isinstance(references, list) or len(references) + (source is not None) > MAX_REFERENCES:
+            raise JobError("image_bad_references")
+        refs = []
+        for ref in references:
+            if isinstance(ref, str):
+                ref = {"id": ref, "role": "material"}
+            if (not isinstance(ref, dict) or ref.keys() != {"id", "role"}
+                    or not isinstance(ref["id"], str) or ref["role"] not in ("material", "style")):
+                raise JobError("image_bad_references")
+            self.upload_bytes(caller, ref["id"])  # must exist and belong to this caller
+            refs.append(ref)
         if source is not None:
             src = self._one("SELECT * FROM jobs WHERE id=? AND caller=?", (source, caller)) if isinstance(source, str) else None
             if src is None or src["state"] != "succeeded":
                 raise JobError("image_reference_missing", 404)
-            if len(refs) + 1 > MAX_REFERENCES + 1:
-                raise JobError("image_bad_references")
         active = self._one("SELECT COUNT(*) n FROM jobs WHERE caller=? AND state IN ('queued','running')", (caller,))
         if active["n"] + count > MAX_ACTIVE_PER_CALLER:
             raise JobError("image_too_many_active", 429)
@@ -195,11 +195,12 @@ class JobStore:
 
     def view(self, row: dict[str, Any], *, queue: list[dict[str, Any]] | None = None,
              average: float | None = None, owner: bool = False) -> dict[str, Any]:
+        roles = prompts.reference_roles(row)
         out = {"id": row["id"], "batch": row["batch"], "purpose": row["purpose"], "width": row["width"],
                "height": row["height"], "brief": row["brief"], "words": row["words"], "state": row["state"],
                "failure": row["failure"], "failure_text": generator.FAILURES.get(row["failure"] or "", None),
                "created_at": row["created_at"], "started_at": row["started_at"], "finished_at": row["finished_at"],
-               "seconds": row["seconds"], "references": len(json.loads(row["refs"])) + (1 if row["source_job"] else 0),
+               "seconds": row["seconds"], "references": len(roles), "reference_roles": roles,
                "source_job": row["source_job"]}
         if row["state"] == "queued":
             queue = self.queue() if queue is None else queue
@@ -291,7 +292,7 @@ class JobStore:
         self._exec("UPDATE jobs SET state='queued', started_at=NULL WHERE state='running'")
 
     def references(self, row: dict[str, Any]) -> list[bytes]:
-        refs = [self.upload_bytes(row["caller"], ref) for ref in json.loads(row["refs"])]
+        refs = [self.upload_bytes(row["caller"], ref["id"]) for ref in prompts.read_references(row["refs"])]
         if row["source_job"]:
             source = self.job(row["caller"], row["source_job"])
             refs.insert(0, self.image_path(source, "png").read_bytes())
@@ -306,8 +307,8 @@ class JobStore:
             for kind in ("png", "jpg"):
                 self.image_path(row, kind).unlink(missing_ok=True)
             self._exec("DELETE FROM jobs WHERE id=?", (row["id"],))
-        live = {ref for r in self._rows("SELECT refs FROM jobs WHERE state IN ('queued','running')")
-                for ref in json.loads(r["refs"])}
+        live = {ref["id"] for r in self._rows("SELECT refs FROM jobs WHERE state IN ('queued','running')")
+                for ref in prompts.read_references(r["refs"])}
         for up in self._rows("SELECT * FROM uploads WHERE created_at < ?", (now - UPLOAD_TTL_S,)):
             if up["id"] not in live:
                 self.upload_path(up["caller"], up["id"]).unlink(missing_ok=True)

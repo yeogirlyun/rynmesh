@@ -192,12 +192,12 @@ def test_references_and_edit_from_previous_result(studio):
     upload = json.loads(data)["upload_id"]
     first = submit(site, references=[upload])[0]
     wait_for(lambda: store.job(None, first["id"])["state"] == "succeeded")
-    assert len(fake.calls[0]["references"]) == 1 and "参考附带的图片" in fake.calls[0]["brief"]
+    assert len(fake.calls[0]["references"]) == 1 and "第 1 张图是素材" in fake.calls[0]["brief"]
     edit = submit(site, brief="背景换成浅红色", source_job=first["id"])[0]
     wait_for(lambda: store.job(None, edit["id"])["state"] == "succeeded")
     assert dims(fake.calls[1]["references"][0]) == (1024, 1820)  # the earlier result is the reference
     for bad in ({"purpose": "main", "brief": ""}, {"purpose": "main", "brief": "x", "count": 3},
-                {"purpose": "main", "brief": "x", "references": ["a", "b", "c", "d"]},
+                 {"purpose": "main", "brief": "x", "references": ["a", "b", "c", "d", "e", "f"]},
                 {"purpose": "main", "brief": "x", "extra": 1}, {"purpose": "main", "brief": "x" * 3000}):
         assert call(site, "POST", "/api/jobs", json.dumps(bad).encode())[0] == 400
     assert call(site, "POST", "/api/uploads", b"not an image")[0] == 400
