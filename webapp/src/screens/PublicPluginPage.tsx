@@ -1,10 +1,19 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Navigate, useLocation, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { publicPlugins } from "../domain/publicPlugins";
 
 export default function PublicPluginPage() {
   const { pluginId = "" } = useParams();
+  const { search } = useLocation();
+  return <Navigate replace to={`/apps/app/public/${encodeURIComponent(pluginId)}${search}`} />;
+}
+
+export function LegacyImageStudioRedirect() {
+  return <Navigate replace to="/apps/app/public/image-studio?tab=share" />;
+}
+
+export function PublicPluginFrame({ pluginId }: { pluginId: string }) {
   const { i18n } = useTranslation();
   const zh = (i18n.resolvedLanguage || i18n.language).startsWith("zh");
   const [page, setPage] = useState<{ url: string; name: string } | null>(null);
@@ -19,8 +28,8 @@ export default function PublicPluginPage() {
     }).catch(() => { if (active) setError(true); });
     return () => { active = false; };
   }, [pluginId]);
-  return <section className="ns-page"><header><Link to="/settings/plugins">{zh ? "返回插件" : "Back to plugins"}</Link><h1>{page?.name || (zh ? "打开插件" : "Open plugin")}</h1><p>{zh ? "在我的电脑上运行" : "Running on my computer"}</p></header>
-    {error && <p role="alert">{zh ? "无法打开，请在插件页确认已安装并启用。" : "Install and enable the plugin before opening it."}</p>}
-    {page && <iframe title={page.name} src={page.url} referrerPolicy="no-referrer" sandbox="allow-scripts allow-forms allow-same-origin allow-downloads" style={{ width: "100%", height: "75vh", border: 0 }} />}
-  </section>;
+  if (error) return <p className="ns-error" role="alert">{zh ? "无法打开，请确认应用已安装并启用。" : "Install and enable the app before opening it."}</p>;
+  if (!page) return <p className="ns-muted" role="status">{zh ? "正在打开应用…" : "Opening app…"}</p>;
+  return <iframe className="ns-card" title={page.name} src={page.url} referrerPolicy="no-referrer"
+    sandbox="allow-scripts allow-forms allow-same-origin allow-downloads" style={{ width: "100%", height: "75vh" }} />;
 }
