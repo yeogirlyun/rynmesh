@@ -213,4 +213,7 @@ def test_s03_i4_project_guidance_rules_live_in_user_instruction_layer(tmp_path):
         assert "AGENTS.md rules apply to their directory tree;" not in msg["content"]
 
     plain_layers = instruction_layers(row(), project_guidance=projects.guidance(row()))
-    assert all(msg["role"] == "developer" for msg in plain_layers)
+    # S12-I11: a non-project task gets only the environment block, never the project rules.
+    assert all(msg["role"] == "developer" for msg in plain_layers[:-1])
+    assert plain_layers[-1]["role"] == "user" and plain_layers[-1]["content"].startswith("<environment_context>")
+    assert "Git repository: do not commit" not in plain_layers[-1]["content"]
