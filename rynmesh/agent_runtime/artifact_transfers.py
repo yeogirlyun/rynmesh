@@ -18,7 +18,9 @@ from .store import AgentError
 NAME = "ryn_list_task_artifacts"
 PURPOSE = "plugin_attachment"
 CHANNEL = b"rynmesh-artifact-transfer-v1"
-MAX_ENVELOPE_BYTES = 3 * workspace_artifacts.MAX_ARTIFACT_BYTES
+MAX_ENVELOPE_BYTES = 3 * workspace_artifacts.MAX_READ_BYTES
+MAX_TOTAL_TRANSFER_BYTES = 256 * 1024 * 1024
+MAX_TRANSFER_REFS = 32
 REF = re.compile(r"^artifact_[a-f0-9]{48}$")
 
 
@@ -100,13 +102,23 @@ class ArtifactTransfers:
         self.prune(context)
         row = self._row(context)
         existing = row.get("artifact_transfers", {})
-        items = []
-        for file_id, state in list(workspace_artifacts.history(row).items())[-32:]:
-            if state["deleted"] or not state.get("sha256"):
+        items, skipped = [], []
+        for file_id, state in list(workspace_artifacts.history(row).items())[-MAX_TRANSFER_REFS:]:
+            if state["deleted"]:
                 continue
             try:
+                path = workspace_artifacts.location(row, file_id)
+                if path.stat().st_size > workspace_artifacts.MAX_READ_BYTES:
+                    skipped.append({"name": path.name, "reason": "too_large"})
+                    continue
+                if not state.get("sha256"):
+                    continue
                 content = workspace_artifacts.read(row, file_id)
-            except (AgentError, OSError):
+            except AgentError as exc:
+                if str(exc) == "agent_artifact_too_large":
+                    skipped.append({"name": Path(state["path"]).name, "reason": "too_large"})
+                continue
+            except OSError:
                 continue
             if content["status"] != "current":
                 continue
@@ -115,6 +127,22 @@ class ArtifactTransfers:
                 and value["scope_revision"] == context["scope_revision"]), None)
             if match:
                 items.append(self.public(match))
+                continue
+            protected = {item["artifact_ref"] for item in items}
+            def eviction_plan(refs):
+                evicted = []
+                if len(refs) >= MAX_TRANSFER_REFS:
+                    evicted = [ref for ref, value in refs.items() if value["file_id"] == file_id and ref not in protected]
+                    if len(refs) - len(evicted) >= MAX_TRANSFER_REFS:
+                        candidates = [ref for ref in refs if ref not in protected and ref not in evicted]
+                        if candidates:
+                            evicted.append(min(candidates, key=lambda ref: refs[ref]["expires_at"]))
+                retained = [value for ref, value in refs.items() if ref not in evicted]
+                if len(retained) >= MAX_TRANSFER_REFS or sum(value["size"] for value in retained) + len(content["bytes"]) > MAX_TOTAL_TRANSFER_BYTES:
+                    return None
+                return evicted
+            if eviction_plan(existing) is None:
+                skipped.append({"name": content["name"], "reason": "too_large"})
                 continue
             ref = "artifact_" + secrets.token_hex(24)
             record = {"artifact_ref": ref, "file_id": file_id, "owner_id": context["owner_id"],
@@ -127,16 +155,30 @@ class ArtifactTransfers:
             def save(data, ref=ref, record=record):
                 current = data["tasks"][context["task_id"]]
                 refs = current.setdefault("artifact_transfers", {})
-                if current["scope_revision"] != context["scope_revision"] or len(refs) >= 32:
-                    raise AgentError("agent_artifact_transfer_limit")
+                if current["scope_revision"] != context["scope_revision"]:
+                    raise AgentError("agent_artifact_access_changed")
+                evicted = eviction_plan(refs)
+                if evicted is None:
+                    return None
+                for old in evicted:
+                    del refs[old]
                 refs[ref] = record
+                return evicted
             try:
-                self.store.transaction(save)
+                evicted = self.store.transaction(save)
             except BaseException:
                 self._path(context["task_id"], ref).unlink(missing_ok=True)
                 raise
+            if evicted is None:
+                self._path(context["task_id"], ref).unlink(missing_ok=True)
+                skipped.append({"name": content["name"], "reason": "too_large"})
+                continue
+            for old in evicted:
+                self._path(context["task_id"], old).unlink(missing_ok=True)
+                existing.pop(old, None)
+            existing[ref] = record
             items.append(self.public(record))
-        return {"artifacts": items, "max_file_bytes": workspace_artifacts.MAX_ARTIFACT_BYTES,
+        return {"artifacts": items, "skipped": skipped, "max_file_bytes": workspace_artifacts.MAX_READ_BYTES,
                 "purpose": PURPOSE, "note": "Only receipt-backed files in this task; each transfer still requires approval."}
 
     @staticmethod

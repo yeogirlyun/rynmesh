@@ -18,6 +18,8 @@ export function latestFileToolResultSeq(task: Pick<AgentTask, "events">): number
   return task.events.filter(e => e.type === "tool_result" && e.tool && FILE_TOOLS.has(e.tool)).at(-1)?.seq;
 }
 const EMPTY_FILES: AgentFileArtifact[] = [];
+const EXECUTABLE = new Set([".bat", ".cmd", ".ps1", ".vbs", ".js", ".jse", ".wsf", ".hta", ".exe", ".msi",
+  ".lnk", ".scr", ".com", ".sh", ".command", ".app", ".jar", ".py", ".pyw"]);
 // A listing error that is not a connection or server failure is retried this often, then left to Refresh.
 const ARTIFACT_PERSISTENT_RETRY_MS = 15000;
 const ARTIFACT_PERSISTENT_RETRIES = 4;
@@ -105,6 +107,7 @@ function FileCard({ task, file, onOpen }: { task: AgentTask; file: AgentFileArti
   }, [menuOpen, positionMenu]);
   const openable = fileAvailable(file);
   const onDisk = file.status !== "missing";
+  const executable = EXECUTABLE.has(file.name.slice(file.name.lastIndexOf(".")).toLowerCase());
   const extension = file.name.split(".").pop()?.toLowerCase();
   const format = /^(xlsx?|csv)$/.test(extension || "") ? "Excel" : extension === "docx" ? "Word" : extension === "pptx" ? "PowerPoint" : extension?.toUpperCase();
   const Icon = format === "Excel" ? Sheet : file.preview === "image" ? ImageIcon : file.preview === "text" || format === "Word" ? FileText : FileIcon;
@@ -131,7 +134,9 @@ function FileCard({ task, file, onOpen }: { task: AgentTask; file: AgentFileArti
         {openable && <span className="ra-file-hover-hint" aria-hidden="true">{zh ? "打开预览 · " : "Open preview · "}</span>}
         <span>{format}{file.bytes ? ` · ${size(file.bytes)}` : ""}{file.revisions > 1 ? ` · ${t("fileVersions", { count: file.revisions })}` : ""}</span>
       </small>
-      {file.status !== "current" ? <small className="ra-file-warning"><TriangleAlert size={13} />{t(`fileStatus_${file.status}`)}</small>
+      {file.status !== "current" ? <small className="ra-file-warning"><TriangleAlert size={13} />{file.status === "too_large"
+        ? (zh ? `超过 ${(file.limit_bytes ?? 256 * 1048576) / 1048576} MiB，不能预览或传输` : `Exceeds ${(file.limit_bytes ?? 256 * 1048576) / 1048576} MiB; cannot preview or transfer`)
+        : t(`fileStatus_${file.status}`)}</small>
         : null}
       {saveError && <small role="alert" className="ra-file-warning">{t("artifactReadError")}</small>}
       {copied && <small role="status">{t("filePathCopied")}</small>}
@@ -144,8 +149,8 @@ function FileCard({ task, file, onOpen }: { task: AgentTask; file: AgentFileArti
         <summary aria-label={t("openWaysNamed", { name: file.name })}>{t("openWays")}<ChevronDown size={13} /></summary>
         {menuOpen && createPortal(<div ref={panel} className="ra-file-open-options ra-file-open-floating" style={menuPosition}>
           <button disabled={!openable} onClick={() => { menu.current?.removeAttribute("open"); onOpen(file); }}><FileText size={15} />{t("previewFile")}</button>
-          {isTauriDesktop() ? <><button disabled={!onDisk} onClick={() => void action(() => rynAgent.openFile(task.id, file.id, "open"))}><ExternalLink size={15} />{t("openDefaultApp")}</button>
-            <button disabled={!onDisk} onClick={() => void action(() => rynAgent.openFile(task.id, file.id, "reveal"))}><FolderOpen size={15} />{t("revealFile")}</button></>
+          {isTauriDesktop() ? <><button disabled={!onDisk} onClick={() => void action(() => rynAgent.openFile(task.id, file.id, executable ? "reveal" : "open"))}>{executable ? <FolderOpen size={15} /> : <ExternalLink size={15} />}{t(executable ? "revealFile" : "openDefaultApp")}</button>
+            {!executable && <button disabled={!onDisk} onClick={() => void action(() => rynAgent.openFile(task.id, file.id, "reveal"))}><FolderOpen size={15} />{t("revealFile")}</button>}</>
             : openable && <a href={agentFileUrl(task.id, file)} target="_blank" rel="noopener noreferrer" aria-label={t("openInNewTabNamed", { name: file.name })}><ExternalLink size={15} />{t("openInNewTab")}</a>}
           <button disabled={!openable} aria-label={t("downloadNamed", { name: file.name })} onClick={() => void action(() => saveCopy(task, file))}><Download size={15} />{t("downloadFile")}</button>
           <button onClick={() => void action(async () => { await navigator.clipboard.writeText(path); setCopied(true); })}><Copy size={15} />{t("copyFilePath")}</button>

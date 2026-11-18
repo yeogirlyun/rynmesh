@@ -258,7 +258,7 @@ def test_command_output_over_preview_limit_is_listed_instead_of_dropped(tmp_path
     before = workspace_artifacts.snapshot(tmp_path)
     path = tmp_path / "large.xlsx"
     with path.open("wb") as stream:
-        stream.seek(workspace_artifacts.MAX_ARTIFACT_BYTES)
+        stream.seek(workspace_artifacts.MAX_HASH_BYTES)
         stream.write(b"x")
     files = workspace_artifacts.command_files(tmp_path, before)["files"]
     assert files[0]["path"] == str(path) and files[0]["sha256"] is None

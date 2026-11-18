@@ -2920,9 +2920,12 @@ class AgentRuntime(AgentLoop):
         row = self._file_artifact_row(task_id)
         return {**artifacts.listing(self, row), **workspace_artifacts.listing(row), "pending_files": row["pending_file_commands"]}
 
-    def read_file_artifact(self, task_id: str, file_id: str) -> dict:
+    def read_file_artifact(self, task_id: str, file_id: str, stream: bool = False) -> dict:
         from . import workspace_artifacts
         row = self._file_artifact_row(task_id)
+        path = workspace_artifacts.location(row, file_id)
+        if stream and path.stat().st_size > workspace_artifacts.STREAM_THRESHOLD_BYTES:
+            return workspace_artifacts.open_stream(row, file_id)
         return workspace_artifacts.read(row, file_id)
 
     def open_file_artifact(self, task_id: str, file_id: str, action: str) -> dict:
