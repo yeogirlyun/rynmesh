@@ -69,6 +69,8 @@ from .prompt import (
     INTERNAL_NAMES,
     PROMPT_VERSION,
     select_base_instructions,
+    host_note,
+    provider_messages,
 )
 from .protocol import digest, event, hydrated_events, model_retry_authority, now, sanitized, task
 from .state import (
@@ -1446,7 +1448,7 @@ class AgentRuntime(AgentLoop):
                 options["on_limit_retry"] = lambda next_policy, usage, minimum_output: limit_retry_state["reserve"](
                     {**next_policy, "model_id": row["model_id"], "model_profile": profile_record}, usage, minimum_output)
             return self.model.complete(
-                row["model_id"], dispatch_messages, specs, cancelled, model_event if on_event is not None else None,
+                row["model_id"], provider_messages(dispatch_messages, include_current_excerpts=False), specs, cancelled, model_event if on_event is not None else None,
                 **options, **({"max_output_tokens": allowed} if getattr(self.model, "supports_output_token_limit", False) else {}))
         def _metered():
             # The model tag lets later density calibration ignore another model's usage.
@@ -2088,9 +2090,9 @@ class AgentRuntime(AgentLoop):
             row.pop("verification", None)
             budget.new_round(row)
             budget.restart_segment_audit(row)
-            row["messages"].append({"role": "user", "message_id": "owner_" + uuid.uuid4().hex,
-                "content": "The owner selected this working directory in task settings: " + root
-                    + ". Continue the original request. Existing write approvals still apply."})
+            row["messages"].append({**host_note("workspace_bound",
+                "Working directory selected in task settings: " + root + ". Continue the original request."),
+                "context_epoch": row.get("context_epoch", 0)})
             event(row, "workspace_bound", workspace_root=root)
             remember_request(row, value)
             return public_task(row, settings=data["settings"])
