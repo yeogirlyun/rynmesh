@@ -1,7 +1,7 @@
 {
   "alg": "ed25519",
   "public_key": "I5MZgVVYfRjhj37Jiv6p1tQCsXb/L+Y3V8DfYrVTHH4=",
-  "signature": "KKsD38Cf9OQ23FAPYAZzMcHF6y8tF022jtu1H4CIKM5ctKJM3CzAr8O0nf0DnNmOLV2VI8WNT4+uJ4uKo1i2Ag==",
+  "signature": "Hu52Krn3d62/tU7uW+39vS0LYxBivS7EGoOSxrKpbIoWGAdIWCQqFToGpmeh/MzhdrZEaqDvRJ4K6eu9Xt9mDA==",
   "payload": {
     "kind": "ryn.public-plugin-catalog",
     "schema": 1,
@@ -10,7 +10,7 @@
         "id": "image-studio",
         "name": "做图",
         "description": "在自己的电脑上生成、修改图片，管理作品，并按需分享做图页面。",
-        "version": "1.0.0",
+        "version": "1.1.0",
         "runtime": "first-party-python",
         "host_api": 1,
         "entry": "ryn_image_studio/__init__.py",
@@ -22,24 +22,36 @@
           "node-site"
         ],
         "source": "https://github.com/yeogirlyun/rynmesh/tree/develop/plugins/image-studio",
-        "notes": "首个独立版本：本机做图、作品记录、任务队列、按现有公司通道分享。需要支持公开插件的 Ryn；本机需安装并登录 Codex。",
-        "revision": "9e90324112dc27df150fa7ab502415411e960a8e",
+        "notes": "新增场景模板、分栏文案和常用尺寸。可分别指定商品素材与风格参考，将图片存入个人或公共素材库。从成品可生成多种尺寸、只换背景、只改文字或换个角度，也可以生成透明底 PNG。",
+        "revision": "2f689c0b04c33ef013528f96ce4dcf5ba084201c",
         "files": {
-          "plugin.json": "7d1a7e2ec45d7443770afa6b1e74eeeacd989fb9732232feb9dba8fb97c7e5e3",
-          "README.md": "91cb0fac38d6c0bec3c3ba54ce4f178b4611577fd4cd73d89e9604e256f4121d",
+          "plugin.json": "4f625339ca7154ece5346a0b1684d157fd866e6842e2791a94472414fb87abcd",
+          "README.md": "b747bfb8f1e5af09a4d53615b217eb7b5df8da2e52ffef25e24c2cf420f5ba24",
           "ryn_image_studio/__init__.py": "4dee542c4bd1f870151dba7d739d9642d23cf0348a22e0b218d1590f612bac7b",
-          "ryn_image_studio/generator.py": "0555ca2eada4f7f8edcc39e5c0de266acdacd2d410853836b8279b1dccbb6ea2",
-          "ryn_image_studio/jobs.py": "457fa538c2415dee2f1d5719f4d2f5265eda2edf93e5aa7a12e37d6f0def38a7",
-          "ryn_image_studio/routes.py": "ea6290c6b1581ab55c5ecc93ae80057c73ffe082e2fb4771bb4f222e196c9e9c",
-          "ryn_image_studio/site.py": "33228dc34d7f1cd657469ba690aa21925ffd2341c75d56d3a713469030128222",
-          "ryn_image_studio/sizes.py": "2273fbc4e58b5e11bd32dc24b4ffcb99c448ab278f9797555310cd03bdc8624e",
-          "ryn_image_studio/web/app.css": "3291c6cd6fb661b38985833a2b38dd01b02b41b68083d8ed5b16c83c7ba19719",
-          "ryn_image_studio/web/app.js": "94672dba447d23e9e9ac37a3595cf848594bdbd6cdc4ea8206be5591a793b579",
-          "ryn_image_studio/web/index.html": "4f0a300d3d353e3303caf68b3dc6a71c5a5c044e7a13c9c6ef4346c6eec0956a"
+          "ryn_image_studio/assets.py": "71cce00eaace8ccca5102ae09d8f75a3bde9a9e969cd8aefbd9702434a60be12",
+          "ryn_image_studio/generator.py": "42b4104a1f086370dda2e3e45e5824a757c001089d363c766a79a4e98ff0181b",
+          "ryn_image_studio/jobs.py": "ed4cc2ac558cf77135e26c4cb45c0d5fc6f78d8c6d84dfcba3e90c726c29c27d",
+          "ryn_image_studio/prompts.py": "c775a03ee79b1aa3a607b6575b35d4e7854c9e115b474946ab3e605413543886",
+          "ryn_image_studio/routes.py": "4cc5f577d89dc9b67006da8df4046da6ac339ed3ed7f19ee63edd1f00628185a",
+          "ryn_image_studio/site.py": "99e1fbd34ed36611e16b4057df85fa6f9157bb1aef15e653cc22a9e793a50f2c",
+          "ryn_image_studio/sizes.py": "163831858293a9fb486dc2745ef3f0430264b5782489e9a7e7541672b4c60946",
+          "ryn_image_studio/templates.py": "ea540636fd1607217329133b4e29bdfb2197a4a626989892e73e296ccc1dc6f0",
+          "ryn_image_studio/web/api.js": "99eedf28e25d748b6cc7d05e42f23909c60bc57f3814e7725d5c6b72b3794ff8",
+          "ryn_image_studio/web/app.css": "83ccad1e9c6966fbb3c4cd6213351df57739f6809ad9d6f7dbbe9710f3d6fe4f",
+          "ryn_image_studio/web/app.js": "c7d50588de02a40f44a2dd345ca1d1e11f9ea795284471849ec0f09ef158c080",
+          "ryn_image_studio/web/assets.js": "5e175b7220d837b24c5ef43d327123a4c7dc627fe52335877b1d41735324a777",
+          "ryn_image_studio/web/detail.js": "7ea44cf28d7a877e90c2187491fdcd89ae4be32ce80fb58baaf79f4454d434bc",
+          "ryn_image_studio/web/dom.js": "f77cdd916dd7f44ec2a1662e1e29ae72b9e77f813cfd6eb889397042a7cac110",
+          "ryn_image_studio/web/form.js": "e0c6d66246d0fb6eedc489ed9f08edb5665e6fe917c18caaf81f8e22d552500e",
+          "ryn_image_studio/web/gallery.js": "b29197b8565e2cf4ce3e23d1cab14cc371a0078e4d6292eb7abc64e2ac8b2a68",
+          "ryn_image_studio/web/i18n.js": "6059fc1716515b77e7e9a49a21a5bc441f66583ff1c519be87716b8e7b944790",
+          "ryn_image_studio/web/index.html": "4f0a300d3d353e3303caf68b3dc6a71c5a5c044e7a13c9c6ef4346c6eec0956a",
+          "ryn_image_studio/web/variants.js": "144eb65a0ffb01b9d0ef8076cfdf7528639f53b0c1a31bea423a8eaa826919ad",
+          "ryn_image_studio/web/view.js": "a55b059206c6dd27037eb8b38bb615b250ec613734eb6dc55a37676805829af4"
         },
-        "size": 27049,
-        "sha256": "4dac1eeb18e901aa214ac5704e5ef76f5fbe8f08f4aa3207cdab026a58b5942f",
-        "url": "https://github.com/yeogirlyun/rynmesh/releases/download/plugin-image-studio-v1.0.0/image-studio-1.0.0.zip"
+        "size": 45501,
+        "sha256": "3c3d64da6bf7245d0b430cf08a7750cb53b041aa247f3a9bd04d66d6cfb01de3",
+        "url": "https://github.com/yeogirlyun/rynmesh/releases/download/plugin-image-studio-v1.1.0/image-studio-1.1.0.zip"
       }
     ]
   }
