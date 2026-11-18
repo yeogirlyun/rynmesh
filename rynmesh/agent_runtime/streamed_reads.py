@@ -43,12 +43,12 @@ def _safe_error(exc):
     return code if isinstance(exc, AgentError) and re.fullmatch(r"agent_[a-z0-9_]{1,100}", code) else "agent_operation_failed"
 
 
-def _tool_message(record, *, server_note=None):
-    result = record["result"]
-    shown = {**result, "server_note": server_note} if server_note and isinstance(result, dict) else result
+def _tool_message(record, *, notice=None):
     message = {"role": "tool", "tool_call_id": record["call"]["call_id"],
-               "content": encoded(shown).decode(),
+               "content": encoded(record["result"]).decode(),
                "context_epoch": record["stamp"]["context_epoch"]}
+    if notice:
+        message["host_budget_notice"] = notice
     if record.get("origin"):
         message["resource_origin"] = copy.deepcopy(record["origin"])
     return message
@@ -89,7 +89,7 @@ def _publish(row, records, *, recover=False):
     unanswered = [record for record in records if record["call"]["call_id"] not in answered]
     notice = budget.notice(row) if unanswered else None
     for index, record in enumerate(unanswered):
-        messages.append(_tool_message(record, server_note=notice if index == len(unanswered) - 1 else None))
+        messages.append(_tool_message(record, notice=notice if index == len(unanswered) - 1 else None))
         _apply_observed(row, record)
         event(row, "tool_result", tool=record["call"]["name"], call_id=record["call"]["call_id"],
               operation_id=record["call"]["operation_id"], result=record["result"], streamed=True)

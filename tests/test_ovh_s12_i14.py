@@ -45,7 +45,7 @@ def test_t1_t2_budget_wrapup_fallback_is_tagged_but_not_leaked_to_model(tmp_path
     assert all("origin" not in m and "synthetic" not in m for m in sent)
 
 
-def test_t1_budget_notice_already_on_tool_result_keeps_server_note_path(tmp_path):
+def test_t1_budget_wrapup_follows_tool_exchange_without_changing_result(tmp_path):
     runtime, model, _, _ = make_runtime(tmp_path, assistant("Progress report"))
     runtime.update_settings({"max_steps": 32})
     task = runtime.create({"message": "Inspect and report"})
@@ -56,9 +56,12 @@ def test_t1_budget_notice_already_on_tool_result_keeps_server_note_path(tmp_path
             {"role": "tool", "tool_call_id": "prior", "content": '{"ok":true}', "context_epoch": 0}])
     runtime.store.transaction(seed)
     advance(runtime)
-    tool = next(m for m in model.calls[-1][1] if m["role"] == "tool")
-    assert "Do NOT call any tools" in json.loads(tool["content"])["server_note"]
-    assert not any('<host_note kind="budget_wrap_up">' in _text(m) for m in model.calls[-1][1])
+    sent = model.calls[-1][1]
+    tool = next(m for m in sent if m["role"] == "tool")
+    assert json.loads(tool["content"]) == {"ok": True}
+    notice = _kind(sent, "budget_wrap_up")
+    assert notice["role"] == "user" and "Do NOT call any tools" in _text(notice)
+    assert sent.index(notice) > sent.index(tool)
 
 
 def test_t1_t4_continuation_is_durable_host_data_and_old_notes_stay_untouched(tmp_path):

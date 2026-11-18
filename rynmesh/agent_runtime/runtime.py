@@ -787,17 +787,14 @@ class AgentRuntime(AgentLoop):
                         reference,
                         max_bytes=selected["limits"]["max_output_chars"],
                     )
-                shown = (
-                    {**result, "server_note": notice}
-                    if notice and index == len(batch) - 1 and isinstance(result, dict)
-                    else result
-                )
                 message = {
                     "role": "tool",
                     "tool_call_id": call["call_id"],
-                    "content": encoded(shown).decode(),
+                    "content": encoded(result).decode(),
                     "context_epoch": selected.get("context_epoch", 0),
                 }
+                if notice and index == len(batch) - 1:
+                    message["host_budget_notice"] = notice
                 if is_err or (isinstance(result, dict) and result.get("error")):
                     message["is_error"] = True
                 if origin:

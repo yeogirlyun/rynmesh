@@ -130,7 +130,7 @@ def test_real_tool_history_keeps_notice_and_subsequent_request_prefix(tmp_path):
         if runtime.get(created['id'])['status'] == 'completed':
             break
     saved = runtime.store.read()['tasks'][created['id']]
-    notes = [json.loads(m['content']).get('server_note') for m in saved['messages'] if m['role'] == 'tool']
+    notes = [m.get('host_budget_notice') for m in saved['messages'] if m['role'] == 'tool']
     context_notes = [note for note in notes if note and 'Server context notice:' in note]
     assert len(context_notes) == 1, (notes, capacity, next_size, measurements)
     first_low = measurements[1]
@@ -138,7 +138,10 @@ def test_real_tool_history_keeps_notice_and_subsequent_request_prefix(tmp_path):
     assert .15 <= remaining < .30
     assert len(requests) == 4 and len(tools.calls) == 3
     first_result = [m for m in requests[2] if m['role'] == 'tool'][-1]
-    assert json.loads(first_result['content'])['server_note'] == context_notes[0]
+    assert 'server_note' not in json.loads(first_result['content'])
     assert next(m for m in requests[3] if m.get('tool_call_id') == first_result['tool_call_id']) == first_result
     assert requests[3][0] == requests[2][0]
-    assert not any('Server context notice:' in str(m.get('content')) for m in requests[3] if m['role'] != 'tool')
+    for request in requests[2:4]:
+        notices = [m for m in request if 'Server context notice:' in str(m.get('content'))]
+        assert len(notices) == 1 and notices[0]['role'] == 'user'
+        assert '<host_note kind="budget">' in notices[0]['content'] and context_notes[0] in notices[0]['content']

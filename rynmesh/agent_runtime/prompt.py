@@ -165,8 +165,20 @@ def provider_messages(messages: list[dict], *, include_current_excerpts=True) ->
     from .input_attachments import provider_content
     latest_owner = max((i for i, m in enumerate(messages) if m.get("role") == "user" and not m.get("synthetic")
                         and (m.get("ui") or {}).get("kind") not in {"subagent_notification", "runtime_note"}), default=-1) if include_current_excerpts else -1
-    return [{**{key: copy.deepcopy(value) for key, value in message.items() if key in allowed},
-             "content": copy.deepcopy(provider_content(message, current_turn=index == latest_owner))} for index, message in enumerate(messages)]
+    projected = []
+    budget_notice = None
+    for index, message in enumerate(messages):
+        projected.append({**{key: copy.deepcopy(value) for key, value in message.items() if key in allowed},
+                          "content": copy.deepcopy(provider_content(message, current_turn=index == latest_owner))})
+        if message["role"] == "tool":
+            budget_notice = message.get("host_budget_notice") or budget_notice
+            # Place host context after the complete tool exchange.
+            next_is_tool = index + 1 < len(messages) and messages[index + 1]["role"] == "tool"
+            if budget_notice and not next_is_tool:
+                note = host_note("budget", budget_notice)
+                projected.append({"role": note["role"], "content": note["content"]})
+                budget_notice = None
+    return projected
 
 
 def select_base_instructions(*, model_base=None, persisted_base=None, session_base=None) -> str:

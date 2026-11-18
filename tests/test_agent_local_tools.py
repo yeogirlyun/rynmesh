@@ -315,14 +315,14 @@ def test_budget_notice_reaches_the_model_once_and_is_not_written_to_the_receipt(
             break
     assert current["status"] == "completed", current.get("error")
     final_request = requests[-1]["messages"]  # Normal completion has no extra checker request.
-    notices = [m for m in final_request if m.get("role") == "tool" and "Server budget notice" in m.get("content", "")]
+    notices = [m for m in final_request if m.get("role") == "user" and "Server budget notice" in m.get("content", "")]
     assert len(notices) == 1 and "5 of 7" in notices[0]["content"] and "Conclude from the evidence" in notices[0]["content"]
     assert "make the change now" not in notices[0]["content"]
     assert all("server_note" not in json.dumps(e.get("result", {})) for e in current["events"] if e["type"] == "tool_result")
     stored_row = runtime.store.read()["tasks"][task["id"]]
     assert all("server_note" not in json.dumps(r.get("result", {})) for r in stored_row.get("receipts", []))
 
-    # Verify multi-read streamed publication attaches server_note only to the last newly
+    # Verify multi-read streamed publication stores notice metadata only on the last newly
     # published tool message and never advances budget_notice_level on rejected/idempotent calls.
     row = {
         "id": "task-batch",
@@ -361,8 +361,13 @@ def test_budget_notice_reaches_the_model_once_and_is_not_written_to_the_receipt(
     records[0]["stamp"] = stamp
     assert _publish(row, records) is True
     assert row["budget_notice_level"] == 1
-    published_tools = [json.loads(m["content"]) for m in row["messages"] if m.get("role") == "tool"]
-    assert "server_note" not in published_tools[0] and "5 of 7" in published_tools[1]["server_note"]
+    from rynmesh.agent_runtime.prompt import provider_messages
+
+    published = provider_messages(row["messages"])
+    assert [m["role"] for m in published] == ["assistant", "tool", "tool", "user"]
+    assert [json.loads(m["content"]) for m in published[1:3]] == [r["result"] for r in records]
+    assert '<host_note kind="budget">' in published[-1]["content"]
+    assert "5 of 7" in published[-1]["content"]
     assert all("server_note" not in r["result"] for r in records)
     assert all("server_note" not in e["result"] for e in row["events"] if e["type"] == "tool_result")
     row["steps"] = 6  # Crosses 85% threshold, but idempotent re-publish has no unanswered calls.

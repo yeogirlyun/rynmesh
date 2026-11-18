@@ -492,32 +492,12 @@ class AgentLoop:
                     "Do NOT call any tools in this turn. Summarize all progress, findings, URLs/paths discovered so far, "
                     "and clearly list what remains so the owner can raise the limit and continue."
                 )
-                injected = False
-                for idx in range(len(messages) - 1, -1, -1):
-                    msg = messages[idx]
-                    if isinstance(msg, dict) and msg.get("role") == "tool" and isinstance(msg.get("content"), str):
-                        try:
-                            parsed_tool = json.loads(msg["content"])
-                            if isinstance(parsed_tool, dict):
-                                existing_note = parsed_tool.get("server_note")
-                                parsed_tool["server_note"] = f"{existing_note}\n{wrap_up_note}" if existing_note else wrap_up_note
-                                candidate_msgs = [*messages[:idx], {**msg, "content": encoded(parsed_tool).decode()}, *messages[idx + 1:]]
-                                if self._request_context_bytes(selected, candidate_msgs, specs) <= capacity:
-                                    wrapped_candidate = memory_integration.ContextMessages(candidate_msgs)
-                                    wrapped_candidate.disclosed_memory = prior_disclosed
-                                    wrapped_candidate.subagent_notifications = prior_subagent_notifs
-                                    messages = wrapped_candidate
-                                    injected = True
-                                break
-                        except Exception:
-                            pass
-                if not injected:
-                    candidate_msgs = [*messages, host_note("budget_wrap_up", wrap_up_note)]
-                    if self._request_context_bytes(selected, candidate_msgs, specs) <= capacity:
-                        wrapped_candidate = memory_integration.ContextMessages(candidate_msgs)
-                        wrapped_candidate.disclosed_memory = prior_disclosed
-                        wrapped_candidate.subagent_notifications = prior_subagent_notifs
-                        messages = wrapped_candidate
+                candidate_msgs = [*messages, host_note("budget_wrap_up", wrap_up_note)]
+                if self._request_context_bytes(selected, candidate_msgs, specs) <= capacity:
+                    wrapped_candidate = memory_integration.ContextMessages(candidate_msgs)
+                    wrapped_candidate.disclosed_memory = prior_disclosed
+                    wrapped_candidate.subagent_notifications = prior_subagent_notifs
+                    messages = wrapped_candidate
 
             router_specs = [
                 *specs,
@@ -2529,11 +2509,11 @@ class AgentLoop:
                 row["elapsed_seconds"] += time.monotonic() - started
                 self._apply_deferred_observed_files(row, selected, deferred_observed_files)
                 tool_menu.record_usage(row, [call["name"]], epoch=selected.get("context_epoch", 0))
-                # The receipt keeps the exact result; only the model-visible copy carries the budget notice.
-                notice = self._budget_notice(row)
-                shown = {**result, "server_note": notice} if notice and isinstance(result, dict) else result
-                shown = results.model_projection(call["name"], shown)
+                shown = results.model_projection(call["name"], result)
                 message = {"role": "tool", "tool_call_id": call["call_id"], "content": encoded(shown).decode(), "context_epoch": selected.get("context_epoch", 0)}
+                notice = self._budget_notice(row)
+                if notice:
+                    message["host_budget_notice"] = notice
                 if isinstance(result, dict) and result.get("error"):
                     message["is_error"] = True
                 if origin:
@@ -2757,10 +2737,11 @@ class AgentLoop:
                         reference,
                         max_bytes=selected["limits"]["max_output_chars"],
                     )
-                shown = {**result, "server_note": notice} if notice and index == len(batch) - 1 and isinstance(result, dict) else result
-                shown = results.model_projection(call["name"], shown)
+                shown = results.model_projection(call["name"], result)
                 message = {"role": "tool", "tool_call_id": call["call_id"], "content": encoded(shown).decode(),
                            "context_epoch": selected.get("context_epoch", 0)}
+                if notice and index == len(batch) - 1:
+                    message["host_budget_notice"] = notice
                 if failed or (isinstance(result, dict) and result.get("error")):
                     message["is_error"] = True
                 if origin:
