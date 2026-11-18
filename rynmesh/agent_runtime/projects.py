@@ -563,6 +563,9 @@ def guidance(row):
         f"{project_block}"
         "</environment_context>"
     )
+    if project:
+        env_block += ("\n\nReview: list problems the change introduced, most serious first, each with [P0-P3], "
+                      "file:line and the triggering input; then open questions. Say so if none.")
     if not project and not workspace:
         return env_block
     rules = (

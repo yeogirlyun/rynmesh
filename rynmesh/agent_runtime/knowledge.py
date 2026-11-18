@@ -7,6 +7,23 @@ import re
 from .store import AgentError, encoded
 
 SKILLS = {
+    "code-review": {"id": "code-review", "version": "1", "title": "Code review",
+        "description": "Review changes for introduced, actionable problems, with severity, affected file lines and triggering inputs.",
+        "content": "审查别人的改动；项目或 owner 给的具体准则优先。 "
+                   "Use git merge-base with the intended base branch to establish the diff; inspect surrounding code, callers and relevant tests. "
+                   "1) Flag meaningful correctness, performance, security or maintainability problems. "
+                   "2) Keep each finding discrete and actionable. "
+                   "3) Match the repository's existing rigor instead of demanding checks or documentation it does not require. "
+                   "4) Report only problems introduced by this change, not pre-existing defects. "
+                   "5) Select issues the author would fix if aware of them. "
+                   "6) State the triggering input and necessary conditions; do not rely on unstated assumptions about intent or usage. "
+                   "7) Identify affected code and demonstrate the impact on its actual callers; speculation that something elsewhere might break is insufficient. "
+                   "8) Distinguish an intentional behavior change from an accidental defect. "
+                   "List findings most serious first. Each finding needs [P0-P3] (one concrete priority, such as [P1]), "
+                   "file:line in the changed code, the triggering input, and a concise explanation of the cause and impact. "
+                   "Assign severity honestly: P0 is an unconditional release blocker, P1 urgent, P2 normal, P3 low; do not inflate it. "
+                   "Quote at most 3 lines of code and use the smallest relevant line range. "
+                   "Finish with open questions. If there are no findings, say so plainly rather than inventing issues."},
     "project-development": {"id": "project-development", "version": "2", "title": "Project development",
         "description": "Load project instructions, locate code, make focused changes and run the project's tests.",
         "content": "When working on code or tests in this repository, use the project layout and entry pages; read only missing guidance and relevant source/test/data ranges together. "
