@@ -2981,10 +2981,17 @@ IMAGE_LIMIT_OMITTED_NOTE = "一张旧图片因本次图片数量或总大小超�
 
 def _latest_owner_message(messages):
     from .prompt import PROGRESS_TAIL_PREFIX
-    # The progress footer is carried as user-role host data, not an owner turn.
+    # The progress footer and host notes (S12-I14) are user-role host data, not owner turns.
+    def host_data(message):
+        if message.get("synthetic"):
+            return True
+        content = message.get("content")
+        if isinstance(content, list):
+            content = next((part.get("text") for part in content
+                            if isinstance(part, dict) and part.get("type") == "text"), "")
+        return isinstance(content, str) and content.startswith((PROGRESS_TAIL_PREFIX, "<host_note"))
     return max((index for index, message in enumerate(messages)
-                if isinstance(message, dict) and message.get("role") == "user"
-                and not (isinstance(message.get("content"), str) and message["content"].startswith(PROGRESS_TAIL_PREFIX))), default=-1)
+                if isinstance(message, dict) and message.get("role") == "user" and not host_data(message)), default=-1)
 
 
 def fit_images_for_shared_route(messages: list[dict[str, Any]], carrier: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
