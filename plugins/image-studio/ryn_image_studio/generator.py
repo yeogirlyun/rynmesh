@@ -82,12 +82,13 @@ def _classify(text: str) -> str:
     return "generation_failed"
 
 
-def instructions(reference_count: int) -> str:
+def instructions(reference_count: int, *, transparent: bool = False) -> str:
     base = ("Generate exactly one image with the native image_gen imagegen tool. "
             "Call it immediately, passing the user's image brief verbatim as the imagegen prompt. "
             "Do not add stylistic, layout, color or subject restrictions that are absent from the brief. "
             "No skills, shell, web, plugins or other tools. Do not substitute code or SVG. "
-            "If unavailable, report the failure. Set transparent_background to false.")
+            "If unavailable, report the failure. "
+            f"Set transparent_background to {str(transparent).lower()}.")
     if reference_count:
         base += (f" The user attached {reference_count} reference image(s) before the brief; "
                  f"call imagegen with num_last_images_to_include set to {reference_count} so they are used.")
@@ -95,7 +96,8 @@ def instructions(reference_count: int) -> str:
 
 
 def generate(brief: str, *, references: list[bytes] | None = None,
-             cancelled: Callable[[], bool] | None = None, timeout: int = GENERATION_TIMEOUT_S
+             cancelled: Callable[[], bool] | None = None, timeout: int = GENERATION_TIMEOUT_S,
+             transparent: bool = False
              ) -> tuple[bytes, dict[str, Any]]:
     """One image as PNG bytes plus metadata; raises GenerationError with a stable code."""
     from rynmesh.llm_package.adapters import AdapterError
@@ -117,7 +119,8 @@ def generate(brief: str, *, references: list[bytes] | None = None,
         model = model or next((m.get("id") for m in models if "image" in m.get("inputModalities", [])), None)
         if not model:
             raise GenerationError("codex_signed_out")
-        thread = _start_thread(rpc, model=model, dynamic=[], instructions=instructions(len(references)))
+        thread = _start_thread(rpc, model=model, dynamic=[],
+                               instructions=instructions(len(references), transparent=transparent))
         items: list[dict[str, Any]] = [{"type": "image", "url": "data:image/png;base64," + base64.b64encode(r).decode()}
                                        for r in references]
         items.append({"type": "text", "text": brief, "text_elements": []})

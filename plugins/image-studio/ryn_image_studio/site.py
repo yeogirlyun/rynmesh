@@ -22,7 +22,7 @@ from .jobs import MAX_UPLOAD_BYTES, JobError, JobStore, caller_key
 SITE_ID = "image-studio"
 TITLE = "做图"
 WEB_ROOT = Path(__file__).resolve().parent / "web"
-JOB_PATH = re.compile(r"^/api/jobs/([0-9a-f]{24})(?:/(cancel|retry|image|thumb))?$")
+JOB_PATH = re.compile(r"^/api/jobs/([0-9a-f]{24})(?:/(cancel|retry|derive|image|thumb))?$")
 
 ASSET_PATH = re.compile(r"^/api/assets/([0-9a-f]{24})(/thumb)?$")
 
@@ -128,6 +128,12 @@ class StudioSite:
                 return _json(200, self.store.cancel(caller, job_id))
             if action == "retry" and method == "POST":
                 return _json(200, self.store.retry(caller, job_id))
+            if action == "derive" and method == "POST":
+                try:
+                    value = json.loads(body)
+                except ValueError:
+                    return _error("image_bad_request", 400)
+                return _json(200, {"jobs": self.store.derive(caller, name, peer, job_id, value)})
             if action in ("image", "thumb") and method in ("GET", "HEAD"):
                 row = self.store.job(caller, job_id)
                 if row["state"] != "succeeded":
