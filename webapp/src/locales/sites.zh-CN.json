@@ -26,6 +26,11 @@
   "offlineBody": "这个页面在{{name}}上运行。对方开机并打开 Ryn 后，这里会自动恢复。",
   "lastSeen": "上次在线：{{time}}",
   "reconnect": "重新连接",
+  "pin": "置顶",
+  "pinned": "已置顶",
+  "switchDevice": "换一台",
+  "pinFailed": "置顶状态更新失败，请重试。",
+  "switchFailed": "暂时打不开这台电脑，请试试其它电脑。",
   "back": "返回",
   "errors": {
     "site_denied": "你没有打开这个页面的权限，或者对方已关闭开放。",
