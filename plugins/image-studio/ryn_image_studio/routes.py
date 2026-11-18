@@ -48,6 +48,8 @@ class ImageStudio:
             if method == "GET" and path == "/usage":
                 return _json(200, {"rows": self.store.usage(day_start=self.day_start())})
             parts = path.strip("/").split("/")
+            if method == "GET" and len(parts) == 2 and parts[0] == "jobs":
+                return _json(200, self.store.view(self.store.job(None, parts[1]), owner=True))
             if method == "POST" and len(parts) == 3 and parts[0] == "jobs":
                 if parts[2] == "cancel":
                     self.store.cancel(None, parts[1])
@@ -102,6 +104,10 @@ def install_image_studio(app: FastAPI, *, home: Path, sites: Any, local_control:
     @app.get("/api/local/image-studio/queue")
     async def image_studio_queue(request: Request):
         return await run(request, lambda: {"jobs": studio.queue()})
+
+    @app.get("/api/local/image-studio/jobs/{job_id}")
+    async def image_studio_job(job_id: str, request: Request):
+        return await run(request, lambda: studio.store.view(studio.store.job(None, job_id), owner=True))
 
     @app.get("/api/local/image-studio/usage")
     async def image_studio_usage(request: Request):

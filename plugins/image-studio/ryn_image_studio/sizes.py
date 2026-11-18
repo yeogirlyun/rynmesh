@@ -60,21 +60,19 @@ def ratio_phrase(width: int, height: int) -> str:
 
 
 def crop_safe_area(width: int, height: int) -> str | None:
-    """The centered band retained from the requested 2:1 or 1:2 composition."""
+    """Keep key content inside a centered band at the final aspect ratio."""
+    divisor = gcd(width, height)
+    ratio = f"{width // divisor}:{height // divisor}"
     if width > 2 * height:
-        percent = 200 * height / width
-        axis = "高度"
-        band = f"画面中间高度 {percent:.4g}% 的横条里，上下只放可以裁掉的背景"
+        band, margins, axis = "横条", "上方和下方", "高度"
     elif height > 2 * width:
-        percent = 200 * width / height
-        axis = "宽度"
-        band = f"画面中间宽度 {percent:.4g}% 的竖条里，左右只放可以裁掉的背景"
+        band, margins, axis = "竖条", "左侧和右侧", "宽度"
     else:
         return None
-    inset = percent * 0.65
-    return (f"成品会居中裁成 {width}×{height} 像素，所有商品和文字必须完整放在{band}。"
-            f"请主动缩小主体和文字，让完整轮廓（包括顶部和底部）及所有文字都放进居中的留边区域，"
-            f"整体最多占生成画面{axis}的 {inset:.4g}%。")
+    return (f"把整张 banner 画在画面正中一条宽高比 {ratio} 的{band}里，"
+            f"{band}{margins}是纯背景色的空白，不放任何东西；"
+            f"商品整体缩小到{band}{axis}的 80% 以内，"
+            "商品的完整轮廓和所有文字都留在条内。")
 
 
 def fit(raw: bytes, width: int, height: int) -> bytes:

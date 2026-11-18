@@ -20,24 +20,23 @@ def test_scene_presets_can_be_submitted(studio, scene, width, height):
 
 
 @pytest.mark.parametrize(("width", "height", "ratio", "safe_band"), [
-    (1920, 600, "2:1", "画面中间高度 62.5% 的横条里，上下只放可以裁掉的背景"),
-    (1200, 400, "2:1", "画面中间高度 66.67% 的横条里，上下只放可以裁掉的背景"),
-    (600, 1920, "1:2", "画面中间宽度 62.5% 的竖条里，左右只放可以裁掉的背景"),
+    (1920, 600, "2:1", "16:5"),
+    (1200, 400, "2:1", "3:1"),
+    (600, 1920, "1:2", "5:16"),
 ])
-def test_extreme_ratios_include_the_center_crop_in_the_brief(studio, width, height, ratio, safe_band):
+def test_extreme_ratios_include_the_center_band_in_the_brief(studio, width, height, ratio, safe_band):
     store, _, site, _ = studio
     job = submit(site, purpose="custom", width=width, height=height)[0]
     brief = compose_brief(store.job(None, job["id"]))
     assert f"宽高比 {ratio}的图片。" in brief.splitlines()[0]
-    assert f"成品会居中裁成 {width}×{height} 像素" in brief
-    assert safe_band in brief
+    assert f"画面正中一条宽高比 {safe_band}" in brief
 
 
 @pytest.mark.parametrize(("width", "height"), [(750, 390), (800, 400), (400, 800), (1024, 1024)])
 def test_regular_ratios_need_no_safe_band(studio, width, height):
     store, _, site, _ = studio
     job = submit(site, purpose="custom", width=width, height=height)[0]
-    assert "成品会居中裁成" not in compose_brief(store.job(None, job["id"]))
+    assert "画面正中一条" not in compose_brief(store.job(None, job["id"]))
 
 
 @pytest.mark.parametrize(("source", "target"), [((800, 400), (1920, 600)), ((400, 800), (600, 1920))])

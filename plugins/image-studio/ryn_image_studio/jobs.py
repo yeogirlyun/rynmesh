@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   id TEXT PRIMARY KEY, caller TEXT NOT NULL, caller_name TEXT NOT NULL, caller_peer TEXT NOT NULL,
   batch TEXT NOT NULL, purpose TEXT NOT NULL, width INTEGER NOT NULL, height INTEGER NOT NULL,
   brief TEXT NOT NULL, words TEXT NOT NULL, refs TEXT NOT NULL, source_job TEXT,
-  state TEXT NOT NULL, failure TEXT, priority INTEGER NOT NULL DEFAULT 0, attempt INTEGER NOT NULL DEFAULT 0,
+  state TEXT NOT NULL, failure TEXT, failure_detail TEXT, priority INTEGER NOT NULL DEFAULT 0, attempt INTEGER NOT NULL DEFAULT 0,
   created_at REAL NOT NULL, started_at REAL, finished_at REAL, seconds REAL, model TEXT,
   scene TEXT, style TEXT, copy_json TEXT NOT NULL DEFAULT '{}'
 );
@@ -81,7 +81,7 @@ class JobStore:
         self._db.executescript(SCHEMA)
         columns = {row["name"] for row in self._db.execute("PRAGMA table_info(jobs)")}
         for name, definition in (("scene", "TEXT"), ("style", "TEXT"),
-                                 ("copy_json", "TEXT NOT NULL DEFAULT '{}'")):
+                                 ("copy_json", "TEXT NOT NULL DEFAULT '{}'"), ("failure_detail", "TEXT")):
             if name not in columns:
                 self._db.execute(f"ALTER TABLE jobs ADD COLUMN {name} {definition}")
         self.assets = AssetStore(self.root / "assets", self._db, self._lock, clock)
@@ -258,7 +258,8 @@ class JobStore:
             out["position"] = ahead + (0 if running else 1)
             out["eta_seconds"] = round(ahead * average)
         if owner:
-            out.update({"caller_name": row["caller_name"], "caller": row["caller"], "priority": row["priority"]})
+            out.update({"caller_name": row["caller_name"], "caller": row["caller"],
+                        "priority": row["priority"], "failure_detail": row["failure_detail"]})
         return out
 
     def list(self, caller: str, *, state: str = "all", limit: int = 100) -> list[dict[str, Any]]:
@@ -288,7 +289,7 @@ class JobStore:
         if row["state"] not in ("failed", "cancelled"):
             raise JobError("image_not_retryable", 409)
         with self.changed:
-            self._exec("UPDATE jobs SET state='queued', failure=NULL, attempt=0, started_at=NULL, finished_at=NULL, "
+            self._exec("UPDATE jobs SET state='queued', failure=NULL, failure_detail=NULL, attempt=0, started_at=NULL, finished_at=NULL, "
                        "created_at=?, priority=0 WHERE id=?", (self.clock(), job_id))
             self.changed.notify_all()
         return self.view(self.job(caller, job_id))
@@ -315,7 +316,8 @@ class JobStore:
                        (self.clock(), row["id"]))
             return self.job(None, row["id"])
 
-    def finish(self, job_id: str, *, png: bytes | None = None, failure: str | None = None, model: str = "") -> None:
+    def finish(self, job_id: str, *, png: bytes | None = None, failure: str | None = None,
+               failure_detail: str | None = None, model: str = "") -> None:
         row = self.job(None, job_id)
         now = self.clock()
         seconds = round(now - (row["started_at"] or now), 1)
@@ -323,12 +325,12 @@ class JobStore:
             if png is not None:
                 self.image_path(row, "png").write_bytes(png)
                 self.image_path(row, "jpg").write_bytes(sizes.thumbnail(png))
-                self._exec("UPDATE jobs SET state='succeeded', failure=NULL, finished_at=?, seconds=?, model=? WHERE id=?",
+                self._exec("UPDATE jobs SET state='succeeded', failure=NULL, failure_detail=NULL, finished_at=?, seconds=?, model=? WHERE id=?",
                            (now, seconds, model, job_id))
             else:
                 state = "cancelled" if failure == "cancelled" else "failed"
-                self._exec("UPDATE jobs SET state=?, failure=?, finished_at=?, seconds=? WHERE id=?",
-                           (state, failure or "generation_failed", now, seconds, job_id))
+                self._exec("UPDATE jobs SET state=?, failure=?, failure_detail=?, finished_at=?, seconds=? WHERE id=?",
+                           (state, failure or "generation_failed", failure_detail, now, seconds, job_id))
             self.changed.notify_all()
 
     def recover(self) -> None:
@@ -435,7 +437,7 @@ class Worker:
         except generator.GenerationError as exc:
             if self._stop.is_set() and exc.code == "cancelled" and not self.store.cancel_requested(job["id"]):
                 return  # shutting down: recover() requeues it on the next start
-            self.store.finish(job["id"], failure=exc.code)
+            self.store.finish(job["id"], failure=exc.code, failure_detail=exc.detail)
         except JobError as exc:
             self.store.finish(job["id"], failure=exc.code if exc.code == REFERENCE_MISSING else "generation_failed")
         except Exception:
