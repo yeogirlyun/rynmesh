@@ -517,7 +517,11 @@ def test_agents_md_32kib_budget_truncation_marker_and_task_event(tmp_path, size_
 
     if not expect_truncated:
         assert "[AGENTS.md truncated:" not in rendered
-        assert rendered == _legacy_untruncated_guidance(row, raw_bytes.decode("utf-8"))
+        expected = _legacy_untruncated_guidance(row, raw_bytes.decode("utf-8")).replace(
+            "</environment_context>",
+            "</environment_context>\n\nReview: list problems the change introduced, most serious first, each with [P0-P3], "
+            "file:line and the triggering input; then open questions. Say so if none.", 1)
+        assert rendered == expected
         assert trunc_events == []
     else:
         inner = rendered.split("<INSTRUCTIONS>\n", 1)[1].rsplit("\n</INSTRUCTIONS>", 1)[0]
