@@ -24,5 +24,34 @@
   "noMatches": "No matching apps.",
   "loadPinsError": "Could not load pinned apps.",
   "pinError": "Could not update pinned apps.",
-  "openError": "Could not open the shared app."
+  "openError": "Could not open the shared app.",
+  "sharedList": {
+    "summary": "Of {{total}} colleagues, {{people}} have shared {{apps}} apps.",
+    "filters": {
+      "all": "All",
+      "online": "Online only",
+      "pinned": "My pins"
+    },
+    "refresh": "Refresh",
+    "refreshing": "Refreshing…",
+    "loading": "Loading apps shared by colleagues…",
+    "empty": "Apps your colleagues share will appear here.",
+    "lastSeen": "Last seen {{time}}",
+    "idle": "Idle now",
+    "queue": "Queue: {{length}}, about {{wait}}",
+    "minutes_one": "{{count}} minute",
+    "minutes_other": "{{count}} minutes",
+    "seconds_one": "{{count}} second",
+    "seconds_other": "{{count}} seconds",
+    "devices": "{{total}} devices sharing · {{online}} online",
+    "device": "{{name}}’s computer",
+    "pin": "Pin {{title}} from {{name}}",
+    "unpin": "Unpin {{title}} from {{name}}",
+    "errors": {
+      "load": "Could not load apps shared by colleagues.",
+      "pins": "Could not load pinned apps.",
+      "pin": "Could not update pinned apps.",
+      "open": "Could not open the shared app."
+    }
+  }
 }

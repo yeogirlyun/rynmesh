@@ -9,7 +9,7 @@ import AppsHub from "./AppsHub";
 vi.mock("./CraftApps", () => ({
   default: ({ manage }: { manage?: boolean }) => <div>{manage ? "Legacy plugin manager" : "Legacy app launcher"}</div>,
 }));
-vi.mock("./NodeSites", () => ({ default: () => <div>Legacy shared list</div> }));
+vi.mock("./AppsShared", () => ({ default: () => <div>Legacy shared list</div> }));
 vi.mock("../domain/apps", async importOriginal => ({
   ...await importOriginal<typeof import("../domain/apps")>(),
   getPins: vi.fn(),
