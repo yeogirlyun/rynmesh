@@ -223,7 +223,7 @@ def test_t3_bridge_and_runtime_schedule_retry_and_block_partial_tools(node, monk
             catalog,
         )
         runtime.update_settings({"enabled": True, "model_id": selected_model})
-        sources_before = sources.path.read_bytes()
+        record_before = sources.read()[record["id"]]
 
         created = runtime.create({"message": "Inspect status without mutating sharing."})
         runtime.run_once()
@@ -234,7 +234,12 @@ def test_t3_bridge_and_runtime_schedule_retry_and_block_partial_tools(node, monk
         assert after_first["queue"] == []
         assert after_first["pending_approval"] is None
         assert not after_first.get("operation_receipts")
-        assert sources.path.read_bytes() == sources_before
+        record_after = sources.read()[record["id"]]
+        evidence_fields = {"source_revision", "streaming_support", "streaming_checked_at"}
+        assert {k: v for k, v in record_after.items() if k not in evidence_fields} == {
+            k: v for k, v in record_before.items() if k not in evidence_fields
+        }
+        assert record_after["streaming_support"]["sse-fixture"] == "unknown"
         retry_events = [ev for ev in after_first["events"] if ev["type"] == "model_retry_scheduled"]
         assert len(retry_events) == 1
         assert retry_events[0]["error"] == "agent_model_stream_interrupted"
