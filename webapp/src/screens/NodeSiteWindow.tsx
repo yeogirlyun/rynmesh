@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { NodeSiteError, nodeSites, type OpenedSiteStatus } from "../domain/nodeSites";
+import { isPinned, recentShared, sharedApps, togglePin, type Pin, type SharedAppProvider } from "../domain/apps";
 import "./nodeSites.css";
 
 const POLL_MS = 10_000;
@@ -17,12 +18,16 @@ function safeEntry(value: string | null): string {
  * the page cannot fake which computer it comes from or whether it is online.
  */
 export default function NodeSiteWindow() {
+  const { key = "" } = useParams();
+  return <SharedWindow key={key} siteKey={key} />;
+}
+
+function SharedWindow({ siteKey: key }: { siteKey: string }) {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
-  const { key = "" } = useParams();
   const [params] = useSearchParams();
   const entry = safeEntry(params.get("entry"));
-  const [state, setState] = useState<OpenedSiteStatus | null>(null);
+  const [state, setState] = useState<(OpenedSiteStatus & { provider_resource?: string }) | null>(null);
   const [error, setError] = useState("");
   const [generation, setGeneration] = useState(0);
   const [checking, setChecking] = useState(false);
@@ -64,6 +69,79 @@ export default function NodeSiteWindow() {
   const owner = state?.member_name ? t("sites.deviceOf", { name: state.member_name }) : state?.device_name || "";
   const title = params.get("title") || state?.site_id || "";
 
+  const siteId = state?.site_id;
+  const peerId = state?.peer_id;
+  const resource = state?.provider_resource;
+  const memberName = state?.member_name || "";
+  const pin = useMemo<Extract<Pin, { kind: "shared" }> | null>(() => {
+    if (!siteId || !peerId || !resource || resource === "local") return null;
+    return { key: `shared:${resource}|${peerId}|${siteId}`, kind: "shared", app_id: siteId, title,
+      provider: { resource, peer_id: peerId, member_name: memberName } };
+  }, [siteId, peerId, resource, title, memberName]);
+  const [pinned, setPinned] = useState(false);
+  const [action, setAction] = useState<"pin" | "switch" | null>(null);
+  const [actionError, setActionError] = useState("");
+  const [others, setOthers] = useState<SharedAppProvider[]>([]);
+
+  useEffect(() => {
+    if (!pin) return;
+    let active = true;
+    isPinned(pin.key).then(value => { if (active) setPinned(value); }).catch(() => {});
+    return () => { active = false; };
+  }, [pin]);
+
+  useEffect(() => {
+    if (pin && state?.online && src && !error) {
+      recentShared.add({ key: pin.key, site_id: pin.app_id, title: pin.title, provider: pin.provider });
+    }
+  }, [pin, state?.online, src, error]);
+
+  useEffect(() => {
+    if (!siteId || !peerId) return;
+    let active = true;
+    sharedApps().then(result => {
+      const app = result.apps.find(item => item.site_id === siteId);
+      if (active) setOthers(app?.providers.filter(p => p.online && p.peer_id !== peerId) ?? []);
+    }).catch(() => { if (active) setOthers([]); });
+    return () => { active = false; };
+  }, [siteId, peerId, state?.online]);
+
+  const changePin = async () => {
+    if (!pin) return;
+    setAction("pin");
+    setActionError("");
+    try {
+      const result = await togglePin(pin);
+      setPinned(result.pins.some(item => item.key === pin.key));
+    } catch {
+      setActionError(t("sites.pinFailed"));
+    } finally {
+      setAction(null);
+    }
+  };
+
+  const switchDevice = async (provider: SharedAppProvider) => {
+    if (!siteId) return;
+    setAction("switch");
+    setActionError("");
+    try {
+      const opened = await nodeSites.open(provider, siteId);
+      const search = new URLSearchParams({ entry: opened.entry, title: opened.title });
+      navigate(`/apps/sites/open/${encodeURIComponent(opened.key)}?${search}`);
+    } catch {
+      setActionError(t("sites.switchFailed"));
+    } finally {
+      setAction(null);
+    }
+  };
+  const picker = others.length > 0 && <select className="ns-button" style={{width: "auto", maxWidth: "100%"}} value="" disabled={action !== null}
+    aria-label={t("sites.switchDevice")} onChange={e => void switchDevice(others[Number(e.target.value)])}>
+    <option value="" disabled>{t("sites.switchDevice")} ({others.length})</option>
+    {others.map((device, index) => <option key={device.provider_resource + "|" + device.peer_id} value={index}>
+      {[device.member_name, device.device_name].filter(Boolean).join(" · ")}
+    </option>)}
+  </select>;
+
   const reconnect = async () => {
     setChecking(true);
     try {
@@ -80,7 +158,7 @@ export default function NodeSiteWindow() {
   const lastSeen = state?.last_seen ? new Date(state.last_seen).toLocaleString() : "";
   return <section className="ns-window">
     <div className="ns-frame-bar">
-      <button className="ns-button" onClick={() => navigate("/apps/sites")}>{t("sites.back")}</button>
+      <button className="ns-button" onClick={() => navigate("/apps?tab=shared")}>{t("sites.back")}</button>
       <div className="ns-frame-title">
         <strong>{[owner, title].filter(Boolean).join(" · ")}</strong>
         {owner && <small>{t("sites.frameNote", { name: owner })}</small>}
@@ -88,7 +166,12 @@ export default function NodeSiteWindow() {
       {state && <span className={`ns-pill${state.online ? " is-online" : ""}`}>
         {state.online ? t("sites.online") : t("sites.offline")}
       </span>}
+      {pin && <button className="ns-button" aria-pressed={pinned} disabled={action !== null}
+        onClick={() => void changePin()}><span aria-hidden="true" style={{color: pinned ? "var(--accent-amber, #b77908)" : undefined}}>
+          {pinned ? "★" : "☆"}</span> {t(pinned ? "sites.pinned" : "sites.pin")}</button>}
+      {picker}
     </div>
+    {actionError && <p className="ns-error" role="alert">{actionError}</p>}
     {error ? <div className="ns-offline" role="alert">
       <p>{t(`sites.errors.${["site_denied", "site_not_found"].includes(error) ? error : "site_unavailable"}`)}</p>
     </div> : state && !state.online ? <div className="ns-offline" role="status">
@@ -96,6 +179,7 @@ export default function NodeSiteWindow() {
       <p>{t("sites.offlineBody", { name: owner })}</p>
       {lastSeen && <p>{t("sites.lastSeen", { time: lastSeen })}</p>}
       <button className="ns-button" disabled={checking} onClick={() => void reconnect()}>{t("sites.reconnect")}</button>
+      {picker}
     </div> : src ? <iframe key={generation} className="ns-frame" title={title || owner} src={src}
       sandbox="allow-scripts allow-forms allow-same-origin allow-downloads" referrerPolicy="no-referrer"
       allow="" /> : <p className="ns-muted" role="status">{t("sites.loading")}</p>}

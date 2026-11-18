@@ -8,6 +8,7 @@ The final file is center-cropped to the exact ratio and resized to the target.
 from __future__ import annotations
 
 import io
+from math import gcd
 from typing import Any
 
 PURPOSES: dict[str, dict[str, Any]] = {
@@ -15,6 +16,13 @@ PURPOSES: dict[str, dict[str, Any]] = {
     "poster": {"label": "海报", "ratio": "3:4", "size": (1024, 1365)},
     "story": {"label": "竖版", "ratio": "9:16", "size": (1024, 1820)},
     "banner": {"label": "横幅", "ratio": "16:9", "size": (1820, 1024)},
+}
+SCENE_SIZES: dict[str, tuple[tuple[int, int], ...]] = {
+    "banner": ((1920, 600), (1200, 400), (750, 390), PURPOSES["banner"]["size"]),
+    "main": (PURPOSES["main"]["size"], (800, 800)),
+    "poster": (PURPOSES["poster"]["size"],),
+    "social": ((1080, 1080), (1080, 1350), (1080, 1920), PURPOSES["story"]["size"]),
+    "detail": ((750, 1000), PURPOSES["banner"]["size"]),
 }
 MIN_SIDE, MAX_SIDE = 256, 2048
 THUMB_SIDE = 384
@@ -37,12 +45,36 @@ def resolve(purpose: Any, width: Any = None, height: Any = None) -> tuple[str, i
 
 def ratio_phrase(width: int, height: int) -> str:
     """Words the model follows for orientation and ratio."""
+    if width > 2 * height:
+        return "横版，宽高比 2:1"
+    if height > 2 * width:
+        return "竖版，宽高比 1:2"
     # The simplest ratio within 0.5 % (1024x1820 is 9:16, not 256:455).
     target = width / height
-    a, b = min(((max(1, round(target * d)), d) for d in range(1, 21)),
-               key=lambda ab: (abs(ab[0] / ab[1] - target) / target > 0.005, ab[1]))
+    divisor = gcd(width, height)
+    candidates = ((round(target * d), d) for d in range(1, 21))
+    a, b = next(((a, b) for a, b in candidates if abs(a / b - target) <= target * 0.005),
+                (width // divisor, height // divisor))
     shape = "竖版" if height > width else "横版" if width > height else "正方形"
     return f"{shape}，宽高比 {a}:{b}（{width}×{height} 像素）"
+
+
+def crop_safe_area(width: int, height: int) -> str | None:
+    """Keep key content inside a centered band at the final aspect ratio."""
+    divisor = gcd(width, height)
+    ratio = f"{width // divisor}:{height // divisor}"
+    if width > 2 * height:
+        band, margins, axis = "横条", "上方和下方", "高度"
+    elif height > 2 * width:
+        band, margins, axis = "竖条", "左侧和右侧", "宽度"
+    else:
+        return None
+    return (f"成品只保留画面正中一条宽高比 {ratio} 的{band}：商品和文字全部放在这条{band}的范围里，"
+            f"{band}{margins}只有背景，不放任何东西；"
+            f"商品整体缩小到{band}{axis}的 80% 以内，"
+            "商品的完整轮廓和所有文字都留在条内。"
+            f"背景铺满整张画面，颜色和质感连续一致；这条{band}只是构图用的范围，"
+            "不要把它画出来，不要边框、色块或分界线。")
 
 
 def fit(raw: bytes, width: int, height: int) -> bytes:
@@ -61,7 +93,7 @@ def fit(raw: bytes, width: int, height: int) -> bytes:
             crop_h = round(src_w / target)
             top = (src_h - crop_h) // 2
             box = (0, top, src_w, top + crop_h)
-        mode = "RGBA" if img.mode in ("RGBA", "LA", "P") else "RGB"
+        mode = "RGBA" if img.mode in ("RGBA", "LA", "P") or "transparency" in img.info else "RGB"
         out = img.convert(mode).crop(box).resize((width, height), Image.LANCZOS)
         buffer = io.BytesIO()
         out.save(buffer, format="PNG", optimize=True)

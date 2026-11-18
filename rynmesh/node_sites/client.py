@@ -39,6 +39,17 @@ STATUS_TIMEOUT_S = 4.0
 MAX_STATUS_PROBES = 8
 
 
+def _listed_site(value: dict[str, Any]) -> dict[str, Any]:
+    site = {"site_id": site_id(value["site_id"]), "title": str(value["title"])[:80],
+            "entry": request_path(value["entry"])}
+    summary = value.get("summary")
+    fields = ("queue_length", "eta_seconds")
+    if (isinstance(summary, dict) and summary.get("state") in ("idle", "busy")
+            and all(type(summary.get(k)) is int and 0 <= summary[k] <= 2**31 - 1 for k in fields)):
+        site["summary"] = {key: summary[key] for key in ("state", *fields)}
+    return site
+
+
 class SiteClient:
     def __init__(self, engine: Any, store: SiteStore, *, clock: Callable[[], float] = time.monotonic) -> None:
         self.engine = engine
@@ -140,11 +151,11 @@ class SiteClient:
         try:
             value = json.loads(codec.open_from(self.engine.msg_priv, member["messaging_pub"],
                                                response["sealed"], LIST_INFO))
-            sites = [{"site_id": site_id(s["site_id"]), "title": str(s["title"])[:80],
-                      "entry": request_path(s["entry"])} for s in value["sites"][:32]]
+            sites = [_listed_site(s) for s in value["sites"][:32]]
         except (DropProtocolError, KeyError, TypeError, ValueError, SiteError):
             raise SiteError("site_bad_response", 502) from None
         with self._lock:
+            self.store.cache_remote(resource, peer_id, sites)
             self._lists[key] = (self.clock() + LIST_TTL_S, sites)
         return list(sites)
 
@@ -171,6 +182,50 @@ class SiteClient:
             return []
         with ThreadPoolExecutor(max_workers=min(8, len(rows))) as pool:
             return list(pool.map(one, rows))
+
+    def shared_apps(self, *, refresh: bool = False, members: set[tuple[str, str]] | None = None) -> dict[str, Any]:
+        rows = self.engine.provider_members()
+
+        def member(row):
+            return row["provider_resource"], row["member_id"]
+
+        if members is None:
+            members = {member(row) for row in rows}
+        devices = [row for row in rows if row["peer_id"] != self.engine.me]
+
+        def lookup(row):
+            resource, peer_id = row["provider_resource"], row["peer_id"]
+            try:
+                self._probe(resource, peer_id, fresh=refresh)
+                sites = self.list_sites(resource, peer_id, refresh=refresh)
+                online = True
+            except SiteError as exc:
+                if exc.code != "site_offline":
+                    return row, []
+                online = False
+                sites = self.store.cached_remote(resource, peer_id)
+            provider = {"provider_resource": resource, "peer_id": peer_id,
+                        "member_name": str(row.get("member_name") or ""),
+                        "device_name": str(row.get("name") or row.get("display_name") or ""),
+                        "online": online, "last_seen": self.engine.provider_directory(resource).last_seen(peer_id)}
+            return row, [(site, {**provider, "summary": site.get("summary")}) for site in sites]
+
+        groups = {}
+        sharing = set()
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            for row, listings in pool.map(lookup, devices):
+                for site, provider in listings:
+                    sharing.add(member(row))
+                    sid = site["site_id"]
+                    group = groups.setdefault(sid, {"site_id": sid, "title": site["title"], "providers": []})
+                    if provider["online"]:
+                        group["title"] = site["title"]
+                    group["providers"].append(provider)
+        for group in groups.values():
+            group["providers"].sort(key=lambda p: (not p["online"], p["member_name"], p["device_name"], p["peer_id"]))
+        apps = sorted(groups.values(), key=lambda g: (not g["providers"][0]["online"], g["title"], g["site_id"]))
+        return {"apps": apps, "colleagues_total": len(members),
+                "sharing_total": len(sharing & members)}
 
     # ---- opening -------------------------------------------------------------------
     def open(self, resource: Any, peer_id: Any, sid: Any) -> dict[str, Any]:

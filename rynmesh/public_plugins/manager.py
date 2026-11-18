@@ -126,6 +126,9 @@ class PublicPlugins:
             spec.loader.exec_module(module)
             runtime = module.create(home=self.home, sites=self.sites)
             runtime.start()
+            summary = getattr(runtime, "summary", None)
+            if callable(summary):
+                self.sites.host.summaries[row["site_id"]] = summary
             self.running[slug] = (runtime, finder, namespace)
             self.sites.host.builtins[row["site_id"]] = lambda method, path, headers, body: self.site_request(slug, method, path, headers, body)
             self.errors.pop(slug, None)
@@ -151,6 +154,7 @@ class PublicPlugins:
         runtime, finder, namespace = active
         if not force and runtime.busy():
             raise PluginError("plugin_busy")
+        self.sites.host.summaries.pop(slug, None)
         self.sites.host.builtins.pop(slug, None)
         self.running.pop(slug, None)
         runtime.close()

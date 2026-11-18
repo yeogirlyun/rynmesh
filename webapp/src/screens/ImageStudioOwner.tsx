@@ -1,8 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { useNavigate } from "react-router-dom";
-import { IMAGE_STUDIO_SITE_ID, StudioError, imageStudio, type StudioJob, type StudioStatus, type StudioUsage } from "../domain/imageStudio";
-import { nodeSites, type SiteMember } from "../domain/nodeSites";
+import { StudioError, imageStudio, type StudioJob, type StudioStatus, type StudioUsage } from "../domain/imageStudio";
 import { nodeControlUrl } from "../domain/nodeUrl";
 import { peerProviders } from "../domain/peerProviders";
 import "./nodeSites.css";
@@ -34,14 +32,15 @@ function seconds(value: number): string {
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
-/** The owner's view of the image studio: open it, choose who, watch and manage the queue. */
-export default function ImageStudioOwner() {
+/** The image studio's controls within the shared app panel. */
+export default function ImageStudioOwner({ audienceControl, sharingEnabled }: {
+  audienceControl?: ReactNode;
+  sharingEnabled: boolean;
+}) {
   const { t } = useTranslation();
-  const navigate = useNavigate();
   const [status, setStatus] = useState<StudioStatus | null>(null);
   const [queue, setQueue] = useState<StudioJob[]>([]);
   const [usage, setUsage] = useState<StudioUsage[]>([]);
-  const [members, setMembers] = useState<SiteMember[]>([]);
   const [channel, setChannel] = useState<Channel>("unknown");
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
@@ -58,7 +57,6 @@ export default function ImageStudioOwner() {
 
   useEffect(() => {
     void load();
-    nodeSites.mine().then(value => setMembers(value.members)).catch(() => {});
     void companyChannel().then(setChannel);
     const timer = window.setInterval(() => { void load(); setTick(n => n + 1); }, POLL_MS);
     return () => window.clearInterval(timer);
@@ -71,49 +69,23 @@ export default function ImageStudioOwner() {
     finally { setBusy(""); }
   };
 
-  const setOpen = (enabled: boolean) => run("open", () => nodeSites.update(IMAGE_STUDIO_SITE_ID, { enabled }));
-  const setAudience = (mode: "all" | "members", list: string[]) =>
-    run("audience", () => nodeSites.update(IMAGE_STUDIO_SITE_ID, { audience: { mode, members: list } }));
-
   const model = status?.model;
   const modelText = !model ? "" : model.ready ? t("sites.studio.modelReady")
     : t(`sites.studio.model.${model.code === "codex_missing" ? "codex_missing" : "codex_signed_out"}`);
-  const audience = status?.audience || { mode: "all" as const, members: [] };
   const now = Date.now() / 1000;
   const firstQueued = queue.findIndex(job => job.state === "queued");
 
-  return <section className="ns-page">
-    <header>
-      <div>
-        <p className="ns-muted">{t("sites.studio.eyebrow")}</p>
-        <h1>{t("sites.studio.title")}</h1>
-      </div>
-      <button className="ns-button" onClick={() => navigate("/apps/sites")}>{t("sites.back")}</button>
-    </header>
+  return <>
     {error && <p className="ns-error" role="alert">{t(`sites.studio.errors.${error}`, { defaultValue: t("sites.errors.site_unavailable") })}</p>}
-
-    <div className="ns-card ns-mine">
-      <div className="ns-mine-row">
-        <div style={{ flex: "1 1 320px", minWidth: 0 }}>
-          <strong>{t("sites.openToColleagues")}</strong>
-          <p className="ns-muted">{t("sites.studio.openHelp")}</p>
-        </div>
-        <label>
-          <input type="checkbox" checked={Boolean(status?.enabled)} disabled={!status || Boolean(busy)}
-            onChange={event => void setOpen(event.target.checked)} />
-          {status?.enabled ? t("sites.openState") : t("sites.closedState")}
-        </label>
-      </div>
-      {status?.enabled && channel === "not_publisher" && <p className="ns-error" role="status">{t("sites.studio.notPublisher")}</p>}
-      {status?.enabled && channel === "not_connected" && <p className="ns-error" role="status">{t("sites.studio.notConnected")}</p>}
-      {model && !model.ready && <p className="ns-error" role="status">{modelText}</p>}
-    </div>
+    {sharingEnabled && channel === "not_publisher" && <p className="ns-error" role="status">{t("sites.studio.notPublisher")}</p>}
+    {sharingEnabled && channel === "not_connected" && <p className="ns-error" role="status">{t("sites.studio.notConnected")}</p>}
 
     <div className="ns-stats">
+      {audienceControl}
       <div className="ns-card ns-stat">
         <p className="ns-muted">{t("sites.studio.modelLabel")}</p>
         <strong>{t("sites.studio.modelName")}</strong>
-        <p className={model?.ready ? "ns-ok" : "ns-error"}>{modelText}</p>
+        {model && <p className={model.ready ? "ns-ok" : "ns-error"} role="status">{modelText}</p>}
       </div>
       <div className="ns-card ns-stat">
         <p className="ns-muted">{t("sites.studio.today")}</p>
@@ -123,27 +95,7 @@ export default function ImageStudioOwner() {
         <p className="ns-muted">{t("sites.studio.queueing")}</p>
         <strong className="ns-big">{t("sites.studio.jobs", { count: status?.queue_length ?? 0 })}</strong>
       </div>
-      <div className="ns-card ns-stat" role="radiogroup" aria-labelledby="studio-who">
-        <p className="ns-muted" id="studio-who">{t("sites.studio.who")}</p>
-        <label><input type="radio" name="studio-audience" checked={audience.mode === "all"} disabled={!status || Boolean(busy)}
-          onChange={() => void setAudience("all", [])} />{t("sites.audienceAll")}</label>
-        <label><input type="radio" name="studio-audience" checked={audience.mode === "members"} disabled={!status || Boolean(busy)}
-          onChange={() => void setAudience("members", audience.members)} />{t("sites.audienceMembers")}</label>
-      </div>
     </div>
-    {audience.mode === "members" && <fieldset className="ns-card ns-mine" disabled={Boolean(busy)}>
-      <legend className="ns-muted">{t("sites.chooseMembers")}</legend>
-      <div className="ns-members">
-        {members.length === 0 && <p className="ns-muted">{t("sites.studio.noMembers")}</p>}
-        {members.map(member => <label key={`${member.provider_resource}/${member.member_id}`}>
-          <input type="checkbox" checked={audience.members.includes(member.member_id)} onChange={event => {
-            const next = new Set(audience.members);
-            if (event.target.checked) next.add(member.member_id); else next.delete(member.member_id);
-            void setAudience("members", [...next]);
-          }} />{member.member_name || member.member_id}
-        </label>)}
-      </div>
-    </fieldset>}
 
     <div className="ns-card ns-mine">
       <div className="ns-mine-row">
@@ -161,7 +113,9 @@ export default function ImageStudioOwner() {
             <td>{job.caller_name}</td>
             <td className="ns-brief" title={job.brief}>{job.brief}</td>
             <td className="ns-nowrap">{job.width} × {job.height}</td>
-            <td className="ns-nowrap"><span className={`ns-pill${job.state === "running" ? " is-online" : ""}`}>
+            <td className="ns-nowrap"><span className="ns-pill" style={job.state === "running"
+              ? { color: "var(--accent-blue)", background: "var(--accent-blue-soft)" }
+              : { color: "var(--accent-amber)", background: "var(--accent-amber-soft)" }}>
               {job.state === "running" ? t("sites.studio.running", { time: seconds(now - (job.started_at || now)) })
                 : t("sites.studio.queued")}</span></td>
             <td><div className="ns-actions">
@@ -190,5 +144,5 @@ export default function ImageStudioOwner() {
       </div>}
       <p className="ns-muted">{t("sites.studio.usageNote")}</p>
     </div>
-  </section>;
+  </>;
 }

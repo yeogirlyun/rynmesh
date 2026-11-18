@@ -22,7 +22,7 @@ def setup(tmp_path):
     _, archive, signed = build(PACKAGE, revision="a" * 40, key=key)
     store = SiteStore(tmp_path)
     sites = SimpleNamespace(store=store, engine=SimpleNamespace(me="me"),
-                            host=SimpleNamespace(builtins={}, revoke_cache=lambda: None),
+                            host=SimpleNamespace(builtins={}, summaries={}, revoke_cache=lambda: None),
                             client=SimpleNamespace(), gateway=SimpleNamespace(url=lambda k: f"http://{k}.site.localhost:18150/"))
     data = {"catalog": signed, "archive": archive}
     requests = []
@@ -43,7 +43,7 @@ def test_install_start_local_use_without_company_and_private_sources(setup):
     assert manager.overview()["plugins"][0]["installed_version"] is None
     manager.install("image-studio")
     item = manager.overview()["plugins"][0]
-    assert item["running"] and item["installed_version"] == "1.0.0"
+    assert item["running"] and item["installed_version"] == "1.1.0"
     assert not sites.store.site("image-studio")["enabled"]
     assert len(requests) == 2 and all("company" not in u and "gshopper" not in u for u in requests)
     client = SiteClient(sites.engine, sites.store)
@@ -98,17 +98,17 @@ def test_update_rollback_preserves_data_and_share_scope(setup, tmp_path):
     package = tmp_path / "v2"
     shutil.copytree(PACKAGE, package, ignore=shutil.ignore_patterns("__pycache__"))
     manifest = json.loads((package / "plugin.json").read_text(encoding="utf-8"))
-    manifest["version"] = "1.0.1"
+    manifest["version"] = "1.1.1"
     (package / "plugin.json").write_text(json.dumps(manifest), encoding="utf-8")
     _, data["archive"], data["catalog"] = build(package, revision="b" * 40, key=key)
     manager.refresh()
     assert manager.overview()["plugins"][0]["update_available"]
     manager.install("image-studio")
-    assert manager.overview()["plugins"][0]["installed_version"] == "1.0.1"
+    assert manager.overview()["plugins"][0]["installed_version"] == "1.1.1"
     assert sites.store.site("image-studio")["enabled"]
     assert sites.store.site("image-studio")["audience"]["members"] == ["alice"]
     manager.action("image-studio", "rollback")
-    assert manager.overview()["plugins"][0]["installed_version"] == "1.0.0"
+    assert manager.overview()["plugins"][0]["installed_version"] == "1.1.0"
     assert (manager.home / "image-studio/studio.db").exists()
 
 
@@ -161,14 +161,14 @@ def test_failed_new_runtime_restores_previous_version(setup, tmp_path):
     package = tmp_path / "broken"
     shutil.copytree(PACKAGE, package, ignore=shutil.ignore_patterns("__pycache__"))
     manifest = json.loads((package / "plugin.json").read_text(encoding="utf-8"))
-    manifest["version"] = "1.0.1"
+    manifest["version"] = "1.1.1"
     (package / "plugin.json").write_text(json.dumps(manifest), encoding="utf-8")
     (package / manifest["entry"]).write_text("raise RuntimeError('broken release')", encoding="utf-8")
     _, data["archive"], data["catalog"] = build(package, revision="b" * 40, key=key)
     manager.refresh()
     with pytest.raises(PluginError, match="start_failed"):
         manager.install("image-studio")
-    assert manager.overview()["plugins"][0]["installed_version"] == "1.0.0"
+    assert manager.overview()["plugins"][0]["installed_version"] == "1.1.0"
     assert manager.local_fetch("image-studio", "GET", "/", b"")[0] == 200
 
 
