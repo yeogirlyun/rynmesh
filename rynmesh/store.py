@@ -1695,7 +1695,8 @@ class RynmeshStore:
         if peer_endpoint:
             endpoints = [peer_endpoint]
             parsed = urlsplit(peer_endpoint)
-            if parsed.scheme in {"http", "https"} and parsed.hostname:
+            bind_host = os.environ.get("RYNMESH_PEER_HOST", "127.0.0.1")
+            if parsed.scheme in {"http", "https"} and parsed.hostname and _is_unspecified_host(bind_host):
                 port = parsed.port or (443 if parsed.scheme == "https" else 80)
                 for address in _local_ip_addresses():
                     if private_lan_ip(address) and address != parsed.hostname:
