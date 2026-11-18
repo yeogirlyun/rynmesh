@@ -1,7 +1,7 @@
 import { state, api, submit, errorText } from "./api.js";
 import { h, toast } from "./dom.js";
 import { browseAssets, saveAsset } from "./assets.js";
-import { A, F, T, presetLabel, roleLabel } from "./i18n.js";
+import { A, F, T, V, presetLabel, roleLabel } from "./i18n.js";
 
 const MAX_REFS = 5, MAX_UPLOAD = 8 * 1024 * 1024;
 const draft = { scene: "", style: null, width: 1024, height: 1024, custom: false, count: 1, refs: [], busy: false };
@@ -112,7 +112,7 @@ async function send(event) {
   renderForm();
   try {
     await submit({scene: draft.scene, style: draft.style, purpose, width: draft.width, height: draft.height,
-      brief, copy, references: draft.refs.map(ref => ref.asset ? {asset: ref.asset, role: ref.role} : {id: ref.id, role: ref.role}), count: draft.count});
+      brief, copy, transparent: form.elements.transparent.checked, references: draft.refs.map(ref => ref.asset ? {asset: ref.asset, role: ref.role} : {id: ref.id, role: ref.role}), count: draft.count});
   } finally { draft.busy = false; renderForm(); }
 }
 
@@ -137,6 +137,8 @@ export function buildForm() {
       h("div", {class: "custom", id: "custom"}, ...["width", "height"].map(key => h("label", {}, F[key],
         h("input", {name: key, type: "number", min: 256, max: 2048, required: true,
           oninput: e => { draft[key] = Number(e.target.value); }}))))),
+    h("div", {class: "field"}, h("label", {}, h("input", {type: "checkbox", name: "transparent"}), " ", V.transparent),
+      h("p", {class: "muted"}, V.hint)),
     field(F.brief, h("textarea", {id: "brief", name: "brief", rows: 3, maxlength: 2000, "aria-label": F.brief, placeholder: T.briefPh})),
     h("div", {class: "row"}, h("span", {class: "label"}, T.count), h("div", {class: "seg", id: "counts"})),
     h("div", {class: "row submit"}, h("p", {class: "muted", id: "ahead"}),

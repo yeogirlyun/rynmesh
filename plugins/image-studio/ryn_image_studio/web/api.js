@@ -38,9 +38,9 @@ export async function refresh() {
   schedule();
 }
 
-export async function submit(body) {
+export async function submit(body, path = "/api/jobs") {
   try {
-    await api("/api/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    await api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     toast(T.sent);
     state.filter = state.filter === "done" ? "all" : state.filter;
     await refresh();
@@ -55,7 +55,7 @@ export async function act(job, action) {
 
 export function jobBody(job) {
   return { purpose: job.purpose, width: job.width, height: job.height, scene: job.scene, style: job.style,
-    copy: job.copy, brief: job.brief, words: job.words, count: 1 };
+    copy: job.copy, transparent: job.transparent, brief: job.brief, words: job.words, count: 1 };
 }
 export function again(job) {
   const body = jobBody(job);

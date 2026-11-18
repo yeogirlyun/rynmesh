@@ -90,3 +90,12 @@ export const A = zh ? {
   image_bad_asset: "Enter a name of 1–80 characters and choose an asset type.",
   image_asset_not_found: "This asset was deleted. Choose another.", image_asset_public_forbidden: "Only the owner can manage public assets."
 };
+
+export const V = zh ? {
+  derive: "生成其它尺寸", limit: "最多选择 6 个尺寸", quick: "快捷修改", background: "只换背景", text: "只改文字",
+  angle: "换个角度", transparent: "透明底", hint: "适合抠出商品单独用", source: "来自原图", unavailable: "原图已不可用。"
+} : {
+  derive: "Generate other sizes", limit: "Choose up to 6 sizes", quick: "Quick edits", background: "Change background",
+  text: "Change text", angle: "Change angle", transparent: "Transparent background", hint: "Use the product as a cutout",
+  source: "From original", unavailable: "The original is no longer available."
+};

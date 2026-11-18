@@ -1,5 +1,5 @@
 import { state, now, act, again, refresh } from "./api.js";
-import { T, zh, F, FAIL_EN, presetLabel, roleLabel } from "./i18n.js";
+import { T, V, zh, F, FAIL_EN, presetLabel, roleLabel } from "./i18n.js";
 import { h } from "./dom.js";
 
 export function ago(ts) {
@@ -44,8 +44,8 @@ function card(job) {
     meta.push(h("div", { class: "row" }, h("span", { class: "muted" }, sizeLabel(job)),
       h("button", { type: "button", class: "link danger", onclick: () => act(job, "cancel") }, T.cancel)));
   } else if (job.state === "succeeded") {
-    top = h("button", { type: "button", class: "thumb", onclick: () => { location.hash = `#/job/${job.id}`; } },
-      h("img", { src: `/api/jobs/${job.id}/thumb`, alt: job.brief || job.copy?.title || T.finished, loading: "lazy" }));
+    top = h("button", { type: "button", class: job.transparent ? "thumb alpha-preview" : "thumb", onclick: () => { location.hash = `#/job/${job.id}`; } },
+      h("img", { src: `/api/jobs/${job.id}/${job.transparent ? "image" : "thumb"}`, alt: job.brief || job.copy?.title || T.finished, loading: "lazy" }));
     meta.push(h("div", { class: "row" }, h("span", { class: "ok" }, T.finished), h("span", { class: "muted" }, `${sizeLabel(job)} · ${ago(job.finished_at)}`)),
       h("div", { class: "actions" }, h("a", { class: "ghost", href: `/api/jobs/${job.id}/image`, download: `ryn-${job.id.slice(0, 8)}.png` }, T.download),
         h("button", { type: "button", class: "ghost", onclick: () => again(job) }, T.again),
@@ -58,6 +58,7 @@ function card(job) {
       h("button", { type: "button", class: "link", onclick: () => act(job, "retry") }, T.retry)));
   }
   return h("article", { class: `card ${job.state}` }, top, h("div", { class: "meta" }, h("div", { class: "brief", title: job.brief }, job.brief),
+    job.derived_from && h("a", {class: "origin-link", href: `#/job/${job.derived_from}`}, V.source, " · ", job.derived_from.slice(0, 8)),
     h("dl", { class: "job-fields" }, ...jobFields(job).flatMap(([name, value]) => [h("dt", {}, name), h("dd", {}, value)])), meta));
 }
 

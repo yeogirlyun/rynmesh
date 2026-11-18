@@ -1,15 +1,30 @@
-import { T } from "./i18n.js";
+import { T, V } from "./i18n.js";
 import { h, toast } from "./dom.js";
-import { state, again, submit, jobBody } from "./api.js";
+import { api, errorText, state, again, submit, jobBody } from "./api.js";
 import { ago, sizeLabel, jobFields } from "./gallery.js";
 
-export function renderDetail(id, editing) {
-  const job = state.jobs.find((j) => j.id === id);
+import { sizeVariants, quickEdits } from "./variants.js";
+
+export async function renderDetail(id, editing) {
+  let job = state.jobs.find(j => j.id === id);
+  if (!job) {
+    const requested = location.hash;
+    try {
+      job = await api(`/api/jobs/${id}`);
+    } catch (err) {
+      if (location.hash === requested) {
+        toast(err.message === "image_not_found" ? V.unavailable : errorText(err));
+        location.hash = "";
+      }
+      return;
+    }
+    if (location.hash !== requested) return;
+  }
   const main = document.getElementById("main");
   if (!job || job.state !== "succeeded") { location.hash = ""; return; }
   const editText = h("textarea", { id: "edit", rows: 3, maxlength: 2000, placeholder: T.editPh });
   main.replaceChildren(h("div", { class: "detail" },
-    h("div", { class: "stage panel" }, h("img", { src: `/api/jobs/${job.id}/image`, alt: job.brief })),
+    h("div", { class: job.transparent ? "stage panel alpha-preview" : "stage panel" }, h("img", { src: `/api/jobs/${job.id}/image`, alt: job.brief })),
     h("aside", {},
       h("button", { type: "button", class: "ghost", style: "align-self:flex-start", onclick: () => { location.hash = ""; } }, "← ", T.back),
       h("div", { class: "panel field" },
@@ -26,6 +41,7 @@ export function renderDetail(id, editing) {
           h("dt", {}, T.info.size), h("dd", {}, sizeLabel(job)),
           h("dt", {}, T.info.refs), h("dd", {}, T.refsCount(job.references)),
           h("dt", {}, T.info.made), h("dd", {}, `${ago(job.finished_at)} · ${T.seconds(job.seconds || 0)}`))),
+      sizeVariants(job), quickEdits(job),
       h("form", { class: "panel field", onsubmit: async (e) => {
         e.preventDefault();
         const brief = editText.value.trim();
