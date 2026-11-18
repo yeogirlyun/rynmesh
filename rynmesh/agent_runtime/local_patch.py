@@ -29,7 +29,7 @@ from .store import AgentToolRejected
 
 BEGIN, END = "*** Begin Patch", "*** End Patch"
 ADD, DELETE, UPDATE, MOVE, EOF = "*** Add File: ", "*** Delete File: ", "*** Update File: ", "*** Move to: ", "*** End of File"
-MAX_FILES = 32
+MAX_FILES = 128
 MAX_SNIPPET_LINES = 15
 MAX_SNIPPET_CHARS = 1600
 

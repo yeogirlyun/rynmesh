@@ -80,7 +80,7 @@ def test_large_batches_keep_every_call_in_order(count):
 
 
 def test_utf8_argument_and_total_byte_budgets_reject_atomically():
-    calls = [call(f"call_{n}", arguments=json.dumps({"path": "x" * 60000})) for n in range(5)]
+    calls = [call(f"call_{n}", arguments=json.dumps({"path": "x" * (MAX_RAW_RESPONSE_BYTES // 5)})) for n in range(5)]
     assert len(json.dumps(calls).encode()) > MAX_RAW_RESPONSE_BYTES
     with pytest.raises(ToolCallProtocolError) as error:
         normalize_tool_calls(calls, [spec()])

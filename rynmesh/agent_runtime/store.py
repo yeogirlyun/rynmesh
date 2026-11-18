@@ -124,6 +124,7 @@ READ_FAILED_THREE_TIMES_CORRECTION = (
     "query if one really covers the need. Otherwise go on with the rest and say in your reply what could not "
     "be read, so the owner can decide whether to try again.")
 REJECTION_CORRECTIONS = {
+    "agent_preview_limit": "预览过大；请把写入拆成多个文件或改用 ryn_apply_patch",
     "agent_ripgrep_unavailable_use_file_search": (
         "ripgrep (rg) is not installed in this node's command environment. Nothing was executed. "
         "Use the built-in ryn_file_search with a path and literal query, or ryn_file_list to find files. "

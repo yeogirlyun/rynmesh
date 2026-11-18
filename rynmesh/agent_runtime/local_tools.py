@@ -1549,7 +1549,7 @@ class LocalTools:
             plan = self._patch_plan(args, context, policy)
             # The patch text itself can be large: the preview carries its digest and
             # bounded per-file diffs, and execution re-derives and compares it.
-            budget = max(400, 10000 // len(plan))
+            budget = max(400, 20000 // len(plan))
             preview["operation"] = {"patch_sha256": sha(args["patch"].encode()), "patch_bytes": len(args["patch"].encode())}
             preview["files"] = [{"path": str(item["path"]), "action": item["action"],
                                  **({"destination": str(item["destination"])} if item["destination"] else {}),
@@ -1563,6 +1563,11 @@ class LocalTools:
             path = self.path(args["path"], context)
             preview["path"] = str(path)
             if name in {"ryn_file_write", "ryn_file_edit"}:
+                field = "content" if name == "ryn_file_write" else "new_text"
+                if len(args[field]) > 4000:
+                    content_raw = args[field].encode("utf-8")
+                    preview["operation"].update({field: args[field][:4000], "content_truncated": True,
+                                                 "content_sha256": sha(content_raw), "content_bytes": len(content_raw)})
                 if not path.parent.is_dir() or path.is_dir():
                     raise AgentToolRejected(
                         "agent_local_parent_missing_or_directory",

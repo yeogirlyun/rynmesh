@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 
 from rynmesh.agent_runtime.routes import install_agent
 from rynmesh.agent_runtime.runtime import AgentRuntime
+from rynmesh.agent_runtime.output_policy import MAX_RAW_RESPONSE_BYTES
 from rynmesh.agent_runtime.store import AgentError, AgentStore, AgentToolRejected
 from rynmesh.background_workers import BackgroundWorkerRegistry
 
@@ -339,7 +340,7 @@ def test_cancel_during_write_retains_late_evidence(tmp_path):
 @pytest.mark.parametrize("response,error", [
     (assistant(name="shell", args={}), "agent_unknown_tool"),
     (assistant(name="share_service", args={"service_id": "svc1", "shell": "bad"}), "agent_tool_arguments_invalid"),
-    ({"message": {"role": "assistant", "content": "ok", "reasoning_content": "x" * (256 * 1024 + 1)}}, "agent_model_output_limit"),
+    ({"message": {"role": "assistant", "content": "ok", "reasoning_content": "x" * (MAX_RAW_RESPONSE_BYTES + 1)}}, "agent_model_output_limit"),
 ])
 def test_untrusted_model_output_cannot_bypass_tool_boundary(tmp_path, response, error):
     runtime, _, tools, _ = make_runtime(tmp_path, response)
