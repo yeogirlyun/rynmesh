@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { NavLink, useLocation, useNavigate } from "react-router-dom";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
+import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { tr } from "../uiI18n";
 import {
@@ -29,36 +29,72 @@ import { pinnedPluginWorkspaces, PIN_CHANGE_EVENT, pluginWorkspacePath } from ".
 import "../screens/rynAgentText";
 import { craftPlugins } from "../domain/craftPlugins";
 import { agentExtensions } from "../domain/agentExtensions";
-import { installedSidebarApps, type SidebarApp } from "./installedSidebarApps";
+import { APP_PINS_CHANGE_EVENT, getPins, putPins, type Pin } from "../domain/apps";
+import { NodeSiteError, nodeSites } from "../domain/nodeSites";
+import { publicPlugins } from "../domain/publicPlugins";
+import { installedSidebarApps } from "./installedSidebarApps";
 import { DesktopUpdateButton } from "../screens/UpdatesPanel";
 import { isTauriDesktop } from "../domain/nodeUrl";
 export function PersonalShell({ children }: { children: ReactNode }) {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const { t: agentText } = useTranslation("rynAgent");
-  const isZh = (i18n.resolvedLanguage || i18n.language || "en").toLowerCase().startsWith("zh");
   const { demo, appearance, setAppearance, devices, services, space } = usePersonal();
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
   const [pinnedPlugins, setPinnedPlugins] = useState(pinnedPluginWorkspaces);
-  const [installedApps, setInstalledApps] = useState<SidebarApp[]>([]);
+  const [sidebarPins, setSidebarPins] = useState<Pin[]>([]);
+  const [openingPin, setOpeningPin] = useState(false);
+  const [pinOpenError, setPinOpenError] = useState("");
   useEffect(() => {
     if (demo) return;
-    let stopped = false, loading = false;
+    let stopped = false, loading = false, refreshPending = false;
     const refresh = async () => {
-      if (loading) return;
+      if (loading) { refreshPending = true; return; }
       loading = true;
       try {
-        const [craft, extensions] = await Promise.all([craftPlugins.catalog(), agentExtensions.overview()]);
-        if (!stopped) setInstalledApps(installedSidebarApps(craft.plugins, extensions.plugins));
-      } catch { /* Retain the last successful catalog during node startup. */ }
-      finally { loading = false; }
+        const [snapshot, craft, extensions, published] = await Promise.all([
+          getPins(), craftPlugins.catalog().catch(() => null),
+          agentExtensions.overview().catch(() => null), publicPlugins.overview().catch(() => null),
+        ]);
+        if (stopped) return;
+        let { pins } = snapshot;
+        if (!snapshot.seeded && extensions) {
+          const initialPins: Pin[] = installedSidebarApps([], extensions.plugins).map(app => ({
+            key: `local:${app.id}`, kind: "local", app_id: app.id, title: app.title, open_path: app.to,
+          }));
+          // The user may have pinned something while the catalogs were loading.
+          const latest = await getPins();
+          if (stopped) return;
+          pins = latest.seeded ? latest.pins : (await putPins(initialPins)).pins;
+        }
+        const enabledLocalApps = new Set([
+          ...(craft?.plugins ?? []).filter(app => app.installed && app.enabled).map(app => app.id),
+          ...(extensions?.plugins ?? []).filter(app => app.enabled && (app.web_app || app.views?.length || app.peer_provider)).map(app => app.id),
+          ...(published?.plugins ?? []).filter(app => app.installed_version && app.enabled).map(app => app.id),
+        ]);
+        if (!stopped) setSidebarPins(pins.filter(pin => pin.kind === "shared" || enabledLocalApps.has(pin.app_id)));
+      } catch { /* Keep the last successful sidebar while the local node starts. */ }
+      finally {
+        loading = false;
+        if (refreshPending && !stopped) {
+          refreshPending = false;
+          void refresh();
+        }
+      }
     };
     void refresh();
     const timer = window.setInterval(refresh, 10000);
     window.addEventListener("focus", refresh);
     window.addEventListener("ryn-installed-apps-changed", refresh);
-    return () => { stopped = true; clearInterval(timer); window.removeEventListener("focus", refresh); window.removeEventListener("ryn-installed-apps-changed", refresh); };
+    window.addEventListener(APP_PINS_CHANGE_EVENT, refresh);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("ryn-installed-apps-changed", refresh);
+      window.removeEventListener(APP_PINS_CHANGE_EVENT, refresh);
+    };
   }, [demo]);
   const [agentNavCollapsed, setAgentNavCollapsed] = useState(() => {
     try { return sessionStorage.getItem("ryn.agent.navigation") === "closed" || (window.innerWidth <= 760 && sessionStorage.getItem("ryn.agent.navigation") !== "open"); }
@@ -66,6 +102,20 @@ export function PersonalShell({ children }: { children: ReactNode }) {
   });
   const navigate = useNavigate();
   const location = useLocation();
+  const openSharedPin = async (pin: Extract<Pin, { kind: "shared" }>) => {
+    if (openingPin) return;
+    setOpeningPin(true);
+    try {
+      const opened = await nodeSites.open({ provider_resource: pin.provider.resource, peer_id: pin.provider.peer_id }, pin.app_id);
+      navigate(`/apps/sites/open/${opened.key}?${new URLSearchParams({ entry: opened.entry, title: opened.title })}`);
+    } catch (error) {
+      const known = ["site_denied", "site_not_found", "site_offline", "site_rate_limited"];
+      const code = error instanceof NodeSiteError && known.includes(error.code) ? error.code : "site_unavailable";
+      setPinOpenError(t(`sites.errors.${code}`));
+    } finally {
+      setOpeningPin(false);
+    }
+  };
   const isStandalone = new URLSearchParams(location.search).get("standalone") === "1";
   const input = useRef<HTMLInputElement>(null);
   useEffect(() => {
@@ -82,7 +132,6 @@ export function PersonalShell({ children }: { children: ReactNode }) {
     { to: "/services", label: t("nav.services"), icon: Box },
     { to: "/agent", label: agentText("title"), icon: MessageCircle },
     { to: "/apps", label: tr("Apps"), icon: Box },
-    ...installedApps.map(app => ({ to: app.to, label: app.title, icon: Building2 })),
     { to: "/devices", label: t("nav.devices"), icon: Network },
     { to: "/tasks", label: t("nav.tasks"), icon: CheckSquare },
     { to: "/drives", label: t("drive.title"), icon: HardDrive },
@@ -92,7 +141,6 @@ export function PersonalShell({ children }: { children: ReactNode }) {
     { to: "/chat", label: t("nav.messages"), icon: MessageCircle },
     { to: "/friends", label: tr("Friends"), icon: UserRound },
     { to: "/exchange", label: tr("Exchange"), icon: Box },
-    { to: "/apps/sites", label: t("sites.title"), icon: Globe },
   ];
   const explorePaths = ["/library", "/explore", "/digest", "/search-ask", "/publish", "/items/", "/reading", "/offline", "/search", "/shared-reading", "/friend-updates"];
   const inExplore = explorePaths.some((path) => location.pathname.startsWith(path));
@@ -121,7 +169,8 @@ export function PersonalShell({ children }: { children: ReactNode }) {
           : [];
   const title =
     (location.pathname.startsWith("/apps/plugins/")
-      ? pinnedPlugins.find(plugin => location.pathname === pluginWorkspacePath(plugin.id))?.title || tr("Apps")
+      ? sidebarPins.find(pin => pin.kind === "local" && pin.open_path === location.pathname)?.title
+        || pinnedPlugins.find(plugin => location.pathname === pluginWorkspacePath(plugin.id))?.title || tr("Apps")
       : inServices ? t("nav.services") : inExplore ? t("nav.explore") : location.pathname === "/peers" ? t("nav.devices") : [...primary, ...more, { to: "/settings", label: t("nav.settings") }].find(
       (item) => item.to !== "/" && location.pathname.startsWith(item.to),
     )?.label) || t("nav.home");
@@ -143,10 +192,10 @@ export function PersonalShell({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (searchOpen) input.current?.focus();
   }, [searchOpen]);
-  const link = (item: (typeof primary)[number]) => (
+  const link = (item: (typeof primary)[number], key = item.to) => (
     <NavLink
       end={item.to === "/" || item.to === "/apps"}
-      key={item.to}
+      key={key}
       to={href(item.to)}
       className={({ isActive }) => ((!item.to.includes("?open=") && isActive) || (item.to.startsWith("/apps/plugins/") && location.pathname === item.to.replace("/apps/plugins/", "/apps/extensions/")) || (item.to === "/explore" && inExplore) || (item.to === "/devices" && location.pathname === "/peers") ? "active" : "")}
     >
@@ -179,9 +228,26 @@ export function PersonalShell({ children }: { children: ReactNode }) {
           <ChevronDown size={15} />
         </button>
         <div className="pf-sidebar-content">
-          <nav aria-label={t("shell.primary")}>{primary.map(link)}</nav>
+          <nav aria-label={t("shell.primary")}>
+            {primary.map(item => <Fragment key={item.to}>
+              {link(item)}
+              {item.to === "/apps" && sidebarPins.length > 0 && <>
+                <div className="pf-more-label">{t("nav.pinnedApps")}</div>
+                {sidebarPins.map(pin => pin.kind === "local"
+                  ? link({ to: pin.open_path, label: pin.title, icon: Building2 }, pin.key)
+                  : <Link key={pin.key} to={href("/apps?tab=shared")} onClick={event => {
+                      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+                      event.preventDefault();
+                      void openSharedPin(pin);
+                    }}>
+                    <Globe size={21} strokeWidth={1.6} />
+                    <span>{pin.title} · {pin.provider.member_name}</span>
+                  </Link>)}
+              </>}
+            </Fragment>)}
+          </nav>
           <div className="pf-more-label">{t("nav.more")}</div>
-          <nav aria-label={t("nav.more")}>{more.map(link)}</nav>
+          <nav aria-label={t("nav.more")}>{more.map(item => link(item))}</nav>
         </div>
         <div className="pf-sidebar-bottom">
           {demo && (
@@ -268,6 +334,7 @@ export function PersonalShell({ children }: { children: ReactNode }) {
           {children}
         </main>
       </div>
+      {pinOpenError && <Modal title={tr("Apps")} onClose={() => setPinOpenError("")}>{pinOpenError}</Modal>}
       {searchOpen && (
         <Modal title={t("shell.searchSpace")} onClose={() => setSearchOpen(false)}>
           <label className="pf-search">
