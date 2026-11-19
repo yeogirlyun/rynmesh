@@ -3320,14 +3320,35 @@ class ExtensionStore:
             # A publisher may move its own connection to another sign-in mode
             # (e.g. an installer-issued local credential instead of OAuth). The
             # three-way rule below still keeps any owner-changed value.
-            "mcp_servers": ("name", "description", "auth"),
+            "mcp_servers": ("name", "description", "auth",
+                            "startup_timeout_ms", "tool_timeout_ms", "enabled_tools", "disabled_tools"),
+        }
+        # Values a connection holds when nobody chose them: earlier releases never
+        # shipped these fields, so the stock values (old and current built-in
+        # defaults) count as release defaults for the three-way rule.
+        builtin = {
+            "startup_timeout_ms": (10000, DEFAULT_STARTUP_TIMEOUT_MS),
+            "tool_timeout_ms": (30000, DEFAULT_TOOL_TIMEOUT_MS),
+            "enabled_tools": (None,),
+            "disabled_tools": ([],),
         }
 
         def release_value(key, value):
-            return normalize_mcp_auth(value) if key == "auth" else value
+            if key == "auth":
+                return normalize_mcp_auth(value)
+            if key in ("startup_timeout_ms", "tool_timeout_ms"):
+                ceiling = MAX_STARTUP_TIMEOUT_MS if key == "startup_timeout_ms" else MAX_TOOL_TIMEOUT_MS
+                return max(1000, min(ceiling, int(value)))
+            if key in ("enabled_tools", "disabled_tools"):
+                # Same form commit_imported_items stores.
+                if not isinstance(value, list):
+                    return None if key == "enabled_tools" else []
+                return sorted({str(x).strip() for x in value if str(x).strip()})
+            return value
 
         desired = {
-            category: {row["id"]: {key: copy.deepcopy(release_value(key, row[key])) for key in keys if key in row}
+            category: {row["id"]: {key: copy.deepcopy(release_value(key, row[key])) for key in keys
+                                   if key in row and not (key.endswith("_timeout_ms") and row[key] is None)}
                        for row in declarations.get(category, [])}
             for category, keys in fields.items()
         }
@@ -3396,6 +3417,9 @@ class ExtensionStore:
                         known = any(key in release.get(category, {}).get(identity, {})
                                     and current.get(key) == release_value(key, release[category][identity][key])
                                     for release in previous)
+                        if (category == "mcp_servers" and key in builtin and not any(
+                                key in release.get(category, {}).get(identity, {}) for release in previous)):
+                            known = current.get(key, builtin[key][-1]) in builtin[key]
                         if (category == "skills" and source_changed and (not known_source or current.get("package_dir"))) or not known:
                             conflicts.append({"category": category, "id": identity, "field": key})
                             continue

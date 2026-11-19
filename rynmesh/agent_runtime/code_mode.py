@@ -1577,11 +1577,13 @@ class CodeModeRunner:
         child_call_records: list[dict[str, Any]] = []
         collected_image_artifacts: list[dict[str, Any]] = []
         exec_id = f"exec_{uuid.uuid4().hex[:12]}"
-        deadline = time.monotonic() + (yield_time_ms / 1000.0)
+        # A nested MCP call may run for its connection's tool_timeout_ms (e.g. a
+        # 300 s report) even when that is longer than the script's yield time.
+        deadline_box = [time.monotonic() + (yield_time_ms / 1000.0)]
         child_stop = threading.Event()
 
         def child_cancelled():
-            return child_stop.is_set() or time.monotonic() >= deadline or (callable(cancelled) and cancelled())
+            return child_stop.is_set() or time.monotonic() >= deadline_box[0] or (callable(cancelled) and cancelled())
 
         def handle_child_tool_call(frame: dict[str, Any]) -> None:
             nonlocal child_calls_count
@@ -1635,6 +1637,9 @@ class CodeModeRunner:
                 })
                 return
 
+            if "extension_binding" in meta and meta.get("tool_timeout_ms"):
+                with child_calls_lock:
+                    deadline_box[0] = max(deadline_box[0], time.monotonic() + float(meta["tool_timeout_ms"]) / 1000.0 + 1.0)
             child_op_id = f"{operation_id or 'code'}_sub_{ordinal}_{uuid.uuid4().hex[:8]}"
             exec_kwargs: dict[str, Any] = {
                 "operation_id": child_op_id,
@@ -1741,7 +1746,7 @@ class CodeModeRunner:
                         if callable(cancelled) and cancelled():
                             discard_worker = True
                             raise AgentToolRejected("agent_cancelled")
-                        remaining = deadline - time.monotonic()
+                        remaining = deadline_box[0] - time.monotonic()
                         if remaining <= 0:
                             child_stop.set()
                             discard_worker = True

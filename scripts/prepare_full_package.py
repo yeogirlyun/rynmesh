@@ -136,7 +136,8 @@ def company_declarations(company_source):
                 if (FINANCE_OAUTH_SERVERS.get(sid) == slug and record.get('url') == FINANCE_RESOURCE
                         and record['auth']['mode'] == 'oauth' and not record['auth'].get('client_id')):
                     record['auth']['client_id'] = 'ryn-desktop'
-                servers.append({k: record[k] for k in ('id', 'name', 'description', 'transport', 'url', 'plugin_id', 'auth', 'data_policy', 'local_service') if k in record})
+                servers.append({k: record[k] for k in ('id', 'name', 'description', 'transport', 'url', 'plugin_id', 'auth', 'data_policy', 'local_service',
+                                                       'startup_timeout_ms', 'tool_timeout_ms', 'enabled_tools', 'disabled_tools') if k in record})
                 plugin['mcp_server_ids'].append(sid)
         plugins.append(plugin)
     return {
