@@ -649,7 +649,7 @@ def test_checkpoint_note_tells_the_main_model_the_task_continues(tmp_path):
     assert "latest owner direction and any earlier requests still open" in CHECKPOINT_CONTINUATION
     # S03-I12 adds required recovery/current-state guidance to the existing note budget.
     history_guidance = ("Use ryn_history_search/ryn_history_read to recover exact details the summary omitted. "
-                        "Before relying on file or process state recorded here, read the current state again.")
+                        "Refresh file or process state before acting only if it may have changed since it was recorded.")
     assert len(CHECKPOINT_CONTINUATION.encode()) <= 234 + len(history_guidance.encode()) + 1
     later = {"role": "assistant", "content": "Edited a.py.", "context_epoch": 0}
     runtime.store.transaction(lambda data: data["tasks"][task["id"]]["messages"].append(later))

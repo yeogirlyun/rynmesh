@@ -132,11 +132,12 @@ def receipt_projection(row: dict, uncompacted_call_ids: set, max_bytes: int) -> 
 # the work moves on. Earlier requirements apply only while still open.
 CHECKPOINT_CONTINUATION = (
     "\nContinue from Next and the messages after this note. Follow the latest owner direction "
-    "and any earlier requests still open. Use recorded results for finished work; do not restart or redo it.")
+    "and any earlier requests still open. Do not restart or redo finished work. "
+    "When all requests are covered, reply from the recorded results.")
 # Pinned in every request, so omitted in small windows where the floor is tight.
 CHECKPOINT_RECOVERY = (
     " Use ryn_history_search/ryn_history_read to recover exact details the summary omitted. "
-    "Before relying on file or process state recorded here, read the current state again.")
+    "Refresh file or process state before acting only if it may have changed since it was recorded.")
 
 _LEDGER_SKIP_TOOLS = frozenset({"ryn_update_plan"})
 _BODY_KEYS = frozenset({"content", "text", "patch", "code", "input", "data", "body", "script",

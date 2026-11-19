@@ -119,8 +119,8 @@ def test_t4_literal_case_sensitive_search_filters_and_utf8_snippets(tmp_path):
 
 def test_t5_no_checkpoint_hides_tools_even_from_lazy_discovery(tmp_path):
     runtime, model, _, _ = make_runtime(tmp_path)
-    runtime.update_settings({"max_context_chars": 12000})
     task_id = runtime.create({"message": "Inspect"})["id"]
+    fit_window(runtime, task_id, 12000, small_window=True)
     row = stored(runtime, task_id)
     assert NAMES.isdisjoint(s["function"]["name"] for s in runtime._specs(row))
     result = invoke(runtime, model, task_id, tool_menu.NAME, {"query": "ryn_history_read"})
@@ -168,7 +168,7 @@ def test_continuation_and_summary_explain_recovery_and_current_state(tmp_path):
     runtime, _, _, _ = make_runtime(tmp_path)
     text = context_compaction.CHECKPOINT_CONTINUATION + context_compaction.CHECKPOINT_RECOVERY
     assert "Use ryn_history_search/ryn_history_read to recover exact details the summary omitted." in text
-    assert "Before relying on file or process state recorded here, read the current state again." in text
+    assert "Refresh file or process state before acting only if it may have changed since it was recorded." in text
     instructions = runtime._summary_messages({"messages": []}, 4000)[0]["content"]
     assert "exact earlier messages stay readable with ryn_history_read; do not copy long excerpts" in instructions
     assert "exact earlier messages stay readable with ryn_history_read; do not copy long excerpts" in runtime._prefix_compaction_message(4000)["content"]

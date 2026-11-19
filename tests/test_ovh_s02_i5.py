@@ -119,8 +119,8 @@ def test_checkpoint_requests_reuse_passed_verification_and_finish(tmp_path):
         assistant(name="inspect_service", args={"service_id": "remaining"}),
         assistant("All 9 tests passed. Remaining service inspected."),
     )
+    runtime.update_settings({"max_context_chars": 64000})
     task = runtime.create({"message": "Implement and test the change, then inspect the remaining service."})
-    fit_window(runtime, task["id"], 64000, small_window=True)
     runtime.store.transaction(lambda data: data["tasks"][task["id"]].update(
         context_checkpoint={"through": 1, "content": "Verification: all 9 tests passed.\nNext: inspect the remaining service.",
                             "references": {}}))
@@ -133,7 +133,8 @@ def test_checkpoint_requests_reuse_passed_verification_and_finish(tmp_path):
     for _, messages, _ in model.calls:
         checkpoint = next(m["content"] for m in messages if str(m.get("content")).startswith("Historical checkpoint"))
         assert "Verification: all 9 tests passed." in checkpoint
-        assert "Use recorded results for finished work" in checkpoint
+        assert "When all requests are covered, reply from the recorded results." in checkpoint
+        assert "Refresh file or process state before acting only if it may have changed" in checkpoint
         assert "Before the final reply" not in checkpoint
 
 
