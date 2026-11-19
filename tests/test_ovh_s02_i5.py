@@ -12,7 +12,7 @@ NOTES = {
     "steer": "This owner message changes the goal: follow it, keep earlier requirements that it does not replace. " + SUFFIX,
     "information": "This owner message adds information: keep the original goal. " + SUFFIX,
 }
-FINAL_CHECK = "Before the final reply, check it answers the latest owner request and any earlier ones still open."
+OPEN_REQUESTS = "Follow the latest owner direction and any earlier requests still open."
 
 
 def _send(runtime, task_id, intent, message):
@@ -90,27 +90,51 @@ def test_t1_idle_followup_does_not_create_mid_turn_note(tmp_path, intent):
 
 
 @pytest.mark.parametrize("small_window", [False, True])
-def test_t2_latest_request_final_check_is_in_real_checkpoint_only(tmp_path, small_window):
+def test_t2_latest_request_guidance_is_in_real_checkpoint_only(tmp_path, small_window):
     runtime, _, _, _ = make_runtime(tmp_path)
     task = runtime.create({"message": "Complete every open request"})
     if small_window:
         fit_window(runtime, task["id"], 12000, small_window=True)
     row = runtime.store.read()["tasks"][task["id"]]
-    assert not any(FINAL_CHECK in str(m.get("content")) for m in runtime._context(row))
+    assert not any(OPEN_REQUESTS in str(m.get("content")) for m in runtime._context(row))
     runtime.store.transaction(lambda data: data["tasks"][task["id"]].update(
         context_checkpoint={"through": 1, "content": "Next: continue.", "references": {}}))
     row = runtime.store.read()["tasks"][task["id"]]
     context = runtime._context(row)
     checkpoint = next(m["content"] for m in context if str(m.get("content")).startswith("Historical checkpoint"))
-    assert FINAL_CHECK in checkpoint
-    assert sum(FINAL_CHECK in str(m.get("content")) for m in context) == 1
+    assert OPEN_REQUESTS in checkpoint
+    assert sum(OPEN_REQUESTS in str(m.get("content")) for m in context) == 1
 
 
 def test_checkpoint_continuation_keeps_small_window_fixed_text_budget():
     from rynmesh.agent_runtime.context_compaction import CHECKPOINT_CONTINUATION
 
     assert len(CHECKPOINT_CONTINUATION.encode("utf-8")) <= 234
-    assert CHECKPOINT_CONTINUATION.endswith(FINAL_CHECK)
+    assert OPEN_REQUESTS in CHECKPOINT_CONTINUATION
+
+
+def test_checkpoint_requests_reuse_passed_verification_and_finish(tmp_path):
+    runtime, model, tools, _ = make_runtime(
+        tmp_path,
+        assistant(name="inspect_service", args={"service_id": "remaining"}),
+        assistant("All 9 tests passed. Remaining service inspected."),
+    )
+    task = runtime.create({"message": "Implement and test the change, then inspect the remaining service."})
+    fit_window(runtime, task["id"], 64000, small_window=True)
+    runtime.store.transaction(lambda data: data["tasks"][task["id"]].update(
+        context_checkpoint={"through": 1, "content": "Verification: all 9 tests passed.\nNext: inspect the remaining service.",
+                            "references": {}}))
+
+    advance(runtime, 4)
+
+    assert runtime.get(task["id"])["status"] == "completed"
+    assert [call[0] for call in tools.calls] == ["inspect_service"]
+    assert len(model.calls) == 2
+    for _, messages, _ in model.calls:
+        checkpoint = next(m["content"] for m in messages if str(m.get("content")).startswith("Historical checkpoint"))
+        assert "Verification: all 9 tests passed." in checkpoint
+        assert "Use recorded results for finished work" in checkpoint
+        assert "Before the final reply" not in checkpoint
 
 
 def test_runtime_notes_are_not_counted_or_pinned_as_owner_messages(tmp_path):
