@@ -648,8 +648,9 @@ def test_checkpoint_note_tells_the_main_model_the_task_continues(tmp_path):
     assert "Next and the messages after this note" in CHECKPOINT_CONTINUATION
     assert "latest owner direction and any earlier requests still open" in CHECKPOINT_CONTINUATION
     # S03-I12 adds required recovery/current-state guidance to the existing note budget.
-    history_guidance = ("Use ryn_history_search/ryn_history_read to recover exact details the summary omitted. "
-                        "Refresh file or process state before acting only if it may have changed since it was recorded.")
+    history_guidance = ("Read current file contents directly when needed for an edit. "
+                        "Use ryn_history_search/ryn_history_read for missing evidence of past work. "
+                        "Refresh potentially stale file or process state before acting on it.")
     assert len(CHECKPOINT_CONTINUATION.encode()) <= 234 + len(history_guidance.encode()) + 1
     later = {"role": "assistant", "content": "Edited a.py.", "context_epoch": 0}
     runtime.store.transaction(lambda data: data["tasks"][task["id"]]["messages"].append(later))

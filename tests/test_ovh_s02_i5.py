@@ -133,8 +133,8 @@ def test_checkpoint_requests_reuse_passed_verification_and_finish(tmp_path):
     for _, messages, _ in model.calls:
         checkpoint = next(m["content"] for m in messages if str(m.get("content")).startswith("Historical checkpoint"))
         assert "Verification: all 9 tests passed." in checkpoint
-        assert "When all requests are covered, reply from the recorded results." in checkpoint
-        assert "Refresh file or process state before acting only if it may have changed" in checkpoint
+        assert "Once requests are covered, reply from recorded results." in checkpoint
+        assert "Do not restart or repeat completed work or checks." in checkpoint
         assert "Before the final reply" not in checkpoint
 
 
