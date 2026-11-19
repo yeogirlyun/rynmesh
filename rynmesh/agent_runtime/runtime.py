@@ -3813,6 +3813,7 @@ class AgentRuntime(AgentLoop):
                 if ambiguous(row):
                     row["pending_control"] = {"kind": "stop"}
                     event(row, "paused", operation_in_flight=True, reason="owner_stopped")
+                    row["process_stop_revision"] = row["control_revision"]
                 elif row["status"] in {"queued", "running", "waiting_approval", "waiting_input", "paused"}:
                     # Capture the accepted text already shown in the composer
                     # before cancelling transport; a late response is discarded.
@@ -3829,6 +3830,7 @@ class AgentRuntime(AgentLoop):
                     row.update(status="paused", pending_approval=None, approved=None, pending_input=None,
                                pending_control={"kind": "stop"}, turn_stopped=True)
                     event(row, "paused", operation_in_flight=bool(row["in_flight"]), reason="owner_stopped")
+                    row["process_stop_revision"] = row["control_revision"]
                     close_queue(row, event, "agent_cancelled")
                     settle(row, event, data=data)
                     subagents.on_subagent_settled_in_tx(data, row)
