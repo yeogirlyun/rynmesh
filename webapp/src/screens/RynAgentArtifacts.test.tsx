@@ -64,6 +64,38 @@ const pelican = { id: "file_pelican", name: "pelican.svg", path: "pelican.svg", 
 const helper = { ...pelican, id: "file_helper", name: "notes.txt", path: "notes.txt", media_type: "text/plain", preview: "text", role: "supporting",
   sha256: "n1", mentioned_in_answer: false, render_inspected: undefined };
 
+it("makes a confirmed plugin workbook downloadable even when the final reply fails", async () => {
+  const user = userEvent.setup();
+  const blobs = blobURLs();
+  const requested = vi.fn();
+  const download = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+  const file = { ...helper, id: "file_export", name: "export.xlsx",
+    path: ".ryn/mcp/artifact-task/op_export/export.xlsx", operation_id: "op_export", source: "write",
+    preview: "download", media_type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    sha256: "workbook-v1", receipt_sha256: "workbook-v1" };
+  const foreign = { ...file, id: "file_foreign", name: "foreign.xlsx", path: ".ryn/mcp/other-task/op_export/foreign.xlsx" };
+  const image = { ...file, id: "file_image", name: "image.png", path: ".ryn/mcp/artifact-task/op_export/image.png", preview: "image" };
+  const changed = { ...file, id: "file_changed", name: "changed.xlsx", path: ".ryn/mcp/artifact-task/op_export/changed.xlsx", status: "changed_outside_task" };
+  server.use(http.get("*/api/local/agent/tasks/artifact-task/artifacts", () => HttpResponse.json({ artifacts: [], files: [file, foreign, image, changed] })),
+    http.get("*/api/local/agent/tasks/artifact-task/files/file_export", ({ request }) => {
+      requested(request.url);
+      return new HttpResponse("saved workbook bytes", { headers: { "Content-Type": file.media_type } });
+    }));
+  try {
+    render(<TaskArtifacts task={{ ...task, error: "agent_invalid_model_response" }} />);
+    const section = await screen.findByRole("region", { name: "Result files" });
+    expect(section).toHaveTextContent("export.xlsx");
+    expect(section).not.toHaveTextContent(/foreign\.xlsx|image\.png|changed\.xlsx/);
+    await user.click(screen.getByLabelText("Open with · export.xlsx"));
+    await user.click(await screen.findByRole("button", { name: "Save a copy of export.xlsx" }));
+    await waitFor(() => expect(blobs).toHaveLength(1));
+    expect(download).toHaveBeenCalledOnce();
+    expect(requested).toHaveBeenCalledWith(expect.stringMatching(/file_export\?v=workbook-v1$/));
+  } finally {
+    download.mockRestore();
+  }
+});
+
 it("keeps computer screenshots inside collapsed operation history and excludes them from delivered files", async () => {
   const user = userEvent.setup();
   const observation = { ...pelican, id: "screen", name: "image_1.png", path: ".ryn/computer/file-task/observe/image_1.png", source: "computer_observation", operation_id: "observe" };

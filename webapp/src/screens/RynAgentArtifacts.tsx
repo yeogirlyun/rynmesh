@@ -36,6 +36,15 @@ function deduplicateByName(items: AgentFileArtifact[]): AgentFileArtifact[] {
   return [...byName.values()];
 }
 
+function isPluginDownload(item: AgentFileArtifact, taskID: string, path: string): boolean {
+  // The node checks plugin receipts against the task and operation directory
+  // before listing them. Keep observations and other internal files out.
+  return Boolean(item.operation_id && item.receipt_sha256 && item.created_by_task &&
+    item.source === "write" && item.status === "current" && item.preview !== "image" &&
+    item.role !== "helper" && !EXECUTABLE.has(path.slice(path.lastIndexOf(".")).toLowerCase()) &&
+    path === `.ryn/mcp/${taskID}/${item.operation_id}/${item.name}`);
+}
+
 function fileTurnIndex(file: AgentFileArtifact, maxTurnIndex: number): number {
   if (typeof file.turn_index === "number" && Number.isFinite(file.turn_index)) {
     return Math.max(0, Math.min(file.turn_index, maxTurnIndex));
@@ -280,10 +289,12 @@ export function TaskArtifacts({ task, maxTurnIndex = 0, children }: { task: Agen
     }
   }, [task.id, file?.id, file?.sha256, file?.bytes, t]);
   const items = listing?.artifacts || [];
-  const resultFiles = files.filter(item => {
-    const normalized = item.path.replaceAll("\\", "/");
-    return item.source !== "computer_observation" && !normalized.startsWith(".ryn/") && !normalized.includes("/.ryn/");
-  });
+  const resultFiles = useMemo(() => files.flatMap(item => {
+    const path = item.path.replaceAll("\\", "/");
+    if (isPluginDownload(item, task.id, path)) return [{ ...item, role: "deliverable" as const }];
+    if (item.source === "computer_observation" || path.startsWith(".ryn/") || path.includes("/.ryn/")) return [];
+    return [item];
+  }), [files, task.id]);
   const deliverablesByTurn = useMemo(() => {
     const map = new Map<number, AgentFileArtifact[]>();
     for (const item of resultFiles) {
