@@ -1,5 +1,6 @@
 """Current installed CLI metadata binds admission; no real inference or owner state."""
 import copy
+import json
 import threading
 from types import SimpleNamespace
 
@@ -7,6 +8,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from test_agent_cli_models import cli_metadata_catalog as cli_metadata_catalog
+from test_agent_integrations import add_source, node as node
 
 from rynmesh.agent_runtime.bridge import AgentModelBridge
 from rynmesh.agent_runtime.store import AgentError
@@ -14,7 +16,30 @@ from rynmesh.llm_package.adapters import AdapterError
 from rynmesh.llm_package.api import install_inference_api
 from rynmesh.llm_package.cli_adapter import CLIAgentAdapter
 from rynmesh.llm_package.cli_binding import CLIModelDispatchAdapter
+from rynmesh.llm_package.manifest import LLMPackageManifest, load_manifest, save_manifest
 from rynmesh.llm_package.sources import SourceAdapter, SourceStore
+
+
+def test_legacy_antigravity_capacity_keeps_other_local_models_visible(node, monkeypatch):
+    app, store = node
+    _, api_model = add_source(app)
+    path = store.home / "llm" / "antigravity.json"
+    save_manifest(LLMPackageManifest(package_id="antigravity-cli", mode="antigravity_cli",
+        adapter="antigravity_cli", runtime="external", public_model_alias="Antigravity",
+        context_window=1048576, max_output_tokens=131072), path)
+    (path.parent / "cli-services.json").write_text(json.dumps({
+        "antigravity_cli": {"manifest": str(path), "publication_enabled": False},
+    }), encoding="utf-8")
+    monkeypatch.setattr(CLIAgentAdapter, "_command_path", lambda _: str(path.with_suffix(".exe")))
+
+    with TestClient(app) as client:
+        response = client.get("/api/local/llm/services")
+    assert response.status_code == 200
+    assert {row["service"]["package_id"] for row in response.json()["services"]} >= {
+        "antigravity-cli", api_model.removeprefix("local/"),
+    }
+    manifest = load_manifest(path)
+    assert (manifest.context_window, manifest.max_output_tokens) == (65536, 32000)
 
 
 def test_capacity_change_rotates_only_affected_model_and_default_and_never_resurrects(cli_metadata_catalog):

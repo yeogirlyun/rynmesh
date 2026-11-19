@@ -1875,8 +1875,8 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                         if manifest.context_window == legacy_cli_windows.get(kind):
                             manifest.context_window = CLI_FALLBACK_WINDOWS[kind]
                             refreshed_manifest = True
-                        if manifest.max_output_tokens == 128000:
-                            manifest.max_output_tokens = CLI_FALLBACK_MAX_OUTPUT_TOKENS
+                        if manifest.max_output_tokens == 128000 or manifest.max_output_tokens > manifest.context_window:
+                            manifest.max_output_tokens = min(CLI_FALLBACK_MAX_OUTPUT_TOKENS, manifest.context_window)
                             refreshed_manifest = True
                         if not manifest.context_window_basis:
                             manifest.context_window_basis = "cli_default"
