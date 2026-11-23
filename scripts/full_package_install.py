@@ -3,7 +3,6 @@
 Runs after the ordinary Ryn installer exits. Never downloads or copies user data.
 """
 import argparse
-import base64
 import contextlib
 import csv
 import hashlib
@@ -220,6 +219,50 @@ def allow_desktop_user(path):
                    check=True, capture_output=True, timeout=120, creationflags=0x08000000)
 
 
+def installed_process_role(destination, executable):
+    # A shortcut or junction may spell the same installation differently.
+    path = Path(executable).resolve()
+    if path.parent == destination:
+        return {"ryn.exe": "desktop", "rynmesh-peer.exe": "node",
+                "ryn_computer_use.exe": "worker", "company-service.exe": "worker"}.get(path.name.lower())
+    if path.is_relative_to(destination / "plugins") or path.is_relative_to(destination / "plugin-services"):
+        return "worker"
+    return None
+
+
+def stop_installed_processes(destination):
+    import psutil
+
+    deadline = time.monotonic() + 30
+    quiet_since = None
+    while time.monotonic() < deadline:
+        groups = {"desktop": [], "node": [], "worker": []}
+        for process in psutil.process_iter(["exe"]):
+            executable = process.info["exe"]
+            if executable:
+                role = installed_process_role(destination, executable)
+                if role:
+                    groups[role].append(process)
+        # Stop the supervisor before its children so the watchdog cannot relaunch them.
+        running = groups["desktop"] or groups["node"] or groups["worker"]
+        if running:
+            quiet_since = None
+            for process in running:
+                try:
+                    print(f"stopping {process.pid} {process.info['exe']}", flush=True)
+                    process.terminate()
+                except psutil.NoSuchProcess:
+                    pass
+            psutil.wait_procs(running, timeout=2)
+        else:
+            if quiet_since is None:
+                quiet_since = time.monotonic()
+            elif time.monotonic() - quiet_since >= 1:
+                return
+            time.sleep(0.2)
+    raise RuntimeError("Installed Ryn processes are still running")
+
+
 def prepare_upgrade(payload, destination):
     print('stage: verify-package', flush=True)
     manifest = verify(Path(payload).resolve())  # Never uninstall before payload verification.
@@ -229,8 +272,7 @@ def prepare_upgrade(payload, destination):
     destination = Path(destination).resolve()
     if destination == Path(destination.anchor) or destination == Path.home().resolve():
         raise ValueError('Unsafe installation directory')
-    old = destination / 'Ryn.exe'
-    if not old.is_file():
+    if not any((destination / name).is_file() for name in ('Ryn.exe', 'rynmesh-peer.exe', 'uninstall.exe')):
         return
     backup = destination.parent / 'Ryn-install-backups' / uuid.uuid4().hex
     print('stage: backup-program', flush=True)
@@ -238,24 +280,8 @@ def prepare_upgrade(payload, destination):
     for name in ('Ryn.exe', 'rynmesh-peer.exe', 'ryn_computer_use.exe', 'uninstall.exe'):
         if (destination / name).is_file():
             shutil.copy2(destination / name, backup / name)
-    # Match full executable paths. Never terminate another Ryn installation or
-    # unrelated service merely because its process name is the same.
-    encoded_root = base64.b64encode(str(destination).encode('utf-8')).decode('ascii')
-    command = r'''$ErrorActionPreference='Stop';
-$root=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('__ROOT__'));
-$prefix=$root.TrimEnd('\')+'\';
-Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and
-  ($_.ExecutablePath.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)) -and
-  (($_.Name -in @('Ryn.exe','rynmesh-peer.exe','ryn_computer_use.exe','company-service.exe')) -or
-   $_.ExecutablePath.StartsWith($prefix+'plugins\',[StringComparison]::OrdinalIgnoreCase) -or
-   $_.ExecutablePath.StartsWith($prefix+'plugin-services\',[StringComparison]::OrdinalIgnoreCase))
-} | ForEach-Object {Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue};
-Start-Sleep -Seconds 2;
-'''.replace('__ROOT__', encoded_root)
     print('stage: stop-owned-processes', flush=True)
-    subprocess.run(['powershell.exe', '-NoProfile', '-EncodedCommand',
-                    base64.b64encode(command.encode('utf-16le')).decode('ascii')],
-                   check=True, capture_output=True, timeout=40, creationflags=0x08000000)
+    stop_installed_processes(destination)
     uninstaller = destination / 'uninstall.exe'
     if uninstaller.is_file():
         print('stage: uninstall-update-mode', flush=True)

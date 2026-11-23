@@ -45,6 +45,8 @@ try {
     # `python -m` puts the repository first on sys.path, so rynmesh still comes from HEAD.
     $releasePython=Join-Path $repo '.codex-tmp/windows-package/venv/Scripts/python.exe'
     if (-not (Test-Path -LiteralPath $releasePython)) { throw 'Release venv missing: run webapp/src-tauri/scripts/build-windows.ps1 first' }
+    & $releasePython -m pip install --disable-pip-version-check 'psutil==7.2.2'
+    if ($LASTEXITCODE -ne 0) { throw 'Installer process management dependency missing' }
     $helperArgs=@('--noconfirm','--onedir','--name','ryn-full-install','--collect-submodules','rynmesh','--collect-data','rynmesh','--collect-data','jsonschema_specifications','--exclude-module','tkinter','--exclude-module','_tkinter','--exclude-module','numpy')
     $helperExe="$build/dist/ryn-full-install/ryn-full-install.exe"
     $helperStamp="$build/helper-inputs.sha256"

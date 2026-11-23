@@ -102,8 +102,9 @@ def test_upgrade_backs_up_and_preserves_data_using_update_uninstall(tmp_path, mo
     (destination / 'user-data').write_bytes(b'keep')
     calls = []
     monkeypatch.setattr(installer.subprocess, 'run', lambda args, **kw: calls.append(args))
+    monkeypatch.setattr(installer, 'stop_installed_processes', lambda target: calls.append(target))
     installer.prepare_upgrade(payload, destination)
-    assert calls[0][0] == 'powershell.exe'
+    assert calls[0] == destination.resolve()
     assert calls[1] == [str(destination / 'uninstall.exe'), '/S', '/UPDATE', '_?=' + str(destination)]
     assert (destination / 'user-data').read_bytes() == b'keep'
     backups = list((tmp_path / 'Ryn-install-backups').glob('*/Ryn.exe'))
@@ -548,3 +549,28 @@ def test_external_skill_resources_preserve_state_and_reinstall(tmp_path, disable
     customized = store._read()['skills'][skill['id']]
     installer.provision_skill_resources(store, tmp_path/'payload', {'skills': [skill]})
     assert store._read()['skills'][skill['id']] == customized
+
+@pytest.mark.skipif(installer.os.name != "nt", reason="Windows executable paths and junctions")
+def test_upgrade_quits_this_install_through_a_junction(tmp_path):
+    import shutil
+    import subprocess
+
+    destination, alias, other = (tmp_path / name for name in ("Ryn", "shortcut-root", "other"))
+    destination.mkdir()
+    other.mkdir()
+    subprocess.run(["cmd.exe", "/d", "/c", "mklink", "/J", str(alias), str(destination)], check=True)
+    children = []
+    try:
+        for folder, name in ((destination, "Ryn.exe"), (destination, "rynmesh-peer.exe"), (other, "Ryn.exe")):
+            shutil.copyfile(Path(installer.os.environ["SystemRoot"]) / "System32/ping.exe", folder / name)
+            program = (alias if folder == destination and name == "Ryn.exe" else folder) / name
+            children.append(subprocess.Popen([str(program), "-t", "127.0.0.1"], stdout=subprocess.DEVNULL))
+        installer.stop_installed_processes(destination.resolve())
+        assert all(child.poll() is not None for child in children[:2])
+        assert children[2].poll() is None
+    finally:
+        for child in children:
+            if child.poll() is None:
+                child.terminate()
+            child.wait(timeout=5)
+        alias.rmdir()
