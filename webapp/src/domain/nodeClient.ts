@@ -61,7 +61,7 @@ export interface CLIServicesStatus {
 export type ServiceAvailability = "ready" | "needs_connection" | "offline";
 
 export interface LLMServiceRecord {
-  cli_models?: { id: string; name: string; default: boolean; usage?: ModelTokenUsage }[];
+  cli_models?: { id: string; name: string; default: boolean; model_binding?: Record<string, unknown>; usage?: ModelTokenUsage }[];
   usage?: ModelTokenUsage;
   network_id?: string;
   local_only?: boolean;
@@ -75,6 +75,9 @@ export interface LLMServiceRecord {
   /** Company-plugin share: the member who shares it and the plugin resource. */
   provider_name?: string;
   provider_resource?: string;
+  consumer_peer_id?: string;
+  model_binding?: Record<string, unknown>;
+  external_permission?: {resource: string};
   // False for a registry advertisement; true once the provider's signed catalog response bound the model.
   binding_verified?: boolean;
   // View model computed by the local node (rynmesh/llm_package/service_view.py).
@@ -283,6 +286,7 @@ export interface NodeClient {
   ): Promise<Record<string, unknown>>;
   getTaskBalance(): Promise<TaskBalanceSummary>;
   submitLLMOrder(req: {
+    expected_model_binding?: Record<string, unknown>;
     chat?: LLMOrderChat;
     prompt_format?: string;
     service_review_token?: string;

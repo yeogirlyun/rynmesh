@@ -465,7 +465,18 @@ export default function PrivateAIChat({ unified = false }: { unified?: boolean }
     await replaceConversation(withUser);
 
     try {
+      const companyModel = localModelCLI
+        ? selectedService.cli_models?.find(model => model.id === cliModel)?.model_binding
+        : selectedService.model_binding;
+      if (selectedService.provider_resource && (!companyModel || !selectedService.consumer_peer_id ||
+          selectedService.external_permission?.resource !== selectedService.provider_resource)) {
+        throw new Error(tr("The original provider is unavailable. Wait for it or start a separate conversation with another service."));
+      }
       let result = await client.submitLLMOrder({
+        ...(selectedService.provider_resource ? { expected_model_binding: {
+          model_binding: companyModel, consumer_peer_id: selectedService.consumer_peer_id,
+          external_permission: selectedService.external_permission,
+        } } : {}),
         network_id: networkId,
         provider_peer_id: selectedService.peer_id,
         service_id: selectedService.service.package_id,

@@ -1304,7 +1304,7 @@ def _download_relay_ciphertext(store: RynmeshStore, reference: str, *,
 
 def dispatch_settlement(store: RynmeshStore, *, task_id: str, provider_peer_id: str,
                         service_id: str, amount: float, network_id: str,
-                        endpoint: str = "", external: bool = False) -> bool:
+                        endpoint: str = "", external: bool = False, company_resource: str = "") -> bool:
     """Sign and deliver the body-free settlement acknowledgement.
 
     One implementation for the live order path and crash recovery — the two
@@ -1317,6 +1317,8 @@ def dispatch_settlement(store: RynmeshStore, *, task_id: str, provider_peer_id: 
         "to_peer_id": provider_peer_id, "amount": amount, "service_id": service_id,
         "settlement_id": "settle:" + task_id,
     }, private_key_bytes=store.private_key_bytes)
+    if company_resource:
+        return store.company_model_control(company_resource, provider_peer_id, service_id, settlement.to_dict())
     if endpoint:
         try:
             _peer_post_json(
@@ -1368,7 +1370,8 @@ def _maintain_consumer_orders(consumer_orders: TaskOrderStore, store: RynmeshSto
             service_id=str(pending.get("service_id") or bindings.get("service_id") or ""),
             amount=float(pending["amount"]), network_id=str(pending.get("network_id") or "rynmesh-main"),
             endpoint=str(pending.get("settlement_endpoint") or ""),
-            external=bool(pending.get("settlement_external")))
+            external=bool(pending.get("settlement_external")),
+            company_resource=str(pending.get("company_resource") or ""))
         metadata = {"settlement_retry_attempts": attempts,
                     "settlement_retry_at": 0 if delivered else now + min(3600, 600 * 2 ** min(attempts - 1, 3))}
         if delivered:
@@ -1456,6 +1459,7 @@ def _recover_consumer_orders(
                     network_id=str(pending.get("network_id") or "rynmesh-main"),
                     endpoint=str(pending.get("settlement_endpoint") or ""),
                     external=bool(pending.get("settlement_external")),
+                    company_resource=str(pending.get("company_resource") or ""),
                 ):
                     consumer_orders.checkpoint(
                         task_id=task_id, metadata={"settlement_dispatched": True},
@@ -1557,12 +1561,48 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         provider = provider_for(service_id)
         if provider is None:
             raise TaskProtocolError("service_unavailable")
-        if decrypted.get("response_mode") == "stream-v1":
+        if "company_control" in decrypted:
+            from rynmesh.services import peer_box
+            control = decrypted["company_control"]
+            payload = SignedPayload.from_dict(control).payload
+            if (payload.get("from_peer_id") != sender or payload.get("task_id") != outer["task_id"]
+                    or payload.get("service_id") != service_id):
+                raise TaskProtocolError("company_control_mismatch")
+            if payload.get("kind") == "llm_settlement":
+                provider.settle_earning(control)
+            elif payload.get("kind") == "llm_cancel":
+                provider.cancel_signed(control)
+            else:
+                raise TaskProtocolError("invalid_company_control")
+            yield seal_task(body={"ack": payload["kind"]}, task_id=outer["task_id"], kind="llm_response",
+                sender_peer_id=store.peer_id, recipient_peer_id=sender, sender_signing_key=store.private_key_bytes,
+                recipient_messaging_pub=decrypted["reply_messaging_pub"], expires_at=_expires(60)).to_dict()
+        elif decrypted.get("response_mode") == "stream-v1":
             yield from provider.handle_stream(envelope)
         else:
             yield provider.handle(envelope)
 
     company = CompanyModelTransport(peer_providers, company_model_events, p2p_stop) if external_catalog else None
+    def company_model_control(resource, peer_id, service_id, control):
+        from rynmesh.services import peer_box
+        try:
+            peer = next(row for row in peer_providers.cached_peers()
+                        if row.get("provider_resource") == resource and row.get("peer_id") == peer_id)
+            task_id = control["payload"]["task_id"]
+            signed = seal_task(body={"company_control": control, "external_permission": {"resource": resource},
+                "service_id": service_id, "reply_messaging_pub": peer_box.public_key_b64(messaging_key)},
+                task_id=task_id, kind="llm_request", sender_peer_id=store.peer_id, recipient_peer_id=peer_id,
+                sender_signing_key=store.private_key_bytes, recipient_messaging_pub=peer["messaging_pub"], expires_at=_expires(60))
+            reply = asyncio.run(company.relay(peer["plugin_id"], peer_id, service_id, signed.to_dict(), 20,
+                                               lambda event: None))
+            outer, body = open_task(reply, recipient_peer_id=store.peer_id,
+                                    recipient_messaging_key=messaging_key, expected_kind="llm_response")
+            return outer["task_id"] == task_id and outer["from_peer_id"] == peer_id and body == {"ack": control["payload"]["kind"]}
+        except Exception as exc:
+            record_diagnostic("llm_settlement", "company_control_failed", exc)
+            return False
+
+    store.company_model_control = company_model_control
     if external_catalog:
         external_catalog.company = company
     if getattr(app.state, "ai_access", None):
@@ -3856,6 +3896,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             "idempotency_key": idempotency_key,
             "request_fingerprint": request_fingerprint,
             **({"provider_resource": external_resource} if external_resource else {}),
+            **({"company_transport": True} if external_resource and selected.get("company_transport") else {}),
         }
         try:
             if consumer_orders._count >= 9000:
@@ -4431,6 +4472,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                     "provider_peer_id": provider_peer_id, "service_id": service_id,
                     "settlement_endpoint": endpoint if transport_evidence.get("transport") == "peer_http_direct" else "",
                     "settlement_external": bool(external_resource),
+                    **({"company_resource": external_resource} if company_plugin else {}),
                     "network_id": network_id, "input_tokens": result["input_tokens"],
                     "output_tokens": result["output_tokens"], "duration_ms": result["duration_ms"],
                     "amount": result["amount"], "transport": result["transport"],
@@ -4467,6 +4509,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 amount=float(result["amount"]), network_id=network_id,
                 endpoint=endpoint if transport_evidence.get("transport") == "peer_http_direct" else "",
                 **({"external": True} if external_resource else {}),
+                **({"company_resource": external_resource} if company_plugin else {}),
             )
             if settlement_delivered:
                 consumer_orders.checkpoint(
@@ -4821,6 +4864,9 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             return {"task_id": task_id, "state": (consumer_orders.get(task_id) or {}).get("state")}
         external_resource = str(bindings.get("provider_resource") or "")
         endpoint = ""
+        if external_resource and bindings.get("company_transport"):
+            company_model_control(external_resource, provider_peer_id, service_id, signed_cancel.to_dict())
+            return {"task_id": task_id, "state": (consumer_orders.get(task_id) or {}).get("state")}
         if external_resource and peer_providers:
             candidates = [row for row in peer_providers.cached_peers()
                           if row.get("provider_resource") == external_resource and row.get("peer_id") == provider_peer_id]

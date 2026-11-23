@@ -76,7 +76,11 @@ class AskContextService:
             raise ConversationError("ask_question_too_large")
         service_id = conversation["serviceKey"][len(conversation["providerPeerId"]) + 2:]
         records = self.catalog(conversation["networkId"])
-        selected = next((row for row in records if row.get("peer_id") == conversation["providerPeerId"] and (row.get("service") or {}).get("package_id") == service_id), None)
+        matches = [row for row in records if row.get("peer_id") == conversation["providerPeerId"]
+                   and (row.get("service") or {}).get("package_id") == service_id]
+        if len({row.get("provider_resource", "") for row in matches}) > 1:
+            raise ConversationError("ask_provider_unavailable")
+        selected = next(iter(matches), None)
         if not selected:
             raise ConversationError("ask_provider_unavailable")
         if selected.get("ready") is False or (selected.get("health") or {}).get("ok") is False:

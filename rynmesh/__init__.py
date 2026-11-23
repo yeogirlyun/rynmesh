@@ -7,7 +7,7 @@ providers can vouch for content via the optional manifest ``attestations``
 field without being a required dependency.
 """
 
-__version__ = "0.9.2"
+__version__ = "0.9.3"
 
 from .credits import (
     CREDIT_LEDGER_VERSION,
