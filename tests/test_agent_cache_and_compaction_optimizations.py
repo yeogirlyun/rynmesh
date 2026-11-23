@@ -574,17 +574,19 @@ def test_reaching_2m_token_threshold_auto_extends_without_compaction(tmp_path):
 def test_codex_compaction_retention_and_receipt_slimming(tmp_path):
     from rynmesh.agent_runtime import request_context
 
-    # 1. Newest-first user message token/byte budget (COMPACT_USER_MESSAGE_MAX_BYTES)
+    # 1. Keep the original request, then spend the remaining budget newest-first.
     user_msgs = [
-        {"role": "user", "content": "OLDEST_DROPPED_" + ("a" * 500)},
+        {"role": "user", "content": "ORIGINAL_KEPT"},
+        {"role": "user", "content": "OLDER_DROPPED"},
         {"role": "user", "content": "MIDDLE_TRUNCATED_" + ("b" * 500)},
         {"role": "user", "content": "NEWEST_KEPT"},
     ]
     retained = request_context._select_compacted_owner_messages(user_msgs, max_bytes=300)
-    assert len(retained) == 2
+    assert len(retained) == 3
+    assert retained[0]["content"] == "ORIGINAL_KEPT"
     assert retained[-1]["content"] == "NEWEST_KEPT"
-    assert retained[0]["content"].startswith("MIDDLE_TRUNCATED_")
-    assert retained[0]["content"].endswith("...[truncated]")
+    assert retained[1]["content"].startswith("MIDDLE_TRUNCATED_")
+    assert retained[1]["content"].endswith("...[truncated]")
 
     # 2. Compacted ryn_code_exec / ryn_shell_execute receipts strip bloated AX/stdout dumps
     runtime, _, _, _ = make_runtime(tmp_path)
@@ -644,10 +646,11 @@ def test_checkpoint_note_tells_the_main_model_the_task_continues(tmp_path):
     # The note precedes the turns that followed the checkpoint and is resent on every later request,
     # so it must point at them as well as at Next, and must not claim the task is unfinished.
     assert "Next and the messages after this note" in CHECKPOINT_CONTINUATION
-    assert "Before the final reply, check it answers the latest owner request and any earlier ones still open." in CHECKPOINT_CONTINUATION
+    assert "latest owner direction and any earlier requests still open" in CHECKPOINT_CONTINUATION
     # S03-I12 adds required recovery/current-state guidance to the existing note budget.
-    history_guidance = ("Use ryn_history_search/ryn_history_read to recover exact details the summary omitted. "
-                        "Before relying on file or process state recorded here, read the current state again.")
+    history_guidance = ("Read current file contents directly when needed for an edit. "
+                        "Use ryn_history_search/ryn_history_read for missing evidence of past work. "
+                        "Refresh potentially stale file or process state before acting on it.")
     assert len(CHECKPOINT_CONTINUATION.encode()) <= 234 + len(history_guidance.encode()) + 1
     later = {"role": "assistant", "content": "Edited a.py.", "context_epoch": 0}
     runtime.store.transaction(lambda data: data["tasks"][task["id"]]["messages"].append(later))

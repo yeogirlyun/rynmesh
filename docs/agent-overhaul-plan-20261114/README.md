@@ -1,6 +1,8 @@
 # Ryn agent 改版方案（对照 Codex，2026-11-16）
 
-这是一份**方案**，没有改代码。基线是 develop `a8ec8d81`，所有行号以它为准。Codex 对照版本是开源的 `openai/codex` rust-v0.167.0。
+本文记录最初的**方案**，方案基线是 develop `a8ec8d81`，所有行号以它为准。Codex 对照版本是开源的 `openai/codex` rust-v0.167.0。
+
+**当前分支状态（2026-11-16）**：`feature/agent-overhaul` 已同步来源分支至 `710dc9e7`，包含部分实现和回归测试，不能再将整个分支理解为“只有方案、没有代码改动”。实际代码变更、推送范围和验证边界见 [首次交付说明](../acceptance/feature-agent-overhaul-20261115.md) 与 [本次增量说明](../acceptance/feature-agent-overhaul-20261116.md)。下面的 587 项是规划总量，不代表全部完成；尚未完成整体集成验收。
 
 ## 结论
 
