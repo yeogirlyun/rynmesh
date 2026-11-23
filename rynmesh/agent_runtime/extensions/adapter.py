@@ -36,6 +36,7 @@ from .schema_normalize import normalize_mcp_input_schema, sanitize
 from .store import (
     COMPUTER_USE_SERVER_ID,
     DEFAULT_MAX_OUTPUT_CHARS,
+    DEFAULT_TOOL_TIMEOUT_MS,
     ExtensionStore,
     _canon_sha256,
     compute_model_tool_name,
@@ -1046,6 +1047,9 @@ class ExtensionToolAdapter:
             "computer_access": bool(binding["computer_access"]),
             "extension_binding": copy.deepcopy(binding),
             "workstation_permission_tool": workstation_tool,
+            # The connection's own per-call limit; CodeMode lets a nested call
+            # run this long instead of cutting it at the script's yield time.
+            "tool_timeout_ms": int(server.get("tool_timeout_ms", DEFAULT_TOOL_TIMEOUT_MS)),
         }
 
     def validate(self, name: str, arguments: Any) -> None:

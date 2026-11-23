@@ -157,7 +157,7 @@ def node(tmp_path, server, name="one", **kwargs):
     private = Ed25519PrivateKey.generate()
     store = SimpleNamespace(peer_id=base64.b64encode(private.public_key().public_bytes_raw()).decode(), private_key_bytes=private.private_bytes_raw(), node_name=name)
     messaging = X25519PrivateKey.generate()
-    service = PeerProviderService(tmp_path / name, store, messaging, transport=server.transport, clock=lambda: server.clock[0], callback_factory=fake_callback, model_status=lambda: [model()], **kwargs)
+    service = PeerProviderService(tmp_path / name, store, messaging, transport=server.transport, clock=lambda: server.clock[0], callback_factory=fake_callback, **{"model_status": lambda: [model()], **kwargs})
     service.configure("test", MANIFEST)
     return service
 
@@ -514,4 +514,69 @@ def test_relogin_revokes_previous_grant_and_denied_callback_ends_pending(tmp_pat
         with pytest.raises(PeerProviderError):
             await service.finish_login("test", {"state": params["state"], "iss": ORIGIN, "error": "access_denied"})
         assert service.status("test")["status"] == "signed_out"
+    asyncio.run(scenario())
+
+
+def cli_model_record():
+    def bind(generation):
+        return {"version": "ryn.model-binding.v1", "service_id": "codex-cli", "model_generation": generation * 32, "rule_revision": "b" * 32}
+    return {"service": {"package_id": "codex-cli", "model_alias": "Codex", "adapter": "codex_cli", "capabilities": ["client-tools"]},
+            "capacity": {"available": 1}, "model_binding": bind("a"), "chat_protocol": "rynmesh.chat.v1",
+            "tool_support": "unknown", "delivery_protocols": ["complete-v1"],
+            "cli_models": [{"id": "gpt-6.2-sol", "name": "GPT-6.2 Sol", "default": True, "model_binding": bind("c"),
+                            "supported_reasoning_efforts": ["low", "medium", "high"], "default_reasoning_effort": "low",
+                            "context_window": 400000, "tool_support": "unknown"},
+                           {"id": "gpt-5.6-luna", "name": "GPT-5.6 Luna", "model_binding": bind("d")}]}
+
+
+def test_shared_cli_publishes_each_upstream_model_and_authorizes_its_binding(tmp_path):
+    server = FakeServer()
+    a = node(tmp_path, server, model_status=lambda: [cli_model_record()])
+    b = node(tmp_path, server, "two")
+    record = cli_model_record()
+
+    async def scenario():
+        await login(a, server)
+        await login(b, server, "two")
+        await a.publish("test", ["codex-cli"])
+        # The directory carries every upstream model with its own binding and effort levels.
+        assert server.published["one"][0]["cli_models"][0]["supported_reasoning_efforts"] == ["low", "medium", "high"]
+        await b.directory("test")
+        seen = b.cached_models()[0]["cli_models"]
+        assert [m["id"] for m in seen] == ["gpt-6.2-sol", "gpt-5.6-luna"]
+        assert seen[0]["default_reasoning_effort"] == "low" and seen[1]["default"] is False
+        for binding in (record["model_binding"], *(m["model_binding"] for m in record["cli_models"])):
+            assert a.locally_published(RESOURCE, "codex-cli", binding)
+        assert not a.locally_published(RESOURCE, "codex-cli", {**record["model_binding"], "model_generation": "e" * 32})
+        await a.publish("test", [])
+        assert not a.locally_published(RESOURCE, "codex-cli", record["cli_models"][0]["model_binding"])
+    asyncio.run(scenario())
+
+
+def test_cli_model_records_reject_unsafe_fields():
+    from rynmesh.peer_providers import validation as v
+    good = cli_model_record()
+    assert v.model_record(good)["cli_models"][1] == {"id": "gpt-5.6-luna", "name": "GPT-5.6 Luna", "default": False,
+                                                    "model_binding": good["cli_models"][1]["model_binding"], "tool_support": "unknown"}
+    for change in ({"id": "../x"}, {"supported_reasoning_efforts": ["turbo"]}, {"default_reasoning_effort": "turbo"},
+                   {"model_binding": {**good["model_binding"], "service_id": "other"}}, {"context_window": -1}):
+        bad = copy.deepcopy(good)
+        bad["cli_models"][0].update(change)
+        with pytest.raises(v.PeerProviderError):
+            v.model_record(bad)
+    dropped = copy.deepcopy(good)
+    dropped["cli_models"][0]["api_key"] = "secret"
+    assert "api_key" not in v.model_record(dropped)["cli_models"][0]
+
+
+def test_legacy_single_binding_publication_still_authorizes(tmp_path):
+    server = FakeServer()
+    a = node(tmp_path, server)
+
+    async def scenario():
+        await login(a, server)
+        await a.publish("test", ["model-a"])
+        with a._lock:
+            a._rows["test"]["published"] = {"model-a": model()["model_binding"]}
+        assert a.locally_published(RESOURCE, "model-a", model()["model_binding"])
     asyncio.run(scenario())

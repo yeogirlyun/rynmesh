@@ -282,6 +282,8 @@ class AgentModelBridge:
             flags["diagnostics"] = copy.deepcopy(data["diagnostics"])
         if isinstance(data.get("server_model"), str) and data["server_model"]:
             flags["server_model"] = data["server_model"][:160]
+        if isinstance(data.get("server_reasoning_effort"), str) and data["server_reasoning_effort"]:
+            flags["server_reasoning_effort"] = data["server_reasoning_effort"][:32]
         return {"message": message, "finish_reason": finish, "usage": usage, "output_policy": policy, **flags}
 
     def complete(self, model_id, messages, tool_specs, cancelled, on_event=None, *, expected_destination=None, max_output_tokens=None, deadline=None, on_request_policy=None, reasoning_effort=None, conversation=None, cache_key=None, request_id=None, data_policy_state=None, on_limit_retry=None, bytes_per_token=None):
@@ -745,7 +747,9 @@ class AgentModelBridge:
                 raise err
             response = {**self._response(result, target, tool_specs, policy), "request_policy": request_policy, "request_id": task_id,
                         **({"shared_image_resize": shared_resize} if shared_resize and (shared_resize.get("resized") or shared_resize.get("omitted")) else {})}
-            if response.get("server_model"):
+            # A CLI default has no requested model name to compare with.
+            cli_default = target.get("adapter") in {"codex_cli", "antigravity_cli", "claude_cli"} and not target.get("cli_model")
+            if response.get("server_model") and not cli_default:
                 response["requested_model"] = str(target.get("cli_model") or (
                     getattr(manager.adapter, "model", "") if manager else target.get("model_id", "")))[:160]
             try:
