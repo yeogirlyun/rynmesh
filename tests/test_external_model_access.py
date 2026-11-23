@@ -22,6 +22,7 @@ RESOURCE = "https://provider.test/connect"
 
 class Authority:
     def __init__(self):
+        self.plugin_id = "other-workspace"
         self.allowed = True
         self.selected = {}
         self.models = []
@@ -34,7 +35,7 @@ class Authority:
         self.calls.append((resource, sender, recipient, capability, service_id))
         if not self.allowed or resource != RESOURCE or capability != "model.invoke":
             raise ValueError("denied")
-        return {"allowed": True}
+        return {"allowed": True, "plugin_id": self.plugin_id}
 
     def cached_models(self):
         return copy.deepcopy(self.models)
@@ -189,6 +190,44 @@ def test_consumer_bridge_model_selection_and_encrypted_direct_call(pair):
     assert pair.c.authority.calls and pair.p.authority.calls
 
 
+@pytest.mark.parametrize("entry", ["chat", "agent"])
+@pytest.mark.parametrize("report_usage", [True, False])
+def test_company_orders_do_not_access_task_balance(pair, monkeypatch, entry, report_usage):
+    import asyncio
+    from rynmesh.llm_package.task_balance import TaskBalanceLedger
+
+    pair.c.authority.plugin_id = pair.p.authority.plugin_id = "company-workspace"
+    if not report_usage:
+        chat = pair.manager.adapter.inner.chat
+
+        def without_usage(*args, **kwargs):
+            result = chat(*args, **kwargs)
+            return {k: v for k, v in result.items() if k not in {"input_tokens", "output_tokens"}}
+
+        monkeypatch.setattr(pair.manager.adapter.inner, "chat", without_usage)
+
+    def unexpected_balance(*args, **kwargs):
+        pytest.fail("Company orders must not access the development balance")
+
+    for operation in ("summary", "hold", "settle", "earn", "release"):
+        monkeypatch.setattr(TaskBalanceLedger, operation, unexpected_balance)
+    if entry == "chat":
+        result = asyncio.run(pair.c.services["execute_order"]({
+            "provider_peer_id": pair.p.store.peer_id, "service_id": pair.sid,
+            "expected_model_binding": pair.binding, "transport": "direct",
+            "chat": {"messages": [{"role": "user", "content": "hello"}]},
+        }))
+        assert result["message"]["content"] == "shared reply"
+        assert result["amount"] == 0 and result["billing_basis"] == "company_free"
+    else:
+        bridge, _, catalog = build_agent_integrations(pair.c.app, pair.c.store, pair.c.store.home)
+        model = next(row for row in catalog.list_models() if row.get("provider_resource") == RESOURCE)
+        result = bridge.complete(model["id"], [{"role": "user", "content": "hello"}], [],
+                                 lambda: False, expected_destination=catalog.destination(model))
+        assert result["message"]["content"] == "shared reply"
+    assert len(pair.traces) == 1
+
+
 def test_catalog_does_not_merge_identical_models_from_different_sources(pair):
     row = {**pair.row, "online": True}
     other = {**row, "provider_resource": "https://other.test/connect", "external_permission": {"resource": "https://other.test/connect"}}
@@ -222,6 +261,7 @@ def test_company_relay_round_trip_without_public_registry(pair, monkeypatch):
 
     client = pair.c.services["external_catalog"].company
     server = pair.p.services["external_catalog"].company
+    pair.c.authority.plugin_id = pair.p.authority.plugin_id = "company-workspace"
     pair.row.update(company_transport=True, plugin_id="company-workspace")
     frames = {"c": [], "p": []}
     workers = []

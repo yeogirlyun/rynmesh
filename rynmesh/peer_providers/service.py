@@ -820,7 +820,7 @@ class PeerProviderService:
             v.fail("peer_provider_access_denied")
         if capability == "message.text" and "service_id" in value:
             v.fail("peer_provider_access_denied")
-        return {"allowed": True, "issuer": row["session"]["issuer"], "resource": resource, **request, "revision": v.revision(value.get("revision"))}
+        return {"allowed": True, "plugin_id": plugin_id, "issuer": row["session"]["issuer"], "resource": resource, **request, "revision": v.revision(value.get("revision"))}
 
     def sync_authorize(self, resource, from_peer_id, to_peer_id, capability, service_id=None):
         try:

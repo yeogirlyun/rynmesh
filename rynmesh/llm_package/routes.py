@@ -301,7 +301,7 @@ def _open_provider_response(
         counts = actual_usage(result)
         complete = all(value is not None for value in counts.values())
         result.update(**counts, reported_usage=counts, usage_complete=complete)
-        if not complete:
+        if not complete and not (amount == 0 and result.get("billing_basis") == "company_free"):
             own_request = outer.get("from_peer_id") == recipient_peer_id
             result.update(amount=0.0 if own_request else None,
                           billing_status="own_request" if own_request else "pending_usage",
@@ -640,14 +640,6 @@ class ProviderService:
                 )
         if "service_review_token" in body and body["service_review_token"] != service_review(self.manifest.public_dict(), own_request=own_request)["token"]:
             return self._sealed_failure(task_id, reply_pub, outer["from_peer_id"], "rejected", "service_review_changed")
-        pricing = self.manifest.pricing
-        zero_price = pricing.input_per_1k == pricing.output_per_1k == pricing.minimum == 0
-        if max_amount < 0 or (max_amount == 0 and not own_request and not zero_price):
-            # A genuinely zero-price service needs no hold. Paid remote work
-            # must still reserve a positive amount before consuming compute.
-            raise TaskProtocolError("max_amount must be a positive hold")
-        if max_amount > self.manifest.pricing.maximum_per_task:
-            raise TaskProtocolError("task maximum exceeds provider price limit")
         cli_model = body.get("cli_model", "")
         if cli_model:
             from .cli_models import validate_model
@@ -665,6 +657,7 @@ class ProviderService:
         expected_binding = body.get("expected_model_binding")
         if external_request and (expected_binding is None or "ai_permission" in body or "space_permission" in body):
             return self._sealed_failure(task_id, reply_pub, outer["from_peer_id"], "rejected", "ai_permission_denied")
+        company_free = False
         bound_authorize, bound_authority_lock = None, None
         if expected_binding is not None:
             from .peer_binding import expected
@@ -697,12 +690,21 @@ class ProviderService:
                 def bound_authorize():
                     return self.access_check(outer["from_peer_id"], self.manifest.package_id, body.get("ai_permission"))
             try:
-                bound_authorize()
+                authority = bound_authorize()
+                company_free = external_request and authority == "company-workspace"
             except (ValueError, OSError):
                 return self._sealed_failure(task_id, reply_pub, outer["from_peer_id"], "rejected", "ai_permission_denied")
         elif explicit_friends and not own_request and getattr(self.adapter, "model_binding", None):
             def bound_authorize():
                 return self.access_check(outer["from_peer_id"], self.manifest.package_id, body.get("ai_permission"))
+        pricing = self.manifest.pricing
+        zero_price = pricing.input_per_1k == pricing.output_per_1k == pricing.minimum == 0
+        if max_amount < 0 or (max_amount == 0 and not own_request and not company_free and not zero_price):
+            # A genuinely zero-price service needs no hold. Paid remote work
+            # must still reserve a positive amount before consuming compute.
+            raise TaskProtocolError("max_amount must be a positive hold")
+        if max_amount > self.manifest.pricing.maximum_per_task:
+            raise TaskProtocolError("task maximum exceeds provider price limit")
         idempotency_key = str(body.get("idempotency_key") or task_id)
         fingerprint = _request_fingerprint(body, self.store.private_key_bytes)
         bindings = {
@@ -908,6 +910,9 @@ class ProviderService:
             billing = {"usage_complete": usage_complete,
                        "billing_status": "own_request" if own_request else "priced" if usage_complete else "pending_usage",
                        "billing_basis": "own_request" if own_request else "reported_usage" if usage_complete else "pending_usage"}
+            if company_free:
+                amount = 0.0
+                billing.update(billing_status="company_free", billing_basis="company_free")
             response_body = {
                 "task_id": task_id, "state": "succeeded", "service_id": self.manifest.package_id,
                 "model_alias": self.manifest.public_model_alias, "output": str(result["text"]),
@@ -1182,6 +1187,9 @@ class ProviderService:
         amount = float(payload.get("amount") or 0)
         if amount != float(final.get("amount") or 0):
             raise TaskProtocolError("settlement amount mismatch")
+        if final.get("billing_basis") == "company_free":
+            self.task_store.purge_encrypted_response(task_id)
+            return {"event_id": payload["settlement_id"]}
         counts = actual_usage(final)
         earning = self.balance.earn(
             task_id=task_id, amount=amount, **counts, duration_ms=int(final.get("duration_ms") or 0),
@@ -1357,7 +1365,7 @@ def _maintain_consumer_orders(consumer_orders: TaskOrderStore, store: RynmeshSto
             continue
         pending = next((event for event in reversed(history) if event.get("settlement_pending")), None)
         if (not pending or pending.get("billing_pending_usage") or pending.get("amount") is None
-                or (pending.get("billing_basis") != "own_request"
+                or (pending.get("billing_basis") not in {"own_request", "company_free"}
                     and any(value is None for value in actual_usage(pending).values()))):
             continue
         retry = next((event for event in reversed(history) if "settlement_retry_attempts" in event), {})
@@ -1404,7 +1412,7 @@ def _recover_consumer_orders(
         )
         pending_counts = actual_usage(pending)
         pending_usage = pending and (pending.get("billing_pending_usage") or pending.get("amount") is None
-            or (pending.get("billing_basis") != "own_request" and any(
+            or (pending.get("billing_basis") not in {"own_request", "company_free"} and any(
                 value is None for value in pending_counts.values())))
         if pending_usage:
             # A successful model result survives independently of unavailable
@@ -1426,15 +1434,16 @@ def _recover_consumer_orders(
             continue
         if state not in TERMINAL_STATES and pending:
             bindings = dict(record.get("bindings") or {})
-            balance.settle(
-                task_id=task_id, amount=float(pending.get("amount") or 0),
-                **pending_counts,
-                duration_ms=int(pending.get("duration_ms") or 0),
-                service_id=str(pending.get("service_id") or bindings.get("service_id") or ""),
-                provider_peer_id=str(
-                    pending.get("provider_peer_id") or bindings.get("provider_peer_id") or ""
-                ),
-            )
+            if not bindings.get("company_free"):
+                balance.settle(
+                    task_id=task_id, amount=float(pending.get("amount") or 0),
+                    **pending_counts,
+                    duration_ms=int(pending.get("duration_ms") or 0),
+                    service_id=str(pending.get("service_id") or bindings.get("service_id") or ""),
+                    provider_peer_id=str(
+                        pending.get("provider_peer_id") or bindings.get("provider_peer_id") or ""
+                    ),
+                )
             consumer_orders.transition(
                 task_id=task_id, state="succeeded",
                 metadata={key: value for key, value in pending.items()
@@ -1472,7 +1481,8 @@ def _recover_consumer_orders(
                 metadata={"error_code": "consumer_restarted_before_completion"},
             )
         try:
-            balance.release(task_id=task_id, reason="consumer_restart_recovery")
+            if not (record.get("bindings") or {}).get("company_free"):
+                balance.release(task_id=task_id, reason="consumer_restart_recovery")
         except TaskBalanceError as exc:
             if "task hold not found" not in str(exc):
                 raise
@@ -3736,11 +3746,13 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                          if item.get("peer_id") == provider_peer_id
                           and dict(item.get("service") or {}).get("package_id") == service_id
                           and item.get("provider_resource", "") == external_resource), None)
+        company_free = False
         if external_resource:
             if selected is None or peer_providers is None or body.get("ai_permission") is not None:
                 raise HTTPException(403, "peer_provider_access_denied")
             try:
-                await peer_providers.authorize(external_resource, store.peer_id, provider_peer_id, "model.invoke", service_id)
+                authorization = await peer_providers.authorize(external_resource, store.peer_id, provider_peer_id, "model.invoke", service_id)
+                company_free = authorization.get("plugin_id") == "company-workspace"
             except Exception:
                 raise HTTPException(403, "peer_provider_access_denied") from None
             body["external_permission"] = {"resource": external_resource}
@@ -3859,10 +3871,10 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 status_code=400,
                 detail=context_overflow_detail(),
             )
-        maximum = _estimate_price(manifest, prompt, max_tokens)
+        maximum = 0.0 if company_free else _estimate_price(manifest, prompt, max_tokens)
         if maximum > manifest.pricing.maximum_per_task:
             raise HTTPException(status_code=409, detail="estimated task cost exceeds provider maximum")
-        if maximum > float(balance.summary().get("available") or 0):
+        if not company_free and maximum > float(balance.summary().get("available") or 0):
             raise HTTPException(status_code=409, detail="balance_insufficient")
         task_id = str(body.get("task_id") or ("task_" + uuid.uuid4().hex))
         idempotency_key = str(body.get("idempotency_key") or task_id)
@@ -3895,6 +3907,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             "service_id": service_id,
             "idempotency_key": idempotency_key,
             "request_fingerprint": request_fingerprint,
+            **({"company_free": True} if company_free else {}),
             **({"provider_resource": external_resource} if external_resource else {}),
             **({"company_transport": True} if external_resource and selected.get("company_transport") else {}),
         }
@@ -3977,9 +3990,10 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                     }
                 raise
         try:
-            balance.hold(task_id=task_id, amount=maximum, service_id=service_id,
-                         provider_peer_id=provider_peer_id, idempotency_key=idempotency_key,
-                         request_fingerprint=request_fingerprint)
+            if not company_free:
+                balance.hold(task_id=task_id, amount=maximum, service_id=service_id,
+                             provider_peer_id=provider_peer_id, idempotency_key=idempotency_key,
+                             request_fingerprint=request_fingerprint)
             consumer_orders.transition(task_id=task_id, state="accepted",
                                        metadata={"provider_peer_id": provider_peer_id,
                                                  "service_id": service_id,
@@ -4429,7 +4443,8 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                         source_store.usage_store.record_completion(
                             peer_child_key, result=None, caller="self", state="failed", task_id=task_id
                         )
-                    balance.release(task_id=task_id, reason=str(result.get("error_code") or state))
+                    if not company_free:
+                        balance.release(task_id=task_id, reason=str(result.get("error_code") or state))
                     retention = 0 if body.get("_no_retention") else response_retention()
                     committed = consumer_orders.transition(
                         task_id=task_id, state=state,
@@ -4466,7 +4481,10 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                     )
                 usage_complete = all(value is not None for value in counts.values())
                 billing_pending = result.get("amount") is None or (not usage_complete and not own_request)
-                if billing_pending:
+                if company_free:
+                    billing_pending = False
+                    result.update(amount=0.0, billing_pending_usage=False, billing_status="company_free", billing_basis="company_free")
+                elif billing_pending:
                     result.update(amount=None, usage_complete=usage_complete, billing_status="pending_usage", billing_basis="pending_usage")
                 settlement_metadata = {
                     "provider_peer_id": provider_peer_id, "service_id": service_id,
@@ -4490,7 +4508,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                     metadata={**settlement_metadata, "settlement_pending": not billing_pending},
                     encrypted_response=encrypted_response if retention else None,
                 )
-                if not billing_pending:
+                if not billing_pending and not company_free:
                     balance.settle(
                         task_id=task_id, amount=float(result["amount"]), **counts, duration_ms=int(result["duration_ms"]),
                         service_id=service_id, provider_peer_id=provider_peer_id,
@@ -4540,7 +4558,8 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                     return {"task_id": task_id, "service_id": service_id, "state": "cancelled",
                             "error_code": "consumer_cancelled"}
                 try:
-                    balance.release(task_id=task_id, reason=error_code)
+                    if not company_free:
+                        balance.release(task_id=task_id, reason=error_code)
                     consumer_orders.transition(task_id=task_id, state="failed",
                                                metadata={"provider_peer_id": provider_peer_id,
                                                          "service_id": service_id,
@@ -4748,7 +4767,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             counts = actual_usage(final)
             complete = all(value is not None for value in counts.values())
             final.update(**counts, reported_usage=counts, usage_complete=complete)
-            if not complete:
+            if not complete and not (record.get("bindings") or {}).get("company_free"):
                 own_request = (record.get("bindings") or {}).get("provider_peer_id") == store.peer_id
                 final.update(amount=0.0 if own_request else None,
                              billing_status="own_request" if own_request else "pending_usage",
@@ -4829,7 +4848,8 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             if record.get("state") in TERMINAL_STATES:
                 return {"task_id": task_id, "state": record["state"]}
             try:
-                balance.release(task_id=task_id, reason="consumer_cancelled")
+                if not (record.get("bindings") or {}).get("company_free"):
+                    balance.release(task_id=task_id, reason="consumer_cancelled")
             except TaskBalanceError as exc:
                 if "task hold not found" not in str(exc):
                     raise HTTPException(status_code=409, detail=str(exc)) from exc

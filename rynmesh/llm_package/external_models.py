@@ -25,7 +25,8 @@ def authorize_model(store, sender, service_id, permission, binding):
     # ProviderService runs in a worker, including its stream worker. No token is
     # ever placed in the encrypted peer request or returned to the consumer.
     try:
-        asyncio.run(service.authorize(resource, sender, store.peer_id, "model.invoke", service_id))
+        authorization = asyncio.run(service.authorize(resource, sender, store.peer_id, "model.invoke", service_id))
+        return authorization.get("plugin_id")
     except Exception:
         raise ValueError("peer_provider_access_denied") from None
 
