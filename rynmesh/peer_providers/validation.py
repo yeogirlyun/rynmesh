@@ -142,8 +142,54 @@ def model_record(value):
     chat = value.get("chat_protocol")
     if chat not in (None, "rynmesh.chat.v1") or value.get("tool_support", "unknown") not in {"supported", "unsupported", "unknown"}:
         fail()
-    return {"service": service, "capacity": capacity, "model_binding": copy.deepcopy(value["model_binding"]),
-            "chat_protocol": chat, "tool_support": value.get("tool_support", "unknown"), "delivery_protocols": protocols[:]}
+    record = {"service": service, "capacity": capacity, "model_binding": copy.deepcopy(value["model_binding"]),
+              "chat_protocol": chat, "tool_support": value.get("tool_support", "unknown"), "delivery_protocols": protocols[:]}
+    if "cli_models" in value:
+        record["cli_models"] = cli_models(value["cli_models"], sid)
+    return record
+
+
+EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra")
+
+
+def cli_models(values, service_id):
+    """Upstream models of one shared CLI, each with its own exact binding."""
+    from ..llm_package.peer_binding import valid
+
+    if not isinstance(values, list) or len(values) > 64:
+        fail()
+    result, seen = [], set()
+    for value in values:
+        if not isinstance(value, dict):
+            fail()
+        model = value.get("id")
+        if not isinstance(model, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", model) or model in seen:
+            fail()
+        seen.add(model)
+        if not valid(value.get("model_binding"), service_id):
+            fail()
+        row = {"id": model, "name": text(value.get("name"), 160), "default": value.get("default") is True,
+               "model_binding": copy.deepcopy(value["model_binding"])}
+        efforts = value.get("supported_reasoning_efforts")
+        if efforts is not None:
+            if not isinstance(efforts, list) or len(efforts) > len(EFFORTS) or any(e not in EFFORTS for e in efforts):
+                fail()
+            row["supported_reasoning_efforts"] = list(dict.fromkeys(efforts))
+        if value.get("default_reasoning_effort") is not None:
+            if value["default_reasoning_effort"] not in EFFORTS:
+                fail()
+            row["default_reasoning_effort"] = value["default_reasoning_effort"]
+        for name in ("context_window", "max_output_tokens"):
+            if name in value:
+                number = value[name]
+                if type(number) is not int or not 0 < number <= 2000000:
+                    fail()
+                row[name] = number
+        if value.get("tool_support", "unknown") not in {"supported", "unsupported", "unknown"}:
+            fail()
+        row["tool_support"] = value.get("tool_support", "unknown")
+        result.append(row)
+    return result
 
 
 def directory(value, *, issuer, resource):
