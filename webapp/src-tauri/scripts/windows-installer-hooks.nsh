@@ -2,6 +2,7 @@
 ; This records a preference only: the app reviews and downloads after installation.
 !include "nsDialogs.nsh"
 !include "LogicLib.nsh"
+!define RYN_UPDATE_DEFAULTS_FILE "${__FILEDIR__}\update-defaults.json"
 Var CraftDialog
 Var CraftPdf
 Var CraftWord
@@ -91,6 +92,22 @@ Function CraftLeaveTools
 FunctionEnd
 
 !macro NSIS_HOOK_POSTINSTALL
+  ; Portable deployments resolve their profile from ryn-desktop.json on startup.
+  ${IfNot} ${FileExists} "$INSTDIR\ryn-desktop.json"
+    Push $0
+    ReadEnvStr $0 "RYN_DESKTOP_CONFIG_DIR"
+    ${If} $0 == ""
+      StrCpy $0 "$APPDATA\ai.rynmesh.desktop"
+    ${EndIf}
+    Push $OUTDIR
+    SetOutPath "$0\updates"
+    SetOverwrite off
+    File /oname=preferences.json "${RYN_UPDATE_DEFAULTS_FILE}"
+    SetOverwrite lastused
+    Pop $0
+    SetOutPath "$0"
+    Pop $0
+  ${EndIf}
   ${If} $CraftSelectionShown == 1
     WriteRegStr HKCU "Software\Ryn\Craft" "SelectedPlugins" "$CraftSelected"
   ${EndIf}
