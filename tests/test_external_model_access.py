@@ -255,7 +255,8 @@ def test_broken_peer_provider_preserves_local_service_catalog(pair, monkeypatch)
     assert any(row["service"]["package_id"] == pair.sid for row in rows)
     assert all(row.get("provider_resource") != RESOURCE for row in rows)
 
-def test_company_relay_round_trip_without_public_registry(pair, monkeypatch):
+@pytest.mark.parametrize("stream", [False, True])
+def test_company_relay_round_trip_without_public_registry(pair, monkeypatch, stream):
     import asyncio
     import threading
 
@@ -300,14 +301,25 @@ def test_company_relay_round_trip_without_public_registry(pair, monkeypatch):
         registry_calls.append(kwargs.get("operation"))
         raise AssertionError("company transport used the public registry")
     monkeypatch.setattr(pair.c.store, "submit_work_order", no_registry)
+    pair.row["service"]["capabilities"] = [*pair.row["service"]["capabilities"], "streaming"]
+    events = []
+    original_chat = pair.manager.adapter.inner.chat
+    def reply(body, **options):
+        if body.get("stream"):
+            options["on_event"]({"choices": [{"index": 0, "delta": {"content": "shared reply"}}]})
+        return original_chat(body, **options)
+    monkeypatch.setattr(pair.manager.adapter.inner, "chat", reply)
     bridge, _, catalog = build_agent_integrations(pair.c.app, pair.c.store, pair.c.store.home)
     model = next(row for row in catalog.list_models() if row.get("provider_resource") == RESOURCE)
     result = bridge.complete(model["id"], [{"role": "user", "content": "Private test"}],
-                             [], lambda: False, expected_destination=catalog.destination(model))
+                             [], lambda: False, on_event=events.append if stream else None, expected_destination=catalog.destination(model))
     assert result["message"]["content"] == "shared reply"
     for worker in workers:
         worker.join(5)
         assert not worker.is_alive()
+    if stream:
+        assert pair.traces[0]["stream"]
+        assert any(e.get("type") == "text_delta" and e.get("text") == "shared reply" for e in events)
     assert not registry_calls
     assert len(frames) == 2 and all(session["p"] and session["c"] for session in frames.values())
     assert closed.is_set()

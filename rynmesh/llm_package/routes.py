@@ -991,7 +991,7 @@ class ProviderService:
                 self.cancel(task_id)
                 cancelled = True
         return cancelled
-    def handle_stream(self, signed_request: dict[str, Any]) -> Iterator[dict[str, Any]]:
+    def handle_stream(self, signed_request: dict[str, Any], *, structured_chat: bool = False) -> Iterator[dict[str, Any]]:
         """Use the ordinary admission, permission, cancellation and result lifecycle.
 
         Only delivery differs: a bounded queue holds sealed deltas in memory.
@@ -1002,7 +1002,10 @@ class ProviderService:
             signed_request, recipient_peer_id=self.store.peer_id,
             recipient_messaging_key=self.messaging_key, expected_kind="llm_request",
         )
-        if body.get("response_mode") != "stream-v1":
+        if structured_chat:
+            if not isinstance(body.get("chat"), dict) or body["chat"].get("stream") is not True:
+                raise TaskProtocolError("streaming chat is required")
+        elif body.get("response_mode") != "stream-v1":
             raise TaskProtocolError("stream response mode is required")
         task_id = str(outer["task_id"])
         limit = body.get("stream_event_max_bytes", DEFAULT_MAX_EVENT_BYTES)
@@ -1117,7 +1120,10 @@ class ProviderService:
 
         def worker() -> None:
             try:
-                terminal = self.handle(signed_request, on_delta=on_delta)
+                if structured_chat:
+                    terminal = self.handle(signed_request, on_event=lambda chunk: publish("delta", chunk))
+                else:
+                    terminal = self.handle(signed_request, on_delta=on_delta)
                 publish("terminal", terminal)
             except Exception:
                 # Never put exception text (which may contain a body) on the wire.
@@ -1594,6 +1600,8 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 recipient_messaging_pub=decrypted["reply_messaging_pub"], expires_at=_expires(60)).to_dict()
         elif decrypted.get("response_mode") == "stream-v1":
             yield from provider.handle_stream(envelope)
+        elif isinstance(decrypted.get("chat"), dict) and decrypted["chat"].get("stream") is True:
+            yield from provider.handle_stream(envelope, structured_chat=True)
         else:
             yield provider.handle(envelope)
 
