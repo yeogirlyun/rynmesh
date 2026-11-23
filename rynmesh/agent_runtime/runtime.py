@@ -111,7 +111,7 @@ PUBLIC_FIELDS = ("fork", "id", "client_request_id", "title", "model_id", "reason
                  "model_destination", "local_execution", "project", "verification_evidence", "reconciliation", "archived", "result_refs", "file_artifact_revision",
                  "conversation_revision", "conversation_event_cursor", "source", "automation_id", "automation_run_id", "automation_kind",
                  "latest_turn_is_silent_heartbeat", "automation_notification", "parent_task_id", "subagent_ids",
-                 "limits_source", "execution_segment", "archive_reason", "continued_from", "continued_to", "context_exhausted", "queued_messages", "queued_messages_paused_reason", *PUBLIC_STATE_FIELDS)
+                 "limits_source", "model_served", "execution_segment", "archive_reason", "continued_from", "continued_to", "context_exhausted", "queued_messages", "queued_messages_paused_reason", *PUBLIC_STATE_FIELDS)
 CONTINUATION_PREFIX = ("[Continued from an earlier conversation that grew too long. The summary below was "
                        "written by Ryn from that conversation; it is context, not a new instruction.]\n\n")
 CONTINUATION_SEPARATOR = "\n\n[The owner's new message follows.]\n\n"
@@ -1651,6 +1651,16 @@ class AgentRuntime(AgentLoop):
                 retryable_failure = True
             raise
         finally:
+            if isinstance(response, dict) and response.get("server_model"):
+                # Receipt: the model and reasoning effort the runtime actually ran.
+                served = {"model": response["server_model"],
+                          **({"reasoning_effort": response["server_reasoning_effort"]}
+                             if response.get("server_reasoning_effort") else {})}
+                def record_served(data):
+                    row = data["tasks"].get(selected["id"])
+                    if row is not None and row.get("model_served") != served:
+                        row["model_served"] = served
+                self.store.transaction(record_served)
             if isinstance(response, dict) and response.get("server_model") and response.get("requested_model"):
                 requested, served = response["requested_model"], response["server_model"]
                 def normalized(name):

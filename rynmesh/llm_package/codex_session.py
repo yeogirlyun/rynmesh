@@ -867,7 +867,21 @@ def _start_thread(rpc, *, model, dynamic, instructions):
         "runtimeWorkspaceRoots": [], "selectedCapabilityRoots": [],
         "developerInstructions": instructions,
     })
+    # What Codex actually resolved for this thread (the CLI default when no
+    # model is passed). Reported back so callers can see what really ran.
+    rpc.thread_model = session.get("model") if isinstance(session.get("model"), str) else ""
+    rpc.thread_effort = session.get("reasoningEffort") if isinstance(session.get("reasoningEffort"), str) else ""
     return session["thread"]["id"]
+
+
+def _served(result, rpc, body):
+    model = getattr(rpc, "thread_model", "")
+    effort = body.get("reasoning_effort") or getattr(rpc, "thread_effort", "")
+    if isinstance(model, str) and model:
+        result["server_model"] = model[:160]
+    if isinstance(effort, str) and effort:
+        result["server_reasoning_effort"] = effort[:32]
+    return result
 
 
 def _prompt_with_omitted(body, output_schema, choice) -> tuple[str, int]:
@@ -1030,7 +1044,7 @@ def _stateless_chat(adapter, body, *, task_id, timeout_s, model="", output_schem
                                      output_schema=output_schema, names=names, schemas=schemas, on_text=on_text)
         if hasattr(rpc, "release_auth_lease"):
             rpc.release_auth_lease()
-        result = _result(answer, usage, calls, choice, prompt, started)
+        result = _served(_result(answer, usage, calls, choice, prompt, started), rpc, body)
         if omitted > 0:
             result["diagnostics"] = {**(result.get("diagnostics") or {}), "omitted_attachments": omitted}
         if getattr(rpc, "_auth_diagnostics", None) and "auth_writeback" in rpc._auth_diagnostics:
@@ -1098,7 +1112,7 @@ def _pooled_chat(adapter, body, conversation, *, task_id, timeout_s, model, outp
         if hasattr(rpc, "release_auth_lease"):
             rpc.release_auth_lease()
         session.turns += 1
-        result = _result(answer, usage, calls, "auto", prompt, started)
+        result = _served(_result(answer, usage, calls, "auto", prompt, started), rpc, body)
         if omitted > 0:
             result["diagnostics"] = {**(result.get("diagnostics") or {}), "omitted_attachments": omitted}
         if getattr(rpc, "_auth_diagnostics", None) and "auth_writeback" in rpc._auth_diagnostics:

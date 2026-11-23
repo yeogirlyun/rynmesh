@@ -83,6 +83,10 @@ from .lifecycle import (
 )
 from .manifest import LLMPackageManifest, ManifestError, load_manifest, save_manifest
 from .model_usage import ModelUsageStore, normalize_model_key, usage_caller_scope
+
+# Public per-model fields a shared CLI publishes to the company directory.
+COMPANY_CLI_MODEL_FIELDS = ("id", "name", "default", "model_binding", "supported_reasoning_efforts",
+                            "default_reasoning_effort", "context_window", "max_output_tokens", "tool_support")
 from .p2p import (
     SIGNAL_LONG_POLL_S,
     IceSignal,
@@ -908,6 +912,9 @@ class ProviderService:
                 "task_id": task_id, "state": "succeeded", "service_id": self.manifest.package_id,
                 "model_alias": self.manifest.public_model_alias, "output": str(result["text"]),
                 **({"cli_model": cli_model} if cli_model else {}),
+                # What the provider's runtime actually resolved (Codex reports it).
+                **{key: str(result[key])[:160] for key in ("server_model", "server_reasoning_effort")
+                   if isinstance(result.get(key), str) and result[key]},
                 **({"stream_protocol": negotiated_stream_protocol} if on_delta is not None else {}),
                 **counts,
                 **({"cached_tokens": cached} if cached is not None else {}),
@@ -4888,7 +4895,17 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 if row.get("ready") and valid(binding, service_id):
                     # A shared CLI stays text-only: the provider returns tool-call
                     # suggestions and the caller's own device executes them.
-                    result.append({**{key: row[key] for key in fields if key in row}, "model_binding": binding})
+                    record = {**{key: row[key] for key in fields if key in row}, "model_binding": binding}
+                    # Each upstream model (with its reasoning levels) is shared
+                    # with its own exact binding, so a colleague can pick e.g.
+                    # GPT-6.2 Sol / medium instead of only the CLI default.
+                    upstream = [{key: item[key] for key in COMPANY_CLI_MODEL_FIELDS if key in item}
+                                for item in row.get("cli_models") or []
+                                if isinstance(item, dict) and item.get("id") and item.get("name")
+                                and valid(item.get("model_binding"), service_id)]
+                    if upstream:
+                        record["cli_models"] = upstream[:64]
+                    result.append(record)
             return result
         peer_providers.model_status = provider_model_status
     # Trusted in-process integrations use the same services as owner inference.

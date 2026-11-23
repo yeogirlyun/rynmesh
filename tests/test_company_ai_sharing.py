@@ -46,7 +46,8 @@ class CompanyNode:
         self.calls = []
 
     def locally_published(self, resource, service_id, binding):
-        return resource == RESOURCE and self.selected.get(service_id) == binding
+        allowed = self.selected.get(service_id)
+        return resource == RESOURCE and binding in (allowed if isinstance(allowed, list) else [allowed])
 
     async def authorize(self, resource, sender, recipient, capability, service_id=None):
         self.calls.append((sender, recipient, capability, service_id))
@@ -117,9 +118,12 @@ def company(tmp_path, monkeypatch):
 
     def suggest(self, body, **options):
         # What a text-only CLI returns for an agent turn: a suggestion, no execution.
-        prompts.append({"kind": self.kind, "body": copy.deepcopy(body)})
+        prompts.append({"kind": self.kind, "body": copy.deepcopy(body), "model": options.get("model", "")})
+        # Codex reports the model and effort its thread actually resolved.
         return {"text": "", "message": {"role": "assistant", "content": "", "tool_calls": [copy.deepcopy(TOOL_CALL)]},
-                "finish_reason": "tool_calls", "input_tokens": 11, "output_tokens": 7, "duration_ms": 1}
+                "finish_reason": "tool_calls", "input_tokens": 11, "output_tokens": 7, "duration_ms": 1,
+                "server_model": options.get("model") or "gpt-6.2-sol",
+                "server_reasoning_effort": body.get("reasoning_effort") or "low"}
     monkeypatch.setattr(CLIAgentAdapter, "_chat_inner", suggest)
 
     nodes = []
@@ -338,3 +342,44 @@ def test_usage_written_before_per_colleague_buckets_still_reads(tmp_path):
     assert rows[0]["today"] == {"requests": 1, "input_tokens": 3, "output_tokens": 4, "total_tokens": 7}
     assert store.reset_usage("local/model-a", scope="today")["today"]["requests"] == 0
     assert company_usage(store.read_cached())[0]["today"]["requests"] == 0
+
+
+def test_colleague_runs_a_chosen_codex_model_and_effort_through_the_company(company, monkeypatch):
+    """GPT-6.2 Sol / medium end to end: publish, colleague catalog, request, receipt."""
+    p, c = company.p, company.c
+    upstream = [{"id": "gpt-6.2-sol", "name": "GPT-6.2 Sol", "default": True,
+                 "supported_reasoning_efforts": ["low", "medium", "high", "xhigh"], "default_reasoning_effort": "low"},
+                {"id": "gpt-5.6-luna", "name": "GPT-5.6 Luna", "default": False,
+                 "supported_reasoning_efforts": ["low", "medium", "high"], "default_reasoning_effort": "medium"}]
+    monkeypatch.setattr(cli_models, "list_models", lambda *_, **__: copy.deepcopy(upstream))
+    monkeypatch.setattr(cli_models, "cached_models", cli_models.list_models)
+    company.manager.adapter.current_models(refresh=True)
+    from rynmesh.peer_providers import validation
+    # What the owner publishes and what the company directory hands back.
+    published = validation.model_record(next(row for row in p.authority.model_status()
+                                             if row["service"]["package_id"] == "codex-cli"))
+    assert [m["id"] for m in published["cli_models"]] == ["gpt-6.2-sol", "gpt-5.6-luna"]
+    assert published["cli_models"][0]["supported_reasoning_efforts"] == ["low", "medium", "high", "xhigh"]
+    p.authority.selected["codex-cli"] = [published["model_binding"], *(m["model_binding"] for m in published["cli_models"])]
+    c.authority.models = [{**company.row, **published}]
+
+    bridge, _, catalog = build_agent_integrations(c.app, c.store, c.store.home)
+    models = [row for row in catalog.list_models() if row.get("provider_resource") == RESOURCE]
+    sol = next(row for row in models if row.get("cli_model") == "gpt-6.2-sol")
+    assert sol["available"] and sol["supported_reasoning_efforts"] == ["low", "medium", "high", "xhigh"]
+    assert {row.get("cli_model") for row in models} >= {"gpt-6.2-sol", "gpt-5.6-luna"}
+
+    result = bridge.complete(sol["id"], [{"role": "user", "content": "list files"}], [SHELL_TOOL], lambda: False,
+                             expected_destination=catalog.destination(sol), reasoning_effort="medium")
+    # The provider ran exactly the chosen model and effort ...
+    assert company.prompts[-1]["model"] == "gpt-6.2-sol"
+    assert company.prompts[-1]["body"]["reasoning_effort"] == "medium"
+    # ... and the colleague's receipt says so.
+    assert result["server_model"] == "gpt-6.2-sol" and result["server_reasoning_effort"] == "medium"
+    assert company.spawned == []
+
+    # Unpublishing the CLI withdraws its upstream models too.
+    p.authority.selected.clear()
+    with pytest.raises(Exception):
+        bridge.complete(sol["id"], [{"role": "user", "content": "again"}], [SHELL_TOOL], lambda: False,
+                        expected_destination=catalog.destination(sol), reasoning_effort="medium")

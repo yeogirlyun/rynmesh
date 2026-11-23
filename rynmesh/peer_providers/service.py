@@ -24,6 +24,10 @@ from .validation import PeerProviderError
 company_member = ContextVar("peer_provider_company_member", default=None)
 
 
+def _published_bindings(model):
+    return [model.get("model_binding"), *(item["model_binding"] for item in model.get("cli_models", []))]
+
+
 def companion_servers(servers, plugin_id, provider_url, company_plugins=frozenset()):
     """MCP servers whose sign-in may be exchanged for this plugin's peer session.
 
@@ -692,13 +696,14 @@ class PeerProviderService:
         # Re-read generations after the request; a concurrent source change
         # cannot turn an old directory publication into a local permission.
         current = {m["service"]["package_id"]: m for m in self.available_models()}
-        if any(current.get(s, {}).get("model_binding") != candidates[s]["model_binding"] for s in service_ids):
+        if any(_published_bindings(current.get(s, {})) != _published_bindings(candidates[s]) for s in service_ids):
             v.fail("peer_provider_model_changed")
         with self._lock:
             current = self._current(plugin_id, row["epoch"])
             if current.get("publication_revision") != publication_revision:
                 return self._public(plugin_id, current)
-            current["published"] = {s: candidates[s]["model_binding"] for s in service_ids}
+            # The CLI default plus every published upstream model binding.
+            current["published"] = {s: _published_bindings(candidates[s]) for s in service_ids}
             self._cache.pop(plugin_id, None)
             self._save()
         return self.status(plugin_id)
@@ -707,7 +712,10 @@ class PeerProviderService:
         try:
             plugin_id = self._resource(resource)
             row = self._get(plugin_id, session=True)
-            return bool(row.get("binding") and current_binding and row.get("published", {}).get(service_id) == current_binding)
+            published = row.get("published", {}).get(service_id)
+            # Older state stored only the default binding as one dict.
+            allowed = published if isinstance(published, list) else [published]
+            return bool(row.get("binding") and current_binding and current_binding in allowed)
         except PeerProviderError:
             return False
 
