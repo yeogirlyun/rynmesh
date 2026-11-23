@@ -46,8 +46,10 @@ class CompanyNode:
         self.calls = []
 
     def locally_published(self, resource, service_id, binding):
-        allowed = self.selected.get(service_id)
-        return resource == RESOURCE and binding in (allowed if isinstance(allowed, list) else [allowed])
+        allowed = [b for choice, value in self.selected.items()
+                   if choice == service_id or choice.startswith(service_id + "/model/")
+                   for b in (value if isinstance(value, list) else [value])]
+        return resource == RESOURCE and binding in allowed
 
     async def authorize(self, resource, sender, recipient, capability, service_id=None):
         self.calls.append((sender, recipient, capability, service_id))
@@ -355,19 +357,23 @@ def test_colleague_runs_a_chosen_codex_model_and_effort_through_the_company(comp
     monkeypatch.setattr(cli_models, "cached_models", cli_models.list_models)
     company.manager.adapter.current_models(refresh=True)
     from rynmesh.peer_providers import validation
-    # What the owner publishes and what the company directory hands back.
-    published = validation.model_record(next(row for row in p.authority.model_status()
-                                             if row["service"]["package_id"] == "codex-cli"))
-    assert [m["id"] for m in published["cli_models"]] == ["gpt-6.2-sol", "gpt-5.6-luna"]
+    from rynmesh.peer_providers.service import _published_records, selection_choices
+    # The owner ticks only GPT-6.2 Sol; this is what the company directory hands back.
+    offered = [validation.model_record(row) for row in p.authority.model_status()]
+    choices = selection_choices(offered)
+    assert {"codex-cli", "codex-cli/model/gpt-6.2-sol", "codex-cli/model/gpt-5.6-luna"} <= set(choices)
+    published = validation.model_record(_published_records(offered, ["codex-cli/model/gpt-6.2-sol"])[0])
+    assert [m["id"] for m in published["cli_models"]] == ["gpt-6.2-sol"]
     assert published["cli_models"][0]["supported_reasoning_efforts"] == ["low", "medium", "high", "xhigh"]
-    p.authority.selected["codex-cli"] = [published["model_binding"], *(m["model_binding"] for m in published["cli_models"])]
+    p.authority.selected["codex-cli/model/gpt-6.2-sol"] = [choices["codex-cli/model/gpt-6.2-sol"][2]]
     c.authority.models = [{**company.row, **published}]
 
     bridge, _, catalog = build_agent_integrations(c.app, c.store, c.store.home)
     models = [row for row in catalog.list_models() if row.get("provider_resource") == RESOURCE]
     sol = next(row for row in models if row.get("cli_model") == "gpt-6.2-sol")
     assert sol["available"] and sol["supported_reasoning_efforts"] == ["low", "medium", "high", "xhigh"]
-    assert {row.get("cli_model") for row in models} >= {"gpt-6.2-sol", "gpt-5.6-luna"}
+    # Only the chosen model is offered: no CLI default row, no other models.
+    assert [row.get("cli_model") for row in models] == ["gpt-6.2-sol"]
 
     result = bridge.complete(sol["id"], [{"role": "user", "content": "list files"}], [SHELL_TOOL], lambda: False,
                              expected_destination=catalog.destination(sol), reasoning_effort="medium")

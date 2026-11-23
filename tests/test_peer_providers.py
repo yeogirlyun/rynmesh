@@ -529,27 +529,44 @@ def cli_model_record():
                            {"id": "gpt-5.6-luna", "name": "GPT-5.6 Luna", "model_binding": bind("d")}]}
 
 
-def test_shared_cli_publishes_each_upstream_model_and_authorizes_its_binding(tmp_path):
+def test_each_cli_model_is_its_own_company_choice(tmp_path):
     server = FakeServer()
     a = node(tmp_path, server, model_status=lambda: [cli_model_record()])
     b = node(tmp_path, server, "two")
     record = cli_model_record()
+    default, sol, luna = record["model_binding"], record["cli_models"][0]["model_binding"], record["cli_models"][1]["model_binding"]
 
     async def scenario():
         await login(a, server)
         await login(b, server, "two")
-        await a.publish("test", ["codex-cli"])
-        # The directory carries every upstream model with its own binding and effort levels.
-        assert server.published["one"][0]["cli_models"][0]["supported_reasoning_efforts"] == ["low", "medium", "high"]
+        # Only GPT-6.2 Sol: the directory gets that model, marked as "default not shared".
+        await a.publish("test", ["codex-cli/model/gpt-6.2-sol"])
+        sent = server.published["one"][0]
+        assert [m["id"] for m in sent["cli_models"]] == ["gpt-6.2-sol"]
+        assert sent["cli_models"][0]["supported_reasoning_efforts"] == ["low", "medium", "high"]
+        assert "company-cli-default-unshared" in sent["service"]["capabilities"]
         await b.directory("test")
-        seen = b.cached_models()[0]["cli_models"]
-        assert [m["id"] for m in seen] == ["gpt-6.2-sol", "gpt-5.6-luna"]
-        assert seen[0]["default_reasoning_effort"] == "low" and seen[1]["default"] is False
-        for binding in (record["model_binding"], *(m["model_binding"] for m in record["cli_models"])):
-            assert a.locally_published(RESOURCE, "codex-cli", binding)
-        assert not a.locally_published(RESOURCE, "codex-cli", {**record["model_binding"], "model_generation": "e" * 32})
+        assert [m["id"] for m in b.cached_models()[0]["cli_models"]] == ["gpt-6.2-sol"]
+        assert a.locally_published(RESOURCE, "codex-cli", sol)
+        assert not a.locally_published(RESOURCE, "codex-cli", default)
+        assert not a.locally_published(RESOURCE, "codex-cli", luna)
+        assert a.status("test")["selected_service_ids"] == ["codex-cli/model/gpt-6.2-sol"]
+
+        # CLI default plus GPT-5.6 Luna: no marker, Sol no longer allowed.
+        await a.publish("test", ["codex-cli", "codex-cli/model/gpt-5.6-luna"])
+        sent = server.published["one"][0]
+        assert [m["id"] for m in sent["cli_models"]] == ["gpt-5.6-luna"]
+        assert "company-cli-default-unshared" not in sent["service"]["capabilities"]
+        assert a.locally_published(RESOURCE, "codex-cli", default) and a.locally_published(RESOURCE, "codex-cli", luna)
+        assert not a.locally_published(RESOURCE, "codex-cli", sol)
+
+        # Only the CLI default: no upstream models at all.
+        await a.publish("test", ["codex-cli"])
+        assert "cli_models" not in server.published["one"][0]
+        with pytest.raises(PeerProviderError):
+            await a.publish("test", ["codex-cli/model/invented"])
         await a.publish("test", [])
-        assert not a.locally_published(RESOURCE, "codex-cli", record["cli_models"][0]["model_binding"])
+        assert not a.locally_published(RESOURCE, "codex-cli", default)
     asyncio.run(scenario())
 
 
@@ -569,30 +586,43 @@ def test_cli_model_records_reject_unsafe_fields():
     assert "api_key" not in v.model_record(dropped)["cli_models"][0]
 
 
-def test_legacy_single_binding_publication_still_authorizes(tmp_path):
+
+def test_legacy_publications_still_authorize_and_migrate(tmp_path):
     server = FakeServer()
-    a = node(tmp_path, server)
-
-    async def scenario():
-        await login(a, server)
-        await a.publish("test", ["model-a"])
-        with a._lock:
-            a._rows["test"]["published"] = {"model-a": model()["model_binding"]}
-        assert a.locally_published(RESOURCE, "model-a", model()["model_binding"])
-    asyncio.run(scenario())
-
-
-def test_published_cli_is_republished_when_its_bindings_move(tmp_path):
-    server = FakeServer()
-    current = [cli_model_record()]
-    a = node(tmp_path, server, model_status=lambda: copy.deepcopy(current))
+    a = node(tmp_path, server, model_status=lambda: [cli_model_record()])
+    record = cli_model_record()
+    every = [record["model_binding"], *(m["model_binding"] for m in record["cli_models"])]
 
     async def scenario():
         await login(a, server)
         await a.publish("test", ["codex-cli"])
+        # Oldest state: one binding dict for the default.
+        with a._lock:
+            a._rows["test"]["published"] = {"codex-cli": record["model_binding"]}
+        assert a.locally_published(RESOURCE, "codex-cli", record["model_binding"])
+        # 2026-11-23 state: ticking the CLI shared it with every model.
+        with a._lock:
+            a._rows["test"]["published"] = {"codex-cli": every}
+        assert all(a.locally_published(RESOURCE, "codex-cli", b) for b in every)
+        assert await a.republish_if_changed("test")
+        assert a.status("test")["selected_service_ids"] == ["codex-cli", "codex-cli/model/gpt-5.6-luna", "codex-cli/model/gpt-6.2-sol"]
+        assert all(a.locally_published(RESOURCE, "codex-cli", b) for b in every)
+        assert not await a.republish_if_changed("test")
+    asyncio.run(scenario())
+
+
+def test_published_cli_model_is_republished_when_its_binding_moves(tmp_path):
+    server = FakeServer()
+    current = [cli_model_record()]
+    a = node(tmp_path, server, model_status=lambda: copy.deepcopy(current))
+    choice = "codex-cli/model/gpt-6.2-sol"
+
+    async def scenario():
+        await login(a, server)
+        await a.publish("test", [choice])
         assert not await a.republish_if_changed("test")  # nothing moved
         old = cli_model_record()["cli_models"][0]["model_binding"]
-        # The CLI re-observed its models: every exact binding is new.
+        # The CLI re-observed its models: the exact binding is new.
         moved = cli_model_record()
         moved["cli_models"][0]["model_binding"] = {**old, "model_generation": "e" * 32}
         current[:] = [moved]
@@ -602,7 +632,7 @@ def test_published_cli_is_republished_when_its_bindings_move(tmp_path):
         assert server.published["one"][0]["cli_models"][0]["model_binding"]["model_generation"] == "e" * 32
         assert a.locally_published(RESOURCE, "codex-cli", moved["cli_models"][0]["model_binding"])
         assert not a.locally_published(RESOURCE, "codex-cli", old)
-        assert a.status("test")["selected_service_ids"] == ["codex-cli"]
+        assert a.status("test")["selected_service_ids"] == [choice]
 
         # A failed refresh keeps the owner's selection for the next sync.
         current[0]["cli_models"][0]["model_binding"] = {**old, "model_generation": "f" * 32}
@@ -613,7 +643,7 @@ def test_published_cli_is_republished_when_its_bindings_move(tmp_path):
         with pytest.raises(Exception):
             await a.republish_if_changed("test")
         a.oauth.transport = original
-        assert a.status("test")["selected_service_ids"] == ["codex-cli"]
+        assert a.status("test")["selected_service_ids"] == [choice]
 
         # Unticked by the owner: nothing is republished.
         await a.publish("test", [])
