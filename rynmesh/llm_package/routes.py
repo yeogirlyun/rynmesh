@@ -1546,6 +1546,25 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
     peer_providers = getattr(app.state, "peer_providers", None)
     external_catalog = ExternalModelCatalog(peer_providers, store,
         probe=getattr(getattr(app.state, "drop_engine", None), "provider_probe", None)) if peer_providers else None
+    from .company_transport import CompanyModelTransport
+
+    def company_model_events(resource, sender, service_id, envelope):
+        outer, decrypted = open_task(envelope, recipient_peer_id=store.peer_id,
+            recipient_messaging_key=messaging_key, expected_kind="llm_request")
+        if (outer.get("from_peer_id") != sender or decrypted.get("service_id") != service_id
+                or decrypted.get("external_permission") != {"resource": resource}):
+            raise TaskProtocolError("peer_provider_access_denied")
+        provider = provider_for(service_id)
+        if provider is None:
+            raise TaskProtocolError("service_unavailable")
+        if decrypted.get("response_mode") == "stream-v1":
+            yield from provider.handle_stream(envelope)
+        else:
+            yield provider.handle(envelope)
+
+    company = CompanyModelTransport(peer_providers, company_model_events, p2p_stop) if external_catalog else None
+    if external_catalog:
+        external_catalog.company = company
     if getattr(app.state, "ai_access", None):
         app.state.ai_access.store.sources = source_store
     from .tool_capabilities import ToolCapabilities
@@ -2483,6 +2502,8 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
     if not isinstance(registry, BackgroundWorkerRegistry):
         raise TypeError("app.state.background_workers must be a BackgroundWorkerRegistry")
     if external_catalog:
+        registry.register(BackgroundWorkerSpec(name="llm.company-transport", run_once=company.poll,
+            initial_delay_s=1.0, policy=BackoffPolicy.fixed(2.0)), replace=True)
         registry.register(BackgroundWorkerSpec(name="llm.external-presence", run_once=external_catalog.run_once,
             initial_delay_s=1.0, policy=BackoffPolicy.fixed(1.0)), replace=True)
     registry.register(BackgroundWorkerSpec(
@@ -2580,6 +2601,8 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         """
         nonlocal manager
         p2p_stop.set()
+        if company:
+            company.executor.shutdown(wait=False, cancel_futures=True)
         ai_connections.close()
         if manager is not None:
             manager.adapter.shutdown()
@@ -3745,7 +3768,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         stream_direct = (
             response_mode == "stream-v1"
             and "stream-v1" in list(selected.get("delivery_protocols") or [])
-            and effective_transport in {"auto", "direct", "p2p"}
+            and (effective_transport in {"auto", "direct", "p2p"} or (external_resource and selected.get("company_transport") and effective_transport == "relay"))
             and (effective_transport == "p2p" or callable(getattr(get_transport(), "iter_post_bytes", None)))
             and not own_request
         )
@@ -3981,7 +4004,8 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 transport_mode = "relay"
             if own_request:
                 transport_mode = "local"
-            if chat and chat.get("stream") and transport_mode == "relay":
+            company_plugin = selected.get("plugin_id") if external_resource and selected.get("company_transport") else None
+            if chat and chat.get("stream") and transport_mode == "relay" and not company_plugin:
                 raise TaskProtocolError("streaming requires direct HTTP or P2P transport")
             sequence = 0
             direct_stream_protocol = STREAM_PROTOCOL_VERSION
@@ -4145,6 +4169,14 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 tried_endpoints.add(endpoint)
                 progress("direct")
                 try:
+                    if company_plugin:
+                        from ..drop.peers import http_json, verify_hello
+                        nonce = uuid.uuid4().hex
+                        status, hello = await asyncio.to_thread(http_json, endpoint, "GET",
+                            "/api/peer/drop/hello?nonce=" + nonce, timeout=2.5, network_auth=False)
+                        identity = verify_hello(hello, peer_id=provider_peer_id, nonce=nonce) if status == 200 else {}
+                        if identity.get("messaging_pub") != selected.get("messaging_pub"):
+                            raise TaskProtocolError("company_direct_probe_failed")
                     # Blocking I/O for the full inference duration — run it in
                     # a worker thread so the node's event loop stays live.
                     if stream_direct:
@@ -4187,8 +4219,16 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 progress("p2p")
                 p2p_work_order_id = ""
 
+                company_path_connected = False
+                def connected(evidence):
+                    nonlocal company_path_connected
+                    company_path_connected = bool(company_plugin)
+                    progress("p2p", {**evidence, **({"signaling": "company"} if company_plugin else {})})
+
                 async def publish_offer(offer: IceSignal) -> IceSignal:
                     nonlocal p2p_work_order_id
+                    if company_plugin:
+                        return await company.offer(company_plugin, provider_peer_id, service_id, offer)
                     submitted = await asyncio.to_thread(
                         store.submit_work_order,
                         provider_peer_id=provider_peer_id,
@@ -4244,19 +4284,21 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                         publish_offer=publish_offer,
                         timeout_s=manifest.timeout_seconds + 30,
                         stream_idle_seconds=p2p_stream_idle_s,
-                        connect_timeout_s=min(60, _positive_env("RYNMESH_P2P_CONNECT_TIMEOUT_S", 60)),
-                        on_connected=lambda evidence: progress("p2p", evidence),
-                        session_pool=ai_connections,
+                        connect_timeout_s=min(18 if company_plugin else 60, _positive_env("RYNMESH_P2P_CONNECT_TIMEOUT_S", 60)),
+                        on_connected=connected,
+                        session_pool=None if company_plugin else ai_connections,
                         session_key=network_id + ":" + provider_peer_id,
                         **({"on_event": receive_event} if stream_direct or (chat and chat.get("stream")) else {}),
                     ), lambda: (consumer_orders.get(task_id) or {}).get("state") == "cancelled")
+                    if company_plugin:
+                        transport_evidence["signaling"] = "company"
                     if p2p_verifier is not None:
                         p2p_verifier.accept_terminal(encrypted_response)
                 except Exception as exc:
                     if isinstance(exc, ConsumerOrderCancelled):
                         raise
                     attempts.append({"transport": "p2p", "error_code": _delivery_error_code(exc, transport="p2p")})
-                    if transport_mode == "p2p" or sequence or getattr(exc, "request_may_have_started", False) or not os.environ.get("RYNMESH_LLM_RELAY_URL", "").strip():
+                    if transport_mode == "p2p" or company_path_connected or sequence or getattr(exc, "request_may_have_started", False) or (not company_plugin and not os.environ.get("RYNMESH_LLM_RELAY_URL", "").strip()):
                         raise
                     direct_error = exc
                     if stream_direct:
@@ -4266,6 +4308,14 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                         )
             if encrypted_response is None and transport_mode == "direct":
                 raise TaskProtocolError("strict direct provider path failed") from direct_error
+            if encrypted_response is None and company_plugin and transport_mode in {"auto", "relay"}:
+                progress("company_relay")
+                encrypted_response = await cancellable_exchange(lambda: company.relay(company_plugin,
+                    provider_peer_id, service_id, signed.to_dict(), manifest.timeout_seconds + 30, receive_event),
+                    lambda: (consumer_orders.get(task_id) or {}).get("state") == "cancelled")
+                if p2p_verifier is not None:
+                    p2p_verifier.accept_terminal(encrypted_response)
+                transport_evidence = {"transport": "company_relay", "relay_used": True, "signaling": "company"}
             if encrypted_response is None:
                 if external_resource:
                     raise TaskProtocolError("peer_provider_direct_path_failed") from direct_error

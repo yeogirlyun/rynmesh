@@ -23,7 +23,7 @@ export interface LLMChatMessage {
   contextIds?: string[];
   contextBytes?: number[];
   promptSha256?: string;
-  transport?: "local_process" | "local_runtime" | "peer_http_direct" | "ice_udp_direct" | "encrypted_relay" | "unknown";
+  transport?: "local_process" | "local_runtime" | "peer_http_direct" | "ice_udp_direct" | "encrypted_relay" | "company_relay" | "unknown";
 }
 
 export interface LLMConversation {

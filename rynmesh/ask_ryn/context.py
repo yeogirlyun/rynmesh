@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 from ..friends.service import FriendError
 from ..llm_package.chat_prompt import CHAT_FORMAT
 from ..llm_package.context_safety import estimate_context_safety_tokens
+from ..llm_package.peer_binding import expected
 from ..llm_package.review import service_review
 from .store import ConversationError
 
@@ -33,7 +34,8 @@ def completed_history(conversation: dict) -> list[dict]:
 
 
 class AskContextService:
-    def __init__(self, content: Callable, catalog: Callable):
+    def __init__(self, content: Callable, catalog: Callable, consumer_peer_id: str = ""):
+        self.consumer_peer_id = consumer_peer_id
         self.content = content
         self.catalog = catalog
 
@@ -87,6 +89,15 @@ class AskContextService:
         cli_model = conversation.get("cliModel")
         if cli_model and ((not selected.get("local_only") and not any(row.get("id") == cli_model for row in selected.get("cli_models", []))) or manifest.get("adapter") not in {"codex_cli", "antigravity_cli"} or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", cli_model)):
             raise ConversationError("ask_cli_model_unavailable")
+        company_binding = None
+        if selected.get("provider_resource"):
+            binding_record = selected
+            if cli_model:
+                child = next(row for row in selected["cli_models"] if row.get("id") == cli_model)
+                binding_record = {**selected, "model_binding": child.get("model_binding")}
+            company_binding = expected(binding_record, self.consumer_peer_id)
+            if not company_binding or company_binding.get("external_permission", {}).get("resource") != selected["provider_resource"]:
+                raise ConversationError("ask_provider_unavailable")
         structured = CHAT_FORMAT in manifest.get("capabilities", [])
         context_window, maximum_output = manifest.get("context_window"), manifest.get("max_output_tokens")
         if type(context_window) is not int or type(maximum_output) is not int or maximum_output < 1 or context_window < 1:
@@ -163,6 +174,7 @@ class AskContextService:
                 "prompt_format": CHAT_FORMAT if structured else "text",
                 **({"chat": {"messages": json.loads(prepared_prompt), "max_tokens": output_tokens}} if structured else {}),
                 "service_review": service_review(manifest),
+                **({"expected_model_binding": company_binding} if company_binding else {}),
                 **({"ai_permission": selected["ai_permission"]} if selected.get("ai_permission") else {}),
                 **({"output_reserve_warning": reserve_warning} if reserve_warning else {}),
                 "context_window": context_window, "input_token_upper_estimate": estimate_context_safety_tokens(prepared_prompt),

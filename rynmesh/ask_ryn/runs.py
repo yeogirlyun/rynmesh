@@ -49,6 +49,8 @@ class AskRunService:
             intent["service_review_token"] = value["service_review_token"]
         if value.get("ai_permission") is not None:
             intent["ai_permission"] = value["ai_permission"]
+        if value.get("expected_model_binding") is not None:
+            intent["expected_model_binding"] = value["expected_model_binding"]
         fingerprint = hashlib.sha256(_json(intent)).hexdigest()
         with file_transaction(self.history.lock):
             envelope, data = self.history._read()
@@ -71,6 +73,8 @@ class AskRunService:
                 raise ConversationError("ask_history_limit")
             preview = self.context().preview(row, intent["question"])
             if preview["prompt_sha256"] != intent["prompt_sha256"]:
+                raise ConversationError("ask_preview_changed")
+            if preview.get("expected_model_binding") != intent.get("expected_model_binding"):
                 raise ConversationError("ask_preview_changed")
             if preview.get("ai_permission") != intent.get("ai_permission"):
                 raise ConversationError("ask_preview_changed")
@@ -98,6 +102,7 @@ class AskRunService:
                             **({"cli_model": preview["cli_model"]} if preview.get("cli_model") else {}),
                             "service_review_token": intent["service_review_token"],
                             **({"ai_permission": intent["ai_permission"]} if "ai_permission" in intent else {}),
+                            **({"expected_model_binding": preview["expected_model_binding"]} if preview.get("expected_model_binding") else {}),
                             "max_tokens": preview["max_output_tokens"]}}
             runs[task_id] = run
             self.history._write(envelope, data)

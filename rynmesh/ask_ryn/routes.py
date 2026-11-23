@@ -45,7 +45,7 @@ def install_ask_ryn(app: Any, *, store: Any, home: str | Path, workers: Any,
         records = store.list_job_capacities(network_id=network, capability="rynmesh.llm.private.v1", max_age_hours=1).get("capacities", [])
         return [{**row["metadata"]["llm_service"], "peer_id": row.get("peer_id")} for row in records if isinstance((row.get("metadata") or {}).get("llm_service"), dict)]
     app.state.ask_ryn = AskRynState(ConversationStore(Path(getattr(store, "home", None) or home) / "ask-ryn", messaging_key), local_control,
-                                  AskContextService(lambda: app.state.friends.content, catalog))
+                                  AskContextService(lambda: app.state.friends.content, catalog, getattr(store, "peer_id", "")))
     app.state.ask_ryn.runs = AskRunService(app.state.ask_ryn.conversations, lambda: app.state.ask_ryn.context, lambda: app.state.ask_ryn.orders)
     workers.register(BackgroundWorkerSpec(name="ask-ryn-runs", run_once=lambda cancelled=None: app.state.ask_ryn.runs.run_once(cancelled=cancelled), policy=BackoffPolicy.fixed(1)), replace=True)
 

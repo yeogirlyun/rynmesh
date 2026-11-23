@@ -125,7 +125,7 @@ export interface LLMOrderResult {
   updated_at?: string;
   connection_phase?: "connecting_direct" | "connecting_p2p" | "connecting_relay" | "connected" | "failed";
   connection_attempts?: { transport: string; error_code: string }[];
-  transport?: "local_process" | "local_runtime" | "peer_http_direct" | "ice_udp_direct" | "encrypted_relay" | "unknown";
+  transport?: "local_process" | "local_runtime" | "peer_http_direct" | "ice_udp_direct" | "encrypted_relay" | "company_relay" | "unknown";
   transport_evidence?: {
     relay_used?: boolean;
     public_nat_traversal_required?: boolean;

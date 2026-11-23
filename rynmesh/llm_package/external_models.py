@@ -35,6 +35,7 @@ class ExternalModelCatalog:
 
     def __init__(self, providers, store, *, clock=time.monotonic, request=None, probe=None):
         self.providers, self.store, self.clock, self.request = providers, store, clock, request or http_json
+        self.company = None
         self.probe = probe
         self._lock = threading.Lock()
         self._observations = {}
@@ -52,13 +53,18 @@ class ExternalModelCatalog:
         if cached and self.clock() - cached[0] < 8:
             return cached[1]
         online = False
-        if self.probe:
+        if row.get("company_transport") and self.company:
+            try:
+                online = asyncio.run(self.company.online(row["plugin_id"], row["peer_id"]))
+            except Exception:
+                pass
+        if self.probe and not row.get("company_transport"):
             try:
                 observed = self.probe(row["provider_resource"], row["peer_id"])
                 online = observed.online and observed.messaging_pub == row.get("messaging_pub")
             except Exception:
                 online = False
-        for endpoint in ([] if self.probe else row.get("endpoints", [])[:4]):
+        for endpoint in ([] if self.probe or online or row.get("company_transport") else row.get("endpoints", [])[:4]):
             nonce = uuid.uuid4().hex
             try:
                 status, body = self.request(endpoint, "GET", "/api/peer/drop/hello?nonce=" + nonce, timeout=2.5, network_auth=False)
@@ -108,5 +114,5 @@ class ExternalModelCatalog:
                 **({"node_name": owner["display_name"]} if owner.get("display_name") and not row.get("node_name") else {}),
                 "node_messaging_pub": row.get("messaging_pub", ""),
                 "updated_at": datetime.now(timezone.utc).isoformat(),
-                "presence": {"state": "online" if online else "unconfirmed", "basis": "signed_device_probe"}})
+                "presence": {"state": "online" if online else "unconfirmed", "basis": "company_heartbeat" if row.get("company_transport") else "signed_device_probe"}})
         return result

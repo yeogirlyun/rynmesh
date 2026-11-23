@@ -397,6 +397,7 @@ export default function PrivateAIChat() {
       cancelRequestedRef.current = false;
       return submitReviewed({ task_id: "task_" + crypto.randomUUID().replaceAll("-", ""), conversation_id: preview.conversation_id,
         expected_revision: preview.revision, question: text, prompt_sha256: preview.prompt_sha256, service_review_token: preview.service_review.token,
+        ...(preview.expected_model_binding ? { expected_model_binding: preview.expected_model_binding } : {}),
         ...(preview.ai_permission ? { ai_permission: preview.ai_permission } : {}) });
     }
     if (!conversation) {
@@ -609,7 +610,9 @@ export default function PrivateAIChat() {
               provider_peer_id: preview.provider_peer_id, service_id: preview.service_id, network_id: original.networkId,
               prompt: preview.prompt, prompt_format: preview.chat ? "text" : preview.prompt_format, max_tokens: preview.max_output_tokens,
               ...(preview.chat ? { chat: preview.chat } : {}),
-              service_review_token: preview.service_review.token, ...(preview.ai_permission ? { ai_permission: preview.ai_permission } : {}),
+              service_review_token: preview.service_review.token,
+              ...(preview.expected_model_binding ? { expected_model_binding: preview.expected_model_binding } : {}),
+              ...(preview.ai_permission ? { ai_permission: preview.ai_permission } : {}),
               ...(preview.cli_model ? { cli_model: preview.cli_model } : {}), transport: "auto" });
             const originalTaskId = result.task_id;
             result = await fixtureOrder.awaitTerminal(result, () => client.getLLMOrder(originalTaskId));

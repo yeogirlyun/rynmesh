@@ -215,3 +215,54 @@ def test_broken_peer_provider_preserves_local_service_catalog(pair, monkeypatch)
     rows = endpoint()["services"]
     assert any(row["service"]["package_id"] == pair.sid for row in rows)
     assert all(row.get("provider_resource") != RESOURCE for row in rows)
+
+def test_company_relay_round_trip_without_public_registry(pair, monkeypatch):
+    import asyncio
+    import threading
+
+    client = pair.c.services["external_catalog"].company
+    server = pair.p.services["external_catalog"].company
+    pair.row.update(company_transport=True, plugin_id="company-workspace")
+    frames = {"c": [], "p": []}
+    workers = []
+    closed = threading.Event()
+
+    def channel(side):
+        async def call(plugin, action, **fields):
+            if action == "presence":
+                return {"online": True}
+            if action == "open":
+                row = {"id": fields["id"], "source_peer": pair.c.store.peer_id,
+                       "service_id": pair.sid, "mode": fields["mode"]}
+                worker = threading.Thread(target=lambda: asyncio.run(server._serve(plugin, RESOURCE, row)))
+                worker.start()
+                workers.append(worker)
+                return {}
+            if action == "write":
+                assert len(frames[side]) == fields["seq"]
+                frames[side].append({"seq": fields["seq"], "bytes": fields["bytes"]})
+                return {}
+            if action == "read":
+                return {"frames": frames["p" if side == "c" else "c"][fields["seq"] :]}
+            if action == "close":
+                closed.set()
+                return {}
+            raise AssertionError(action)
+        return call
+
+    monkeypatch.setattr(client, "call", channel("c"))
+    monkeypatch.setattr(server, "call", channel("p"))
+    monkeypatch.setenv("RYNMESH_LLM_TRANSPORT", "relay")
+    def no_registry(*args, **kwargs):
+        raise AssertionError("company transport used the public registry")
+    monkeypatch.setattr(pair.c.store, "submit_work_order", no_registry)
+    bridge, _, catalog = build_agent_integrations(pair.c.app, pair.c.store, pair.c.store.home)
+    model = next(row for row in catalog.list_models() if row.get("provider_resource") == RESOURCE)
+    result = bridge.complete(model["id"], [{"role": "user", "content": "Private test"}],
+                             [], lambda: False, expected_destination=catalog.destination(model))
+    assert result["message"]["content"] == "shared reply"
+    for worker in workers:
+        worker.join(5)
+        assert not worker.is_alive()
+    assert frames["p"] and frames["c"] and closed.is_set()
+    assert len(pair.traces) == 1

@@ -227,6 +227,10 @@ def directory(value, *, issuer, resource):
         seen.add(identity)
         safe_models.append({**row, "peer_id": peer, "messaging_pub": device["messaging_pub"], "endpoints": device["endpoints"][:]})
     safe = {"version": "ryn.peer-directory.v1", "issuer": issuer, "resource": resource, "revision": revision(value.get("revision")), "members": safe_members, "models": safe_models}
+    if value.get("model_transport") == "company-model-v1":
+        safe["model_transport"] = 1
+        for model in safe_models:
+            model["company_transport"] = True
     # Optional statement about the caller only: its company account id and
     # whether the provider lets it publish models.
     own = value.get("self")

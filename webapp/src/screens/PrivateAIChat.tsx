@@ -494,8 +494,10 @@ export default function PrivateAIChat({ unified = false }: { unified?: boolean }
           setConnectionStatus(
             result.connection_phase === "connecting_p2p" ? tr("Establishing peer connection…")
               : result.connection_phase === "connecting_direct" ? tr("Waiting for the device's reply…")
+              : result.connection_phase === "connecting_company_relay" ? tr("Company relay")
               : result.connection_phase === "connecting_relay" ? tr("Connecting through configured relay…")
               : result.transport === "local_process" ? tr("已连接 · 正在生成…")
+              : result.transport === "company_relay" ? tr("Company relay")
               : result.transport === "ice_udp_direct" ? tr("Connected peer to peer · generating…")
               : tr("Waiting for response…"),
           );
@@ -785,6 +787,7 @@ export default function PrivateAIChat({ unified = false }: { unified?: boolean }
                   <span className={styles.messageMeta}>
                     {formatTime(message.createdAt)}
                     {message.transport === "local_process" ? tr(" · 本机")
+                      : message.transport === "company_relay" ? " · " + tr("Company relay")
                       : message.transport === "ice_udp_direct" ? tr(" · Peer-to-peer connection")
                       : message.transport === "peer_http_direct" ? tr(" · Direct connection")
                       : message.transport === "encrypted_relay" ? tr(" · Encrypted relay") : ""}

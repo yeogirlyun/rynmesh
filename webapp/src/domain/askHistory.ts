@@ -47,6 +47,7 @@ export interface AskPreview {
   output_reserve_warning?: string;
   cli_model?: string;
   service_review: { token: string; model_alias: string; pricing: { input_per_1k: number; output_per_1k: number; minimum: number; maximum_per_task: number; currency: string } };
+  expected_model_binding?: Record<string, unknown>;
   ai_permission?: { relationship_id: string; revision: number };
   conversation_id: string; revision: number; provider_peer_id: string; service_id: string;
   prompt: string; prompt_sha256: string; context_window: number; input_token_upper_estimate: number;
@@ -57,6 +58,7 @@ export interface AskRun {
 }
 export interface AskRunRequest {
   service_review_token: string;
+  expected_model_binding?: Record<string, unknown>;
   ai_permission?: { relationship_id: string; revision: number };
   task_id: string; conversation_id: string; expected_revision: number; question: string; prompt_sha256: string;
 }

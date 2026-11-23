@@ -704,7 +704,7 @@ class AgentModelBridge:
                 request = {
                     "network_id": self.catalog.network, "provider_peer_id": target["peer_id"],
                     "service_id": target["service_id"], "chat": chat, "max_tokens": maximum,
-                    "task_id": task_id, "transport": "p2p", "_prefer_lan": True, "_no_retention": True,
+                    "task_id": task_id, "transport": "auto" if target.get("provider_resource") else "p2p", "_prefer_lan": True, "_no_retention": True,
                     **({"image_carrier": shared_carrier} if shared_carrier else {}),
                     **({"conversation_key": window} if window else {})}
                 if target.get("cli_model"):
