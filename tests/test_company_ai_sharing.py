@@ -55,7 +55,7 @@ class CompanyNode:
         self.calls.append((sender, recipient, capability, service_id))
         if not self.allowed or resource != RESOURCE or capability != "model.invoke":
             raise ValueError("denied")
-        return {"allowed": True}
+        return {"allowed": True, "plugin_id": "company-workspace"}
 
     def cached_models(self):
         return copy.deepcopy(self.models)
