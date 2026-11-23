@@ -17,6 +17,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from rynmesh.agent_runtime.bridge import build_agent_integrations
+from rynmesh.agent_runtime.store import AgentError
 from rynmesh.drop.peers import make_hello
 from rynmesh.llm_package import cli_models
 from rynmesh.llm_package.cli_adapter import CLIAgentAdapter
@@ -24,7 +25,7 @@ from rynmesh.llm_package.manifest import LLMPackageManifest, save_manifest
 from rynmesh.llm_package.model_usage import ModelUsageStore, company_usage, usage_caller_scope
 from rynmesh.llm_package.peer_binding import expected, valid
 from rynmesh.llm_package.routes import _expires, install_llm_routes
-from rynmesh.llm_package.task_protocol import open_task, seal_task
+from rynmesh.llm_package.task_protocol import TaskProtocolError, open_task, seal_task
 from rynmesh.services import peer_box
 from rynmesh.store import RynmeshStore
 
@@ -84,6 +85,10 @@ def configure_cli(node, tmp_path, kind, service_id, alias):
 
 @pytest.fixture
 def company(tmp_path, monkeypatch):
+    # Host shell-environment capture is unrelated to inference sharing. Isolate
+    # it before constructing nodes so a late warmup cannot hit the process trap
+    # intended to detect execution of a colleague's proposed tool.
+    monkeypatch.setattr("rynmesh.agent_runtime.login_environment.start_warmup", lambda *_args, **_kwargs: None)
     owned_ports = set()
     original_bind, original_connect, original_resolve = socket.socket.bind, socket.socket.connect, socket.getaddrinfo
 
@@ -249,7 +254,7 @@ def test_two_nodes_colleague_gets_a_suggestion_and_the_provider_runs_nothing(com
 
     # The center withdraws the colleague: the same call is refused before any model work.
     p.authority.allowed = False
-    with pytest.raises(Exception):
+    with pytest.raises(AgentError, match="agent_model_destination_changed"):
         bridge.complete(model["id"], [{"role": "user", "content": "again"}], [SHELL_TOOL], lambda: False,
                         expected_destination=catalog.destination(model))
     assert len(company.prompts) == 1
@@ -290,13 +295,13 @@ def test_company_request_cannot_borrow_personal_space_or_friend_authority(compan
         assert result["state"] == "rejected"
     # Without the company permission the CLI still requires a personal space.
     body = wire(company, "no-company", external_permission=None)
-    with pytest.raises(Exception):
+    with pytest.raises(TaskProtocolError, match="requires a personal space"):
         opened(company, company.manager.handle(body))
     assert company.prompts == []
 
 
 def test_claude_cli_is_bound_for_the_company_only(company):
-    p, c = company.p, company.c
+    p = company.p
     manager = configure_cli(p, company.tmp, "claude_cli", "claude-cli", "Claude Code")
     # Personal-space catalogs are unchanged: Claude Code still advertises no binding.
     assert "model_binding" not in manager.public_status()
@@ -386,6 +391,6 @@ def test_colleague_runs_a_chosen_codex_model_and_effort_through_the_company(comp
 
     # Unpublishing the CLI withdraws its upstream models too.
     p.authority.selected.clear()
-    with pytest.raises(Exception):
+    with pytest.raises(AgentError, match="agent_model_destination_changed"):
         bridge.complete(sol["id"], [{"role": "user", "content": "again"}], [SHELL_TOOL], lambda: False,
                         expected_destination=catalog.destination(sol), reasoning_effort="medium")
