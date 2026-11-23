@@ -118,8 +118,9 @@ SKILL_CONTENT_MAX_BYTES = 8000
 SKILL_CONTINUATION_NOTE = "技能正文已截断到 8000 字节；请用 ryn_read_skill_file 续读。"
 SKILL_STOP_CITATION_RULE = "If you stop because of a rule in a Skill, name the skill and quote the rule."
 HOW_TO_USE_SKILLS = (
-    "Use skills when they match. Read the whole SKILL.md before acting (ryn_read_skill_file for listed files). "
-    "Read references yourself, not via a subagent; reuse its scripts. State in one sentence which skills you used. "
+    "Use matching skills. Read the whole SKILL.md before acting; a complete supplied body counts as read. "
+    "Use ryn_read_skill_file only for missing/truncated content. Read required references yourself, not via a subagent; "
+    "reuse scripts. State used skills in one sentence. "
     "If a skill cannot be read, say so and continue without it."
 )
 
@@ -156,7 +157,7 @@ def messages(row, current_preferences, memory_selection=None):
         notes.append("Reuse the supplied skill body. Read only missing/truncated sections or required reference files; do not reread unchanged instructions.")
         ref_files = [
             str(f) for f in (skill.get("files") or [])
-            if isinstance(f, str) and f
+            if isinstance(f, str) and f and f != skill_path
         ]
         if ref_files:
             notes.append(
