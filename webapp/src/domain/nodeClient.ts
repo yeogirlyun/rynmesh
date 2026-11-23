@@ -123,7 +123,7 @@ export interface LLMOrderResult {
   error_code?: string;
   created_at?: string;
   updated_at?: string;
-  connection_phase?: "connecting_direct" | "connecting_p2p" | "connecting_relay" | "connected" | "failed";
+  connection_phase?: "connecting_direct" | "connecting_p2p" | "connecting_company_relay" | "connecting_relay" | "connected" | "failed";
   connection_attempts?: { transport: string; error_code: string }[];
   transport?: "local_process" | "local_runtime" | "peer_http_direct" | "ice_udp_direct" | "encrypted_relay" | "company_relay" | "unknown";
   transport_evidence?: {
