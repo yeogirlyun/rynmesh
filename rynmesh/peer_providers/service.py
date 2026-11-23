@@ -24,8 +24,47 @@ from .validation import PeerProviderError
 company_member = ContextVar("peer_provider_company_member", default=None)
 
 
-def _published_bindings(model):
-    return [model.get("model_binding"), *(item["model_binding"] for item in model.get("cli_models", []))]
+# A shared CLI publishes its default and each upstream model as separate choices:
+# "<service>" is the CLI default, "<service>/model/<id>" one upstream model.
+CLI_MODEL_SEPARATOR = "/model/"
+# Marks a record whose CLI default is not shared, so colleagues only see the
+# chosen upstream models. Capabilities pass the company directory unchanged.
+DEFAULT_UNSHARED = "company-cli-default-unshared"
+
+
+def selection_choices(models):
+    """Every shareable choice: selection id -> (service id, upstream model id, binding)."""
+    choices = {}
+    for model in models:
+        service_id = model["service"]["package_id"]
+        choices[service_id] = (service_id, "", model.get("model_binding"))
+        for item in model.get("cli_models", []):
+            choices[service_id + CLI_MODEL_SEPARATOR + item["id"]] = (service_id, item["id"], item["model_binding"])
+    return choices
+
+
+def _published_records(models, selection):
+    """Directory records for a selection: only the chosen upstream models, and a
+    marker when the CLI default itself is not chosen."""
+    chosen = set(selection)
+    records = []
+    for model in models:
+        service_id = model["service"]["package_id"]
+        children = [item for item in model.get("cli_models", []) if service_id + CLI_MODEL_SEPARATOR + item["id"] in chosen]
+        if service_id not in chosen and not children:
+            continue
+        record = copy.deepcopy({key: value for key, value in model.items() if key != "cli_models"})
+        if children:
+            record["cli_models"] = copy.deepcopy(children)
+        if service_id not in chosen:
+            record["service"]["capabilities"] = [*record["service"].get("capabilities", []), DEFAULT_UNSHARED]
+        records.append(record)
+    return records
+
+
+def _stored(value):
+    # Older state stored one binding dict; 2026-11-23 state stored a list.
+    return value if isinstance(value, list) else [value]
 
 
 def companion_servers(servers, plugin_id, provider_url, company_plugins=frozenset()):
@@ -500,17 +539,22 @@ class PeerProviderService:
         published = row.get("published") or {}
         if not row.get("binding") or not published:
             return False
-        current = {m["service"]["package_id"]: m for m in self.available_models()}
-        wanted = [s for s in sorted(published) if s in current]
-        stale = [s for s in sorted(published) if s not in current]
-        if not stale and all((published[s] if isinstance(published[s], list) else [published[s]])
-                             == _published_bindings(current[s]) for s in wanted):
+        current = selection_choices(self.available_models())
+        wanted = []
+        for choice in sorted(published):
+            wanted.append(choice)
+            if CLI_MODEL_SEPARATOR not in choice and len(_stored(published[choice])) > 1:
+                # Published on 2026-11-23 as "the CLI with all of its models":
+                # keep those models chosen individually.
+                wanted.extend(c for c in current if c.startswith(choice + CLI_MODEL_SEPARATOR))
+        wanted = sorted(set(wanted))
+        if any(choice not in current for choice in wanted):
+            # A choice that is no longer offered (CLI not ready, model removed)
+            # keeps its old binding: requests fail closed until it returns.
             return False
-        if stale:
-            # A service that is no longer offered (not ready, removed) keeps its
-            # old binding: requests fail closed and it returns once ready again.
+        if wanted == sorted(published) and all(_stored(published[c]) == [current[c][2]] for c in wanted):
             return False
-        await self.publish(plugin_id, wanted, refresh=True)
+        await self.publish(plugin_id, wanted, refresh=True, replaces=sorted(published))
         return True
 
     async def auto_sync(self, plugin_id):
@@ -700,17 +744,18 @@ class PeerProviderService:
         except Exception:
             raise PeerProviderError("peer_provider_models_unavailable") from None
 
-    async def publish(self, plugin_id, service_ids, *, refresh=False):
-        if not isinstance(service_ids, list) or len(service_ids) > 32 or any(not isinstance(s, str) for s in service_ids) or len(set(service_ids)) != len(service_ids):
+    async def publish(self, plugin_id, service_ids, *, refresh=False, replaces=None):
+        if not isinstance(service_ids, list) or len(service_ids) > 256 or any(not isinstance(s, str) for s in service_ids) or len(set(service_ids)) != len(service_ids):
             v.fail("peer_provider_invalid_selection")
         row = self._get(plugin_id, session=True)
         if not row.get("binding"):
             v.fail("peer_provider_binding_required")
-        candidates = {m["service"]["package_id"]: m for m in self.available_models()}
+        available = self.available_models()
+        candidates = selection_choices(available)
         if any(s not in candidates for s in service_ids):
             v.fail("peer_provider_invalid_selection")
-        models = [candidates[s] for s in service_ids]
-        if len(__import__("json").dumps({"models": models}).encode()) > 65536:
+        models = _published_records(available, service_ids)
+        if len(models) > 32 or len(__import__("json").dumps({"models": models}).encode()) > 65536:
             v.fail("peer_provider_invalid_selection")
         with self._lock:
             # Owner deselection takes effect locally even if the remote update
@@ -720,7 +765,7 @@ class PeerProviderService:
                 # Re-publishing the same selection with current bindings: a
                 # failure leaves the choice in place for the next sync, and an
                 # owner change in the meantime wins.
-                if sorted(current.get("published") or {}) != sorted(service_ids):
+                if sorted(current.get("published") or {}) != sorted(replaces if replaces is not None else service_ids):
                     return self._public(plugin_id, current)
             else:
                 current["published"] = {}
@@ -730,15 +775,15 @@ class PeerProviderService:
         await self._request(plugin_id, "PUT", "/models", {"models": models})
         # Re-read generations after the request; a concurrent source change
         # cannot turn an old directory publication into a local permission.
-        current = {m["service"]["package_id"]: m for m in self.available_models()}
-        if any(_published_bindings(current.get(s, {})) != _published_bindings(candidates[s]) for s in service_ids):
+        current = selection_choices(self.available_models())
+        if any(current.get(s) != candidates[s] for s in service_ids):
             v.fail("peer_provider_model_changed")
         with self._lock:
             current = self._current(plugin_id, row["epoch"])
             if current.get("publication_revision") != publication_revision:
                 return self._public(plugin_id, current)
-            # The CLI default plus every published upstream model binding.
-            current["published"] = {s: _published_bindings(candidates[s]) for s in service_ids}
+            # One exact binding per chosen CLI default or upstream model.
+            current["published"] = {s: [candidates[s][2]] for s in service_ids}
             self._cache.pop(plugin_id, None)
             self._save()
         return self.status(plugin_id)
@@ -747,9 +792,9 @@ class PeerProviderService:
         try:
             plugin_id = self._resource(resource)
             row = self._get(plugin_id, session=True)
-            published = row.get("published", {}).get(service_id)
-            # Older state stored only the default binding as one dict.
-            allowed = published if isinstance(published, list) else [published]
+            allowed = [binding for choice, value in row.get("published", {}).items()
+                       if choice == service_id or choice.startswith(service_id + CLI_MODEL_SEPARATOR)
+                       for binding in _stored(value)]
             return bool(row.get("binding") and current_binding and current_binding in allowed)
         except PeerProviderError:
             return False

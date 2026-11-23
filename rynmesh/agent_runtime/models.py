@@ -345,6 +345,9 @@ class ModelCatalog:
                             rows[identifier].update(reasoning_metadata(upstream.get("supported_reasoning_efforts"), upstream.get("default_reasoning_effort")))
                         _model_facts(rows[identifier], upstream)
                         rows[identifier].update(catalog_image_fields(rows[identifier], service_record=value, cli_model_row=upstream))
+                    if provider_resource and "company-cli-default-unshared" in capabilities:
+                        # The publisher shared only these upstream models, not its CLI default.
+                        rows.pop(model_ref, None)
         # Include drafts/offline sources so absence never masquerades as deletion.
         for service_id, (record, model) in source_index.items():
             model_ref = "local/" + service_id

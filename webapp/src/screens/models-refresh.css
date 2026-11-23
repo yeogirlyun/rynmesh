@@ -19,6 +19,16 @@
 .rd-models .mp-agent-strip p { margin: 0; color: var(--ink2); font-size: 13px; }
 .rd-models .mp-agent-strip > a { color: var(--brand-deep); font-size: 13px; font-weight: 650; white-space: nowrap; }
 .rd-models .mp-agent-strip > a:hover { text-decoration: underline; text-underline-offset: 3px; }
+/* Icon, text and link on the first row; the subagent model picker gets its own full-width row.
+   In the narrow left column a single flex row squeezed the text to one character per line. */
+.rd-models .mp-agent-strip { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; grid-template-areas: "icon text link" "sub sub sub"; align-items: center; align-content: start; column-gap: 14px; row-gap: 14px; }
+.rd-models .mp-agent-strip > .mp-agent-icon { grid-area: icon; }
+.rd-models .mp-agent-strip > div { grid-area: text; }
+.rd-models .mp-agent-strip > a { grid-area: link; align-self: start; padding-top: 2px; }
+.rd-models .mp-agent-strip small { white-space: nowrap; }
+.rd-models .mp-agent-strip p { margin-top: 4px; overflow-wrap: anywhere; }
+.rd-models .mp-agent-strip > label { grid-area: sub; display: grid; gap: 6px; min-width: 0; padding-top: 12px; border-top: 1px solid var(--hair); color: var(--ink2); font-size: 12px; font-weight: 650; }
+.rd-models .mp-agent-strip > label select { width: 100%; min-width: 0; height: 34px; padding: 0 10px; border: 1px solid var(--hair); border-radius: 9px; background: var(--surface); color: var(--ink); font-size: 13px; }
 
 /* ---- daily token usage ---- */
 .rd-models .mp-codex-usage-card { display: flex; flex-direction: column; gap: 14px; margin: 0; padding: 16px 18px; border: 1px solid var(--hair); border-radius: 16px; background: var(--surface); box-shadow: 0 1px 2px var(--shadow-c); }

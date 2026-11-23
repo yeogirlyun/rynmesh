@@ -111,7 +111,7 @@ export default function ModelPool({ sources, cli, native, peers, loading, error,
       const usage = model.usage || entry?.usage;
       items.push({
         key: model.id, name: model.name, origin: model.source_name || "CLI", owner: "cli", cli: entry,
-        catalog: model, sharing: Boolean(entry?.publication_enabled),
+        catalog: model, serviceId: `${model.service_id}/model/${model.cli_model}`, sharing: Boolean(entry?.publication_enabled),
         usage,
         usageKey: usage?.usage_key || model.id,
       });
@@ -127,7 +127,9 @@ export default function ModelPool({ sources, cli, native, peers, loading, error,
       });
     }
     for (const peer of peers) {
-      const cat = catalog.find(row => row.peer_id === peer.peer_id && row.service_id === peer.service.package_id);
+      // A colleague who shared only some upstream models of a CLI did not share its default.
+      if (peer.service.capabilities?.includes("company-cli-default-unshared")) continue;
+      const cat = catalog.find(row => row.peer_id === peer.peer_id && row.service_id === peer.service.package_id && !row.cli_model);
       const usage = peer.usage || cat?.usage;
       items.push({
         key: `${peer.peer_id}/${peer.service.package_id}`, name: peer.service.model_alias, origin: peer.node_name || peer.peer_id,
@@ -182,7 +184,7 @@ export default function ModelPool({ sources, cli, native, peers, loading, error,
   );
   const companyRows = visible.filter(row => row.company);
   const ownRows = visible.filter(row => !row.company);
-  const canShareWithCompany = (row: PoolRow) => Boolean(company && row.serviceId && !row.catalog?.cli_model && (company.eligible.includes(row.serviceId) || company.selected.includes(row.serviceId)));
+  const canShareWithCompany = (row: PoolRow) => Boolean(company && row.serviceId && (company.eligible.includes(row.serviceId) || company.selected.includes(row.serviceId)));
   const companyUsageRows = companyUsage && (companyUsage.sharing || companyUsage.rows.length > 0) ? companyUsage.rows : null;
   const originLabel = (row: PoolRow) => row.company ? `${text("提供人", "Shared by")} ${row.company.provider || text("公司同事", "a colleague")} · ${row.company.online ? text("在线", "Online") : text("离线", "Offline")}` : row.owner === "peer" ? text("其他设备提供", "From another device") : row.owner === "source" && row.source?.kind === "api" ? text("我接入的 API", "My API source") : text("本机运行", "Runs locally");
   const renderUsageCounter = (row: PoolRow) => {
@@ -257,7 +259,7 @@ export default function ModelPool({ sources, cli, native, peers, loading, error,
           {row.catalog?.description && (!row.catalog.available || !row.catalog.agent_supported) && <span className="mp-capability">{row.catalog.description}</span>}
         </div>
         <div className="mp-model-actions">
-          {canShareWithCompany(row) && <label className="mp-company-share" title={(!row.cli ? "" : text("包括这个 CLI 下的全部模型和推理档位。", "Includes every model and reasoning level of this CLI. ")) + text("公司同事只得到模型的文字回复和工具调用建议，命令在对方自己的电脑上执行。", "Colleagues receive text and tool-call suggestions only; commands run on their own computer.")}><input type="checkbox" aria-label={`${text("共享给公司同事", "Share with company colleagues")} ${row.name}`} checked={company!.selected.includes(row.serviceId!)} disabled={Boolean(busy)} onChange={event => toggleCompany(row, event.target.checked)} />{text("公司同事", "Company")}</label>}
+          {canShareWithCompany(row) && <label className="mp-company-share" title={text("公司同事只得到模型的文字回复和工具调用建议，命令在对方自己的电脑上执行。", "Colleagues receive text and tool-call suggestions only; commands run on their own computer.")}><input type="checkbox" aria-label={`${text("共享给公司同事", "Share with company colleagues")} ${row.name}`} checked={company!.selected.includes(row.serviceId!)} disabled={Boolean(busy)} onChange={event => toggleCompany(row, event.target.checked)} />{text("公司同事", "Company")}</label>}
           {row.source ? <button className="mp-share" aria-label={`${text("分享", "Share")} ${row.name}`} disabled={Boolean(busy)} onClick={() => { setShareRow(row); setShareEnabled(row.sharing); setFeedback(""); }}>{row.sharing ? <Share2 size={14} /> : <LockKeyhole size={14} />}{row.sharing ? text("已分享", "Shared") : text("仅自己使用", "Private")}</button> : row.owner === "peer" ? <small>{row.company ? text("公司共享", "Company shared") : text("由对方分享", "Shared by provider")}</small> : <button className="mp-share" disabled={Boolean(busy)} onClick={() => editRow(row)}>{row.sharing ? <Share2 size={14} /> : <LockKeyhole size={14} />}{row.sharing ? text("已分享", "Shared") : text("仅自己使用", "Private")}</button>}
           {settings?.model_id && settings.model_id === row.catalog?.id && <span className="mp-default"><Check size={14} />{text("助手默认", "Assistant default")}</span>}
           {row.source?.model_settings?.[row.name] && (

@@ -95,7 +95,11 @@ def install_peer_provider_routes(app, service, local_control):
     async def models(plugin_id: str, request: Request):
         def action():
             service.status(plugin_id)
-            return {"models": [{"service_id": m["service"]["package_id"], "name": m["service"].get("model_alias", m["service"]["package_id"]), "model_binding": m["model_binding"]} for m in service.available_models()]}
+            # The CLI default and each upstream CLI model are separate choices.
+            return {"models": [entry for m in service.available_models() for entry in (
+                {"service_id": m["service"]["package_id"], "name": m["service"].get("model_alias", m["service"]["package_id"]), "model_binding": m["model_binding"]},
+                *({"service_id": m["service"]["package_id"] + "/model/" + c["id"], "name": c["name"], "model_binding": c["model_binding"]}
+                  for c in m.get("cli_models", [])))]}
         return await run(request, action)
 
     @app.post("/api/local/peer-providers/{plugin_id}/publish")
