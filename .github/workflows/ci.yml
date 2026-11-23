@@ -32,6 +32,9 @@ jobs:
           tests/test_agent_budget_dispatch.py
           tests/test_agent_task_planning.py
           tests/test_agent_request_context_layers.py
+          tests/test_agent_runtime_knowledge.py
+          tests/test_ovh_s12_i10.py
+          tests/test_ovh_s12_i14.py
           tests/test_agent_schedule_work.py
           tests/test_codex_object_protocol.py
           tests/test_ovh_s01_i1.py
