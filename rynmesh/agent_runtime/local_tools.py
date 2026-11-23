@@ -1246,6 +1246,7 @@ class LocalTools:
                     "goal_revision", "scope_revision", "context_epoch", "control_revision"
                 ) if key in receipt}, "name": receipt.get("tool")}
             control = {key: row[key] for key in ("status", "permission_mode", "allowed_write_tools", "approved", "local_execution") if key in row}
+            control["process_stop_revision"] = row.get("process_stop_revision", 0)
             control["in_flight"] = operation
             return {"settings": data["settings"], "projects": data.get("projects", {}),
                     "tasks": {context["task_id"]: control}}
@@ -1303,6 +1304,8 @@ class LocalTools:
                 row
                 and current.get("enabled")
                 and row["status"] not in stopped_statuses
+                # Explicit Stop survives a follow-up changing the status back to queued.
+                and (stop_on_paused or row["process_stop_revision"] <= context.get("control_revision", 0))
                 and (row.get("permission_mode") != "read_only" or authorized_read)
                 and workspace_ok
             )

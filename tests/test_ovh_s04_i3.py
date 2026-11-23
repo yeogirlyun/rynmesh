@@ -304,6 +304,45 @@ def test_t6_paused_task_keeps_background_process_alive_while_cancelled_kills_it(
         tools.processes.close()
 
 
+def test_owner_stop_terminates_a_yielded_command_and_its_child(local):
+    tools, context, workspace, store = local
+    runtime = AgentRuntime(store, Model(), Tools(), Catalog())
+    task_id = context["task_id"]
+    context["control_revision"] = store.inspect(
+        lambda data: data["tasks"][task_id]["control_revision"]
+    )
+    (workspace / "long.py").write_text(
+        "import subprocess, sys\n"
+        "subprocess.run([sys.executable, '-u', '-c', "
+        "'import time; print(12345); time.sleep(30)'])\n",
+        encoding="utf-8",
+    )
+    python = sys.executable.replace("'", "''") if os.name == "nt" else sys.executable
+    python = f"& '{python}'" if os.name == "nt" else f'"{python}"'
+    other_id = tools.processes.start(
+        [sys.executable, "-c", "import time; time.sleep(30)"], workspace, "other-task"
+    )
+    result = execute(tools, context, "ryn_shell_execute",
+                     {"command": f"{python} long.py", "yield_seconds": 0.1}, "long")
+    ident = result["process_id"]
+    assert result["running"]
+    assert "12345" in tools.processes.read(ident, task_id, wait_seconds=3)["output"]
+    item = tools.processes.get(ident, task_id)
+
+    deadline = time.monotonic() + 2
+    stopped = runtime.action(task_id, {"action": "stop"})
+    followup = runtime.add_message(task_id, {
+        "message": "Continue without the command",
+        "expected_control_revision": stopped["control_revision"],
+    })
+    assert followup["status"] == "queued"
+
+    # The child inherits stdout, so EOF requires both the parent and child to exit.
+    item["process"].wait(timeout=max(0, deadline - time.monotonic()))
+    assert item["reader_done"].wait(max(0, deadline - time.monotonic()))
+    assert tools.processes.read(other_id, "other-task", wait_seconds=0)["running"]
+
+
 def test_t7_restart_recovery_still_marks_default_yield_write_shell_as_unknown_outcome(tmp_path):
     """T7: 重启恢复对默认转后台的写命令仍判'写结果未知'（覆盖改动 1、2）。"""
     workspace = tmp_path / "ws"
