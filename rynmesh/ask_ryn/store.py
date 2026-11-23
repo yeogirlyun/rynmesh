@@ -29,7 +29,7 @@ MAX_PLAINTEXT = 11 * 1024 * 1024
 MAX_SYNC_BYTES = 88 * 1024 * 1024
 MAX_SYNC_PLAINTEXT = 64 * 1024 * 1024
 _ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
-FIELDS = ("id", "title", "serviceKey", "serviceName", "providerPeerId", "networkId", "createdAt", "updatedAt", "messages", "revision", "draft", "contextIds", "cliModel")
+FIELDS = ("id", "title", "serviceKey", "serviceName", "providerPeerId", "networkId", "createdAt", "updatedAt", "messages", "revision", "draft", "contextIds", "cliModel", "providerResource")
 MESSAGE_FIELDS = ("id", "role", "content", "createdAt", "status", "taskId", "inputTokens", "outputTokens", "cost", "contextIds", "contextBytes", "promptSha256", "finishReason")
 
 
@@ -65,6 +65,9 @@ def clean_conversation(value: Mapping[str, Any]) -> dict[str, Any]:
         raise ConversationError("ask_invalid_conversation")
     result = {key: value[key] for key in FIELDS if key in value and key != "revision"}
     result["id"] = _identity(result.get("id"))
+    if "providerResource" in result and (not isinstance(result["providerResource"], str)
+            or not result["providerResource"].startswith("https://") or len(result["providerResource"]) > 2048):
+        raise ConversationError("ask_invalid_conversation")
     if "cliModel" in result and (not isinstance(result["cliModel"], str) or (result["cliModel"] != "" and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", result["cliModel"]))):
         raise ConversationError("ask_invalid_conversation")
     for key, limit in (("title", 512), ("serviceKey", 2048), ("serviceName", 512), ("providerPeerId", 1024), ("networkId", 256)):
@@ -241,7 +244,7 @@ class ConversationStore:
                 raise ConversationError("ask_conversation_deleted")
             prior = data["conversations"].get(identifier)
             if prior:
-                if any(prior[key] != clean[key] for key in ("serviceKey", "providerPeerId", "networkId", "createdAt")):
+                if any(prior.get(key) != clean.get(key) for key in ("serviceKey", "providerPeerId", "networkId", "createdAt", "providerResource")):
                     raise ConversationError("ask_service_binding_mismatch")
                 if clean_conversation(prior) == clean:
                     return self._public(data, prior)  # Same write after a lost response.

@@ -78,6 +78,8 @@ class AskContextService:
         records = self.catalog(conversation["networkId"])
         matches = [row for row in records if row.get("peer_id") == conversation["providerPeerId"]
                    and (row.get("service") or {}).get("package_id") == service_id]
+        if conversation.get("providerResource"):
+            matches = [row for row in matches if row.get("provider_resource") == conversation["providerResource"]]
         if len({row.get("provider_resource", "") for row in matches}) > 1:
             raise ConversationError("ask_provider_unavailable")
         selected = next(iter(matches), None)

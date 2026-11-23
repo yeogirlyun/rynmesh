@@ -67,6 +67,7 @@ function llmHref(service: LLMServiceRecord, networkId: string, clientMode: "live
     service: service.service.package_id,
     network: networkId,
   });
+  if (service.provider_resource) query.set("resource", service.provider_resource);
   if (clientMode === "fixture") query.set("client", "fixture");
   return `/services/private-ai/chat?${query.toString()}`;
 }

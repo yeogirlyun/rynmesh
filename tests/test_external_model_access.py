@@ -253,7 +253,9 @@ def test_company_relay_round_trip_without_public_registry(pair, monkeypatch):
     monkeypatch.setattr(client, "call", channel("c"))
     monkeypatch.setattr(server, "call", channel("p"))
     monkeypatch.setenv("RYNMESH_LLM_TRANSPORT", "relay")
+    registry_calls = []
     def no_registry(*args, **kwargs):
+        registry_calls.append(kwargs.get("operation"))
         raise AssertionError("company transport used the public registry")
     monkeypatch.setattr(pair.c.store, "submit_work_order", no_registry)
     bridge, _, catalog = build_agent_integrations(pair.c.app, pair.c.store, pair.c.store.home)
@@ -264,5 +266,6 @@ def test_company_relay_round_trip_without_public_registry(pair, monkeypatch):
     for worker in workers:
         worker.join(5)
         assert not worker.is_alive()
+    assert not registry_calls
     assert frames["p"] and frames["c"] and closed.is_set()
     assert len(pair.traces) == 1

@@ -130,6 +130,7 @@ export default function PrivateAIChat({ unified = false }: { unified?: boolean }
   const [searchParams, setSearchParams] = useSearchParams();
   const cacheScope = JSON.stringify([client.mode, node.peer_id]);
   const requestedNetwork = searchParams.get("network") || "";
+  const requestedResource = searchParams.get("resource");
   const requestedPeer = searchParams.get("peer");
   const requestedService = searchParams.get("service");
   const requestedConversation = searchParams.get("conversation");
@@ -249,7 +250,7 @@ export default function PrivateAIChat({ unified = false }: { unified?: boolean }
     setSelectedId("");
     const cached = readChatServices(cacheScope, requestedNetwork);
     const selectService = (items: LLMServiceRecord[]) => requestedPeer || requestedService
-      ? items.find(item => item.peer_id === requestedPeer && item.service.package_id === requestedService) ?? null
+      ? items.find(item => item.peer_id === requestedPeer && item.service.package_id === requestedService && (!requestedResource || item.provider_resource === requestedResource)) ?? null
       : items.find(isServiceUsable) ?? items[0] ?? null;
 
     const showService = async (selected: LLMServiceRecord, network: string) => {
@@ -338,7 +339,7 @@ export default function PrivateAIChat({ unified = false }: { unified?: boolean }
       active = false;
       window.clearTimeout(retryTimer);
     };
-  }, [client, cacheScope, requestedNetwork, requestedPeer, requestedService, requestedConversation, discoveryAttempt]);
+  }, [client, cacheScope, requestedNetwork, requestedPeer, requestedService, requestedResource, requestedConversation, discoveryAttempt]);
 
   useEffect(() => {
     const element = messageScrollRef.current;

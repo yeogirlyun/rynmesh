@@ -207,8 +207,9 @@ export default function PrivateAIChat() {
       if (!active) return;
       const requestedPeer = searchParams.get("peer") || requestedRow?.providerPeerId;
       const requestedService = searchParams.get("service") || (requestedRow ? requestedRow.serviceKey.slice(requestedRow.providerPeerId.length + 2) : null);
+      const resource = requestedRow?.providerResource || searchParams.get("resource");
       const selected = requestedPeer && requestedService
-        ? discovered.find((item) => item.peer_id === requestedPeer && item.service.package_id === requestedService) ?? null
+        ? discovered.find((item) => item.peer_id === requestedPeer && item.service.package_id === requestedService && (!resource || item.provider_resource === resource)) ?? null
         : discovered.find(isServiceUsable) ?? discovered[0] ?? null;
       setSelectedService(selected);
       setStorageMode(await history.storageMode());
@@ -224,7 +225,7 @@ export default function PrivateAIChat() {
           const fresh = createConversation({
             serviceKey: key,
             serviceName: selected.service.model_alias,
-            providerPeerId: selected.peer_id,
+            providerPeerId: selected.peer_id, providerResource: selected.provider_resource,
             networkId: network,
           });
           if (materials.length) fresh.contextIds = materials;
@@ -307,7 +308,7 @@ export default function PrivateAIChat() {
     const fresh = createConversation({
       serviceKey: serviceKey(selectedService),
       serviceName: selectedService.service.model_alias,
-      providerPeerId: selectedService.peer_id,
+      providerPeerId: selectedService.peer_id, providerResource: selectedService.provider_resource,
       networkId,
     });
     try { await replaceConversation(fresh); }
@@ -404,7 +405,7 @@ export default function PrivateAIChat() {
       conversation = createConversation({
         serviceKey: serviceKey(selectedService),
         serviceName: selectedService.service.model_alias,
-        providerPeerId: selectedService.peer_id,
+        providerPeerId: selectedService.peer_id, providerResource: selectedService.provider_resource,
         networkId,
       });
     }
@@ -620,7 +621,7 @@ export default function PrivateAIChat() {
               throw new Error(result.finish_reason === "length" ? tr("摘要被长度上限截断，原对话已保留。") : resultMessage(result));
             }
             const fresh = createConversation({ serviceKey: original.serviceKey, serviceName: original.serviceName,
-              providerPeerId: original.providerPeerId, networkId: original.networkId });
+              providerPeerId: original.providerPeerId, providerResource: original.providerResource, networkId: original.networkId });
             await replaceConversation({ ...fresh, ...(original.cliModel ? { cliModel: original.cliModel } : {}), draft: input,
               title: tr("对话摘要"), messages: [{ id: messageId(), role: "assistant", content: tr("上一段对话的摘要：") + "\n" + result.output,
                 status: "complete", createdAt: fresh.createdAt, taskId: result.task_id,

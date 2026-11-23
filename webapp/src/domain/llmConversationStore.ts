@@ -33,6 +33,7 @@ export interface LLMConversation {
   serviceKey: string;
   serviceName: string;
   providerPeerId: string;
+  providerResource?: string;
   networkId: string;
   createdAt: string;
   updatedAt: string;
@@ -188,6 +189,7 @@ export function createConversation(input: {
   serviceKey: string;
   serviceName: string;
   providerPeerId: string;
+  providerResource?: string;
   networkId: string;
 }): LLMConversation {
   const now = new Date().toISOString();
@@ -197,6 +199,7 @@ export function createConversation(input: {
     serviceKey: input.serviceKey,
     serviceName: input.serviceName,
     providerPeerId: input.providerPeerId,
+    ...(input.providerResource ? {providerResource: input.providerResource} : {}),
     networkId: input.networkId,
     createdAt: now,
     updatedAt: now,
