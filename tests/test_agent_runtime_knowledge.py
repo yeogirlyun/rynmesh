@@ -104,3 +104,28 @@ def test_s09_i2_skill_truncation_8000_bytes_continuation_and_multibyte_utf8_safe
     assert was_cut is True
     assert len(cut.encode("utf-8")) == 7999
     assert "\ufffd" not in cut
+
+
+@pytest.mark.parametrize("truncated", [False, True])
+def test_skill_entry_file_is_not_its_own_reference_and_required_resources_remain(truncated):
+    import copy
+
+    content = "Required skill instructions.\n" * (400 if truncated else 1)
+    row = {"skills": [{"id": "imported", "install_generation": 1, "path": "SKILL.md",
+                       "content": content, "files": ["SKILL.md", "refs/policy.md"]}]}
+    before = copy.deepcopy(row)
+    rendered = knowledge.messages(row, {"revision": 0, "items": []})
+    fragment = rendered[0]["content"]
+    assert "Reference files (refs/policy.md)" in fragment
+    assert "Reference files (SKILL.md" not in fragment
+    assert fragment.count(content if not truncated else content[:100]) >= 1
+    assert (knowledge.SKILL_CONTINUATION_NOTE in fragment) is truncated
+    assert row == before
+
+
+def test_skill_with_only_its_supplied_entry_has_no_extra_reference_read():
+    skill = {"id": "imported", "install_generation": 1, "content": "Entry already supplied.", "files": ["SKILL.md"]}
+    fragment = knowledge.messages({"skills": [skill]}, {"revision": 0, "items": []})[0]["content"]
+    assert "Entry already supplied." in fragment
+    assert "Reference files" not in fragment
+    assert knowledge.SKILL_CONTINUATION_NOTE not in fragment
