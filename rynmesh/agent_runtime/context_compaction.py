@@ -129,16 +129,16 @@ def receipt_projection(row: dict, uncompacted_call_ids: set, max_bytes: int) -> 
 # for compaction (openai/codex rust-v0.167.0 model instructions); wording is Ryn's.
 # The note is rebuilt on every later request and sits before the turns that came
 # after the checkpoint, so it points at those turns too: Next alone goes stale as
-# the work moves on. The final check covers earlier requests only if still open,
-# including when the owner sends a follow-up after completed work.
+# the work moves on. Earlier requirements apply only while still open.
 CHECKPOINT_CONTINUATION = (
-    "\nContinue from Next and the messages after this note, following the latest owner direction; "
-    "do not restart or redo finished work. "
-    "Before the final reply, check it answers the latest owner request and any earlier ones still open.")
+    "\nContinue from Next and the messages after this note. Follow the latest owner direction "
+    "and any earlier requests still open. Do not restart or repeat completed work or checks. "
+    "Once requests are covered, reply from recorded results.")
 # Pinned in every request, so omitted in small windows where the floor is tight.
 CHECKPOINT_RECOVERY = (
-    " Use ryn_history_search/ryn_history_read to recover exact details the summary omitted. "
-    "Before relying on file or process state recorded here, read the current state again.")
+    " Read current file contents directly when needed for an edit. "
+    "Use ryn_history_search/ryn_history_read for missing evidence of past work. "
+    "Refresh potentially stale file or process state before acting on it.")
 
 _LEDGER_SKIP_TOOLS = frozenset({"ryn_update_plan"})
 _BODY_KEYS = frozenset({"content", "text", "patch", "code", "input", "data", "body", "script",
