@@ -580,3 +580,42 @@ def test_legacy_single_binding_publication_still_authorizes(tmp_path):
             a._rows["test"]["published"] = {"model-a": model()["model_binding"]}
         assert a.locally_published(RESOURCE, "model-a", model()["model_binding"])
     asyncio.run(scenario())
+
+
+def test_published_cli_is_republished_when_its_bindings_move(tmp_path):
+    server = FakeServer()
+    current = [cli_model_record()]
+    a = node(tmp_path, server, model_status=lambda: copy.deepcopy(current))
+
+    async def scenario():
+        await login(a, server)
+        await a.publish("test", ["codex-cli"])
+        assert not await a.republish_if_changed("test")  # nothing moved
+        old = cli_model_record()["cli_models"][0]["model_binding"]
+        # The CLI re-observed its models: every exact binding is new.
+        moved = cli_model_record()
+        moved["cli_models"][0]["model_binding"] = {**old, "model_generation": "e" * 32}
+        current[:] = [moved]
+        calls = len(server.calls)
+        await a.refresh_directories("test")
+        assert len(server.calls) > calls
+        assert server.published["one"][0]["cli_models"][0]["model_binding"]["model_generation"] == "e" * 32
+        assert a.locally_published(RESOURCE, "codex-cli", moved["cli_models"][0]["model_binding"])
+        assert not a.locally_published(RESOURCE, "codex-cli", old)
+        assert a.status("test")["selected_service_ids"] == ["codex-cli"]
+
+        # A failed refresh keeps the owner's selection for the next sync.
+        current[0]["cli_models"][0]["model_binding"] = {**old, "model_generation": "f" * 32}
+        original = a.oauth.transport
+        async def failing(*args, **kwargs):
+            raise ProviderHttpError(503)
+        a.oauth.transport = failing
+        with pytest.raises(Exception):
+            await a.republish_if_changed("test")
+        a.oauth.transport = original
+        assert a.status("test")["selected_service_ids"] == ["codex-cli"]
+
+        # Unticked by the owner: nothing is republished.
+        await a.publish("test", [])
+        assert not await a.republish_if_changed("test")
+    asyncio.run(scenario())

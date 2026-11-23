@@ -483,7 +483,35 @@ class PeerProviderService:
                     except Exception:
                         pass
                 if status["bound"]:
+                    try:
+                        await self.republish_if_changed(status["plugin_id"])
+                    except Exception:
+                        pass
                     await self.directory(status["plugin_id"])
+
+    async def republish_if_changed(self, plugin_id):
+        """Keep the owner's selection current when a shared model's binding moves.
+
+        A CLI re-observes its models (new version, refreshed metadata) and gets
+        new exact bindings; the old publication would then refuse every request.
+        The owner chose the services, so the same selection is published again.
+        """
+        row = self._get(plugin_id, session=True)
+        published = row.get("published") or {}
+        if not row.get("binding") or not published:
+            return False
+        current = {m["service"]["package_id"]: m for m in self.available_models()}
+        wanted = [s for s in sorted(published) if s in current]
+        stale = [s for s in sorted(published) if s not in current]
+        if not stale and all((published[s] if isinstance(published[s], list) else [published[s]])
+                             == _published_bindings(current[s]) for s in wanted):
+            return False
+        if stale:
+            # A service that is no longer offered (not ready, removed) keeps its
+            # old binding: requests fail closed and it returns once ready again.
+            return False
+        await self.publish(plugin_id, wanted, refresh=True)
+        return True
 
     async def auto_sync(self, plugin_id):
         row = self._get(plugin_id)
@@ -672,7 +700,7 @@ class PeerProviderService:
         except Exception:
             raise PeerProviderError("peer_provider_models_unavailable") from None
 
-    async def publish(self, plugin_id, service_ids):
+    async def publish(self, plugin_id, service_ids, *, refresh=False):
         if not isinstance(service_ids, list) or len(service_ids) > 32 or any(not isinstance(s, str) for s in service_ids) or len(set(service_ids)) != len(service_ids):
             v.fail("peer_provider_invalid_selection")
         row = self._get(plugin_id, session=True)
@@ -688,7 +716,14 @@ class PeerProviderService:
             # Owner deselection takes effect locally even if the remote update
             # subsequently fails. A late earlier response cannot restore it.
             current = self._current(plugin_id, row["epoch"])
-            current["published"] = {}
+            if refresh:
+                # Re-publishing the same selection with current bindings: a
+                # failure leaves the choice in place for the next sync, and an
+                # owner change in the meantime wins.
+                if sorted(current.get("published") or {}) != sorted(service_ids):
+                    return self._public(plugin_id, current)
+            else:
+                current["published"] = {}
             publication_revision = uuid.uuid4().hex
             current["publication_revision"] = publication_revision
             self._save()
