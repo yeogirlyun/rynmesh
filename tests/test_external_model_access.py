@@ -263,7 +263,8 @@ def test_company_relay_round_trip_without_public_registry(pair, monkeypatch):
     server = pair.p.services["external_catalog"].company
     pair.c.authority.plugin_id = pair.p.authority.plugin_id = "company-workspace"
     pair.row.update(company_transport=True, plugin_id="company-workspace")
-    frames = {"c": [], "p": []}
+    pair.c.authority.cached_peers = lambda: [pair.row]
+    frames = {}
     workers = []
     closed = threading.Event()
 
@@ -272,6 +273,7 @@ def test_company_relay_round_trip_without_public_registry(pair, monkeypatch):
             if action == "presence":
                 return {"online": True}
             if action == "open":
+                frames[fields["id"]] = {"c": [], "p": []}
                 row = {"id": fields["id"], "source_peer": pair.c.store.peer_id,
                        "service_id": pair.sid, "mode": fields["mode"]}
                 worker = threading.Thread(target=lambda: asyncio.run(server._serve(plugin, RESOURCE, row)))
@@ -279,11 +281,11 @@ def test_company_relay_round_trip_without_public_registry(pair, monkeypatch):
                 workers.append(worker)
                 return {}
             if action == "write":
-                assert len(frames[side]) == fields["seq"]
-                frames[side].append({"seq": fields["seq"], "bytes": fields["bytes"]})
+                assert len(frames[fields["id"]][side]) == fields["seq"]
+                frames[fields["id"]][side].append({"seq": fields["seq"], "bytes": fields["bytes"]})
                 return {}
             if action == "read":
-                return {"frames": frames["p" if side == "c" else "c"][fields["seq"] :]}
+                return {"frames": frames[fields["id"]]["p" if side == "c" else "c"][fields["seq"] :]}
             if action == "close":
                 closed.set()
                 return {}
@@ -307,5 +309,6 @@ def test_company_relay_round_trip_without_public_registry(pair, monkeypatch):
         worker.join(5)
         assert not worker.is_alive()
     assert not registry_calls
-    assert frames["p"] and frames["c"] and closed.is_set()
+    assert len(frames) == 2 and all(session["p"] and session["c"] for session in frames.values())
+    assert closed.is_set()
     assert len(pair.traces) == 1

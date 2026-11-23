@@ -3,13 +3,15 @@ import hashlib
 import json
 
 
-def service_review(manifest: dict, *, own_request: bool = False) -> dict:
+def service_review(manifest: dict, *, own_request: bool = False, company_free: bool = False) -> dict:
     value = {key: manifest.get(key) for key in (
         "package_id", "model_alias", "model_fingerprint", "version",
         "context_window", "max_output_tokens", "pricing",
     )}
     if own_request and isinstance(value["pricing"], dict):
         value["pricing"] = {**value["pricing"], "input_per_1k": 0, "output_per_1k": 0, "minimum": 0}
+    if company_free and isinstance(value["pricing"], dict):
+        value["pricing"] = {**value["pricing"], "input_per_1k": 0, "output_per_1k": 0, "minimum": 0, "maximum_per_task": 0}
     # Numeric JSON formatting (0 versus 0.0) is not a price change.
     if isinstance(value["pricing"], dict):
         value["pricing"] = {key: float(number) if isinstance(number, (int, float)) else number

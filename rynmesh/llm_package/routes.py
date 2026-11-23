@@ -638,8 +638,6 @@ class ProviderService:
                 return self._sealed_failure(
                     task_id, reply_pub, outer["from_peer_id"], "rejected", "ai_permission_denied",
                 )
-        if "service_review_token" in body and body["service_review_token"] != service_review(self.manifest.public_dict(), own_request=own_request)["token"]:
-            return self._sealed_failure(task_id, reply_pub, outer["from_peer_id"], "rejected", "service_review_changed")
         cli_model = body.get("cli_model", "")
         if cli_model:
             from .cli_models import validate_model
@@ -697,6 +695,13 @@ class ProviderService:
         elif explicit_friends and not own_request and getattr(self.adapter, "model_binding", None):
             def bound_authorize():
                 return self.access_check(outer["from_peer_id"], self.manifest.package_id, body.get("ai_permission"))
+        if "service_review_token" in body:
+            manifest = self.manifest.public_dict()
+            token = body["service_review_token"]
+            if token != service_review(manifest, own_request=own_request)["token"] and not (
+                company_free and token == service_review(manifest, company_free=True)["token"]
+            ):
+                return self._sealed_failure(task_id, reply_pub, outer["from_peer_id"], "rejected", "service_review_changed")
         pricing = self.manifest.pricing
         zero_price = pricing.input_per_1k == pricing.output_per_1k == pricing.minimum == 0
         if max_amount < 0 or (max_amount == 0 and not own_request and not company_free and not zero_price):
@@ -1584,7 +1589,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 provider.cancel_signed(control)
             else:
                 raise TaskProtocolError("invalid_company_control")
-            yield seal_task(body={"ack": payload["kind"]}, task_id=outer["task_id"], kind="llm_response",
+            yield seal_task(body={"task_id": outer["task_id"], "ack": payload["kind"]}, task_id=outer["task_id"], kind="llm_response",
                 sender_peer_id=store.peer_id, recipient_peer_id=sender, sender_signing_key=store.private_key_bytes,
                 recipient_messaging_pub=decrypted["reply_messaging_pub"], expires_at=_expires(60)).to_dict()
         elif decrypted.get("response_mode") == "stream-v1":
@@ -1599,7 +1604,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             peer = next(row for row in peer_providers.cached_peers()
                         if row.get("provider_resource") == resource and row.get("peer_id") == peer_id)
             task_id = control["payload"]["task_id"]
-            signed = seal_task(body={"company_control": control, "external_permission": {"resource": resource},
+            signed = seal_task(body={"task_id": task_id, "company_control": control, "external_permission": {"resource": resource},
                 "service_id": service_id, "reply_messaging_pub": peer_box.public_key_b64(messaging_key)},
                 task_id=task_id, kind="llm_request", sender_peer_id=store.peer_id, recipient_peer_id=peer_id,
                 sender_signing_key=store.private_key_bytes, recipient_messaging_pub=peer["messaging_pub"], expires_at=_expires(60))
@@ -1607,7 +1612,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                                                lambda event: None))
             outer, body = open_task(reply, recipient_peer_id=store.peer_id,
                                     recipient_messaging_key=messaging_key, expected_kind="llm_response")
-            return outer["task_id"] == task_id and outer["from_peer_id"] == peer_id and body == {"ack": control["payload"]["kind"]}
+            return outer["task_id"] == task_id and outer["from_peer_id"] == peer_id and body == {"task_id": task_id, "ack": control["payload"]["kind"]}
         except Exception as exc:
             record_diagnostic("llm_settlement", "company_control_failed", exc)
             return False

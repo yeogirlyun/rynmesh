@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 
 from ..drop.peers import http_json, verify_hello
 from .peer_binding import valid
+from .review import service_review
 
 
 def resource_of(binding):
@@ -109,6 +110,9 @@ class ExternalModelCatalog:
                 observed = self._observations.get(self._key(row))
             online = bool(observed and self.clock() - observed[0] <= 15 and observed[1])
             owner = owners.get((row.get("provider_resource"), row.get("peer_id")), {})
+            if row.get("plugin_id") == "company-workspace":
+                manifest = row["service"]
+                row = {**row, "service": {**manifest, "pricing": service_review(manifest, company_free=True)["pricing"]}}
             result.append({**row, "online": online, "ready": True, "access": "provider",
                 **({"provider_name": owner["member_name"], "provider_member_id": owner.get("member_id", "")}
                    if owner.get("member_name") else {}),
